@@ -50,7 +50,7 @@ func _initialize() -> void:
 
 	var bytes: PackedByteArray = sim.overlay(0)
 	check(bytes.size() == sim.width() * sim.height() * 4, "overlay has one RGBA pixel per region")
-	for mode in range(5 + main.substances.size()):
+	for mode in range(7 + main.substances.size()):
 		main.overlay_select.select(mode)
 		main._refresh_map()
 	check(main.map_rect.texture != null, "map texture is shown")
@@ -118,6 +118,25 @@ func _initialize() -> void:
 		check(main.individual_detail.text.contains("Life story"), "individual detail shows life story")
 		check(main.individual_detail.text.contains("Character sheet"), "individual detail shows a character sheet")
 	check(main.individual_markers.size() > 0, "individual markers are drawn on the map")
+
+	# The metaphysical laws show up in status, the planet panel and sheets.
+	main._refresh_all()
+	check(main.laws_label.text == "No metaphysical laws in force.", "no laws are in force by default")
+	sim.set_law_arcane(100.0)
+	sim.set_law_soul(100.0)
+	sim.set_law_qi(100.0)
+	sim.set_law_tribulation(50.0)
+	var lawful: Dictionary = JSON.parse_string(sim.status_json())
+	check(lawful["law_arcane"] > 99.0 and lawful["law_soul"] > 99.0 and lawful["law_qi"] > 99.0 and absf(lawful["law_tribulation"] - 50.0) < 1.0, "metaphysical laws are reflected in the status")
+	check(lawful.has("spellcasting_species") and lawful.has("reborn") and lawful.has("cultivators") and lawful.has("souls_waiting"), "status reports the law counters")
+	main._refresh_all()
+	check(main.laws_label.text != "No metaphysical laws in force." and main.laws_label.text.contains("Cultivators"), "the laws readout lists what the laws brought")
+	var law_sheet = JSON.parse_string(sim.sheet_json("individual", int(people[0]["id"]))) if people.size() > 0 else null
+	check(law_sheet != null and law_sheet.has("class"), "individual sheets carry a class entry")
+	sim.set_law_arcane(0.0)
+	sim.set_law_soul(0.0)
+	sim.set_law_qi(0.0)
+	sim.set_law_tribulation(30.0)
 
 	# Arena: a mirror match against this world's own roster, stepped to the end.
 	main.open_arena()

@@ -5,7 +5,7 @@ extends Control
 ## godot-ext crate). The UI is built in code so the scene file stays trivial.
 
 const SAVE_PATH := "user://world_log.json"
-const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability", "Veil"]
+const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability", "Veil", "Mana", "Qi"]
 const TOOLS := ["Inspect", "Add substance", "Remove substance", "Heat", "Cool"]
 const TreeView := preload("res://tree_view.gd")
 const GlobeView := preload("res://globe_view.gd")
@@ -61,6 +61,7 @@ var mode_select: OptionButton
 var star_select: OptionButton
 var star_label: RichTextLabel
 var veil_label: RichTextLabel
+var laws_label: RichTextLabel
 
 
 func _ready() -> void:
@@ -323,6 +324,12 @@ func _build_ui() -> void:
 	_planet_slider(panel, "veil_law", "Veil (% open)", 0.0, 100.0, 0.0, false, "set_veil_law")
 	veil_label = _rich(50)
 	panel.add_child(veil_label)
+	_planet_slider(panel, "law_arcane", "Arcane Magic (%)", 0.0, 100.0, 0.0, false, "set_law_arcane")
+	_planet_slider(panel, "law_soul", "Soul Power (%)", 0.0, 100.0, 0.0, false, "set_law_soul")
+	_planet_slider(panel, "law_qi", "Daoist Cultivation (%)", 0.0, 100.0, 0.0, false, "set_law_qi")
+	_planet_slider(panel, "law_tribulation", "Tribulation risk (%)", 0.0, 100.0, 30.0, false, "set_law_tribulation")
+	laws_label = _rich(40)
+	panel.add_child(laws_label)
 
 	_section(panel, "Moons")
 	moons_label = _rich(40)
@@ -661,6 +668,14 @@ func _refresh_text() -> void:
 	if st["last_breach_year"] >= 0:
 		veil_text += " · last breach in year %d" % st["last_breach_year"]
 	veil_label.text = veil_text
+	var law_parts := []
+	if st["law_arcane"] > 0.0:
+		law_parts.append("Spellcasting species: %d" % st["spellcasting_species"])
+	if st["law_soul"] > 0.0:
+		law_parts.append("Reborn souls: %d (%d waiting)" % [st["reborn"], st["souls_waiting"]])
+	if st["law_qi"] > 0.0:
+		law_parts.append("Cultivators: %d" % st["cultivators"])
+	laws_label.text = " · ".join(law_parts) if law_parts.size() > 0 else "No metaphysical laws in force."
 	globe_view.set_planet(st)
 
 	if selected_region.x >= 0:
@@ -670,8 +685,13 @@ func _refresh_text() -> void:
 func _refresh_region() -> void:
 	visit_button.disabled = false
 	var r: Dictionary = JSON.parse_string(sim.region_json(selected_region.x, selected_region.y))
-	var text := "[b]Region (%d, %d)[/b]\n%.1f K (%.1f °C), elevation %.2f, geothermal %.2f, Veil %.2f\n" % [
+	var text := "[b]Region (%d, %d)[/b]\n%.1f K (%.1f °C), elevation %.2f, geothermal %.2f, Veil %.2f" % [
 		r["x"], r["y"], r["temperature"], r["temperature"] - 273.15, r["elevation"], r["geothermal"], r["veil"]]
+	if r["mana"] > 0.0:
+		text += ", mana %.2f" % r["mana"]
+	if r["qi"] > 0.0:
+		text += ", qi %.2f" % r["qi"]
+	text += "\n"
 	var subs := []
 	for s in r["substances"]:
 		subs.append("%s %.2f (%s)" % [s["name"], s["amount"], s["phase"]])
@@ -768,8 +788,8 @@ func _refresh_individuals() -> void:
 	var people: Array = JSON.parse_string(sim.individuals_json(40))
 	var lines := []
 	for p in people:
-		lines.append("[url=i:%d][color=#%s]●[/color] [b]%s[/b][/url] (%s), age %d · [color=#e8c860]cost %s[/color]\n    CHA %d · renown %.1f · %d friends, %d enemies · %s · now: %s" % [
-			p["id"], p["color"] if p["color"] != null else "ffffff", p["title"], p["species"], p["age"], str(int(p["cost"])) if p["cost"] != null else "-",
+		lines.append("[url=i:%d][color=#%s]●[/color] [b]%s[/b][/url] (%s)%s, age %d · [color=#e8c860]cost %s[/color]\n    CHA %d · renown %.1f · %d friends, %d enemies · %s · now: %s" % [
+			p["id"], p["color"] if p["color"] != null else "ffffff", p["title"], p["species"], (", " + p["class"]) if p["class"] != null else "", p["age"], str(int(p["cost"])) if p["cost"] != null else "-",
 			p["charisma"], p["renown"], p["friends"], p["enemies"], p["personality"], p["last_action"] if p["last_action"] != null else "-"])
 	individuals_list.text = "\n".join(lines) if lines.size() > 0 else "No named individuals yet. They appear once a species evolves a nervous system."
 	if selected_individual < 0:
@@ -780,6 +800,17 @@ func _refresh_individuals() -> void:
 		return
 	var tm: Dictionary = d["temperament_values"]
 	var text := "[b]%s[/b], a [url=s:%d]%s[/url]\n%s\n" % [d["title"], d["species_id"], d["species"], d["species_description"]]
+	var extras := []
+	if d["class"] != null:
+		extras.append("[b]%s[/b]" % d["class"])
+	if d["soul"] > 0.0:
+		extras.append("soul %s" % _bar(d["soul"]))
+	if d["realm"] != null:
+		extras.append("cultivator: %s" % d["realm"])
+	if d["past_life"] != null:
+		extras.append("Reborn: once %s" % d["past_life"])
+	if extras.size() > 0:
+		text += " · ".join(extras) + "\n"
 	if d["alive"]:
 		text += "Age %d of about %d · health %s · at region (%d, %d)\n" % [d["age"], d["lifespan_years"], _bar(d["health"]), d["x"], d["y"]]
 	else:
@@ -809,6 +840,8 @@ func _sheet_text(sh) -> String:
 		return ""
 	var t := "[bgcolor=#2a2418][color=#e8c860][b]Character sheet[/b]   cost %d / 1000[/color][/bgcolor]\n" % sh["cost"]
 	t += "[i]%s %s, %s[/i]\n" % [sh["size"], sh["type"].to_lower(), sh["alignment"].to_lower()]
+	if sh["class"] != null:
+		t += "[b]%s[/b]\n" % sh["class"]
 	var sp: Dictionary = sh["speed"]
 	var speeds := ["%d ft." % sp["walk"]]
 	for k in ["swim", "fly", "burrow"]:

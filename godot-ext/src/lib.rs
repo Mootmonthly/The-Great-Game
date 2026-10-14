@@ -89,6 +89,7 @@ fn sheet_to_json(sh: &sim_core::sheet::CharacterSheet) -> Value {
             "name": b.name, "dice": b.dice, "damage": b.damage.name(), "dc": b.dc,
             "save_ability": b.save_ability, "targets": b.targets,
         })),
+        "class": sh.class,
         "regeneration": sh.regeneration, "pack_tactics": sh.pack_tactics,
         "cost": c.cost,
         "cost_breakdown": {
@@ -275,6 +276,43 @@ impl SimWorld {
         });
     }
 
+    /// The Arcane Magic law, in percent: 0 absent .. 100 at full strength.
+    #[func]
+    fn set_law_arcane(&mut self, percent: f64) {
+        self.world.apply(Action::SetLaw {
+            law: sim_core::laws::ARCANE,
+            value: Fx::from_f64(percent / 100.0),
+        });
+    }
+
+    /// The Soul Power law, in percent: 0 absent .. 100 at full strength.
+    #[func]
+    fn set_law_soul(&mut self, percent: f64) {
+        self.world.apply(Action::SetLaw {
+            law: sim_core::laws::SOUL,
+            value: Fx::from_f64(percent / 100.0),
+        });
+    }
+
+    /// The Daoist Cultivation law, in percent: 0 absent .. 100 at full strength.
+    #[func]
+    fn set_law_qi(&mut self, percent: f64) {
+        self.world.apply(Action::SetLaw {
+            law: sim_core::laws::QI,
+            value: Fx::from_f64(percent / 100.0),
+        });
+    }
+
+    /// How deadly cultivation breakthroughs are (Daoist Cultivation), in
+    /// percent: 0 never deadly .. 100 most deadly.
+    #[func]
+    fn set_law_tribulation(&mut self, percent: f64) {
+        self.world.apply(Action::SetLaw {
+            law: sim_core::laws::TRIBULATION,
+            value: Fx::from_f64(percent / 100.0),
+        });
+    }
+
     /// The star types, in index order.
     #[func]
     fn stars_json(&self) -> GString {
@@ -294,7 +332,7 @@ impl SimWorld {
     }
 
     /// RGBA8 pixels, one per region. Modes: 0 surface, 1 temperature, 2 life,
-    /// 3 viability, 4+ substance amount (4 + substance index).
+    /// 3 viability, 4 Veil, 5 mana, 6 qi, 7+ substance amount (7 + substance index).
     #[func]
     fn overlay(&self, mode: i64) -> PackedByteArray {
         PackedByteArray::from(self.world.overlay_rgba(Overlay::from_mode(mode)).as_slice())
@@ -341,6 +379,14 @@ impl SimWorld {
             "veil_mean": w.veil_mean().to_f64(),
             "entity_species": w.living_species().filter(|s| s.has(sim_core::body::OTHERWORLDLY)).count(),
             "last_breach_year": w.last_breach_tick.map_or(-1, |t| (t / 4) as i64),
+            "law_arcane": w.laws.arcane.to_f64() * 100.0,
+            "law_soul": w.laws.soul.to_f64() * 100.0,
+            "law_qi": w.laws.qi.to_f64() * 100.0,
+            "law_tribulation": w.laws.tribulation.to_f64() * 100.0,
+            "spellcasting_species": w.living_species().filter(|s| s.has(sim_core::body::SPELLCASTING)).count(),
+            "reborn": w.living_individuals().filter(|x| x.past_life.is_some()).count(),
+            "cultivators": w.cultivators(1),
+            "souls_waiting": w.souls.len(),
             "global_heat": p.global_heat.to_f64(),
             "day_length": p.day_length_hours.to_f64(),
             "axial_tilt": p.axial_tilt_deg.to_f64(),
@@ -426,6 +472,8 @@ impl SimWorld {
             "elevation": r.elevation.to_f64(),
             "geothermal": r.geothermal.to_f64(),
             "veil": w.veil(i).to_f64(),
+            "mana": w.mana(i).to_f64(),
+            "qi": w.qi(i).to_f64(),
             "substances": substances,
             "best_profile": best,
             "populations": pops,
@@ -569,6 +617,7 @@ impl SimWorld {
             .take(limit.max(0) as usize)
             .map(|x| {
                 let species = w.species_by_id(x.species);
+                let sheet = sim_core::sheet::individual_sheet(w, x);
                 json!({
                     "id": x.id, "title": x.title(), "name": x.name,
                     "species": species.map(|s| s.name.clone()), "species_id": x.species,
@@ -578,7 +627,8 @@ impl SimWorld {
                     "friends": x.friends(), "enemies": x.enemies(),
                     "personality": x.personality.describe(),
                     "last_action": x.last_action.map(|a| sim_core::brain::output::NAMES[a]),
-                    "cost": sim_core::sheet::individual_sheet(w, x).map(|sh| sh.cost.cost),
+                    "cost": sheet.as_ref().map(|sh| sh.cost.cost),
+                    "class": sheet.and_then(|sh| sh.class),
                 })
             })
             .collect();
@@ -617,6 +667,7 @@ impl SimWorld {
             .collect();
         let species = w.species_by_id(x.species);
         let p = &x.personality;
+        let class = sim_core::sheet::individual_sheet(w, x).and_then(|sh| sh.class);
         to_gstring(json!({
             "id": x.id, "title": x.title(), "alive": x.is_alive(),
             "species": species.map(|s| s.name.clone()), "species_id": x.species,
@@ -625,6 +676,9 @@ impl SimWorld {
             "age": x.age_years(w.tick), "lifespan_years": x.lifespan / tpy,
             "health": x.health.to_f64(), "renown": x.renown.to_f64(), "charisma": x.charisma(),
             "personality": p.describe(),
+            "class": class, "soul": x.soul.to_f64(),
+            "realm": x.realm.checked_sub(1).and_then(|r| sim_core::laws::REALMS.get(r as usize)),
+            "past_life": x.past_life.and_then(|o| w.individual_by_id(o)).map(|o| o.title()),
             "temperament_values": {"aggression": p.aggression.to_f64(), "fear": p.fear.to_f64(),
                 "curiosity": p.curiosity.to_f64(), "sociability": p.sociability.to_f64()},
             "relations": relations, "memories": memories,
