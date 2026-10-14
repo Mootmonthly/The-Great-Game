@@ -9,7 +9,8 @@ RUN cargo build --release -p arena-server
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --home /data arena
+    && useradd --system --home /data arena \
+    && mkdir /data && chown arena /data
 COPY --from=build /src/target/release/arena-server /usr/local/bin/arena-server
 USER arena
 VOLUME /data
