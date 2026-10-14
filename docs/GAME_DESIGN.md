@@ -455,7 +455,7 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
   - A hosted server can use a real certificate (for example from Let's Encrypt). Otherwise it creates a self-signed one on first run and prints its fingerprint.
   - Clients accept a certificate a public authority vouches for. Otherwise they pin the fingerprint on first contact and refuse a different certificate later, like SSH.
 - **Responsiveness:** commands still take one round trip to the server. The possessed unit is drawn slightly ahead in the direction you steer, so it reacts at once; the lead fades as the server's position catches up. This is display only.
-- **Not yet:** the Steamworks SDK in the game client (needed to get Steam tickets), cloud hosting, and the Essence economy.
+- **Not yet:** the Steamworks SDK in the game client (needed to get Steam tickets), and the Essence economy. Hosting: a Dockerfile, compose file, systemd unit and guide (docs/HOSTING.md); no server is deployed yet.
 
 ### 6.4 Balance Risk
 

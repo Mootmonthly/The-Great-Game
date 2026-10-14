@@ -1,0 +1,21 @@
+# systemd unit for running the arena server directly on a Linux VM.
+# Install: copy the binary to /usr/local/bin, then
+#   sudo useradd --system --home /var/lib/arena --create-home arena
+#   sudo cp deploy/arena-server.service /etc/systemd/system/
+#   sudo systemctl enable --now arena-server
+[Unit]
+Description=The Great Game arena server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=arena
+ExecStart=/usr/local/bin/arena-server serve --data /var/lib/arena
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/arena
+
+[Install]
+WantedBy=multi-user.target

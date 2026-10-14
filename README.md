@@ -99,6 +99,7 @@ The arena server verifies champions by replaying your world's history, matches p
      ```
      cargo run -p arena-server --release -- bot --name rival --cap 100
      ```
+   To host a server for other people (your own computer, a cloud server, Docker, real certificates), see [docs/HOSTING.md](docs/HOSTING.md).
 3. **Ranked is permadeath.** Named individuals who fall are gone forever: the server will never accept them again, and their death is written into your world's history. Species units that fall are lost, but the species can field more. Practice matches cost nothing.
 
 During an online match, possession works as offline (WASD, Space, Q, Esc). Speed is fixed by the server, and **Surrender** ends the match at once.

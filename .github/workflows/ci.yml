@@ -51,3 +51,20 @@ jobs:
         run: ./Godot_v4.6.2-stable_linux.x86_64 --headless --path game-client --editor --quit-after 300
       - name: Run smoke test
         run: ./Godot_v4.6.2-stable_linux.x86_64 --headless --path game-client -s res://tests/smoke_test.gd
+
+  docker:
+    name: Server Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t great-game-arena .
+      - name: Start a container and check it serves
+        run: |
+          docker run -d --name arena -p 7878:7878 great-game-arena
+          sleep 3
+          docker logs arena | tee log.txt
+          grep -q "certificate fingerprint" log.txt
+          docker rm -f arena
+
