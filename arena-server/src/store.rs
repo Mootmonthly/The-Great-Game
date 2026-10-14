@@ -22,6 +22,22 @@ pub struct Account {
     pub essence: u64,
     /// Bound champions by token.
     pub champions: BTreeMap<u64, Champion>,
+    /// Extra home worlds bought with Essence (one world is free).
+    #[serde(default)]
+    pub extra_planets: u8,
+    /// Seeds of the home worlds champions have been bound from.
+    #[serde(default)]
+    pub worlds: Vec<u64>,
+    /// Spoils of war not yet brought home or sold: grant id → value.
+    #[serde(default)]
+    pub spoils: BTreeMap<u64, u64>,
+}
+
+impl Account {
+    /// How many home worlds this account may bind champions from.
+    pub fn planet_slots(&self) -> u8 {
+        self.extra_planets.saturating_add(1)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -49,6 +65,12 @@ pub struct Store {
     /// grant enriches one world only.
     #[serde(default)]
     pub redeemed: BTreeMap<u64, u64>,
+    /// Loot grants sold back to the server: deleted, never to enter a world.
+    #[serde(default)]
+    pub sold: BTreeSet<u64>,
+    /// Shop grants already used in a world: grant id → world seed.
+    #[serde(default)]
+    pub purchases_used: BTreeMap<u64, u64>,
 }
 
 impl Store {

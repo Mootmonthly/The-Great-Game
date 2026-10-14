@@ -15,6 +15,7 @@ use net_proto::{
 };
 use sim_core::arena::{Arena, ArenaCommand, ArenaResult};
 use sim_core::loot::LootGrant;
+use sim_core::shop::{ShopGrant, ShopItem, WIN_ESSENCE};
 use sim_core::Fx;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufReader};
@@ -83,6 +84,8 @@ struct Shared {
     signer: Signer,
     state: Mutex<State>,
     verifying: Semaphore,
+    /// The substance table, for shop prices.
+    substances: Vec<sim_core::substance::Substance>,
 }
 
 struct State {
@@ -251,6 +254,7 @@ pub fn start(config: Config) -> io::Result<ServerHandle> {
             free: Mutex::new((cores / 2).max(1)),
             cv: Condvar::new(),
         },
+        substances: sim_core::substance::default_substances(),
     });
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
@@ -358,6 +362,8 @@ fn connection(shared: &Arc<Shared>, stream: TcpStream) -> io::Result<()> {
             },
             essence: account.essence,
             champions: account.champions.values().map(|c| c.token.clone()).collect(),
+            planet_slots: account.planet_slots(),
+            spoils: account.spoils.iter().map(|(g, v)| (*g, *v)).collect(),
         });
         if let Some((ctl, team)) = state.playing.get(&name) {
             ctl.rejoin(*team, &tx);
@@ -413,6 +419,14 @@ fn serve_client(
                 let reply = bind(shared, name, &log, moon, kind, id, cost);
                 let _ = tx.send(reply);
             }
+            ClientMsg::Buy { item } => {
+                let reply = buy(shared, name, item);
+                let _ = tx.send(reply);
+            }
+            ClientMsg::SellLoot { grant } => {
+                let reply = sell_loot(shared, name, grant);
+                let _ = tx.send(reply);
+            }
             ClientMsg::Queue {
                 mode,
                 cap,
@@ -440,6 +454,70 @@ fn serve_client(
     Ok(())
 }
 
+/// Spends Essence in the shop (§3).
+fn buy(shared: &Shared, account: &str, item: ShopItem) -> ServerMsg {
+    let Some(price) = item.price_in(&shared.substances) else {
+        return rejected("buy", "that is not for sale");
+    };
+    let mut state = shared.state.lock().unwrap();
+    let acc = state.store.account(account);
+    if acc.essence < price {
+        return rejected("buy", format!("it costs {price} Essence; you have {}", acc.essence));
+    }
+    if item == ShopItem::PlanetSlot && acc.planet_slots() == u8::MAX {
+        return rejected("buy", "you have every planet slot there is");
+    }
+    acc.essence -= price;
+    let grant = match item {
+        ShopItem::PlanetSlot => {
+            acc.extra_planets += 1;
+            None
+        }
+        _ => {
+            state.store.next_grant += 1;
+            let mut g = ShopGrant {
+                id: state.store.next_grant,
+                account: account.to_string(),
+                item: item.clone(),
+                signature: String::new(),
+            };
+            g.signature = shared.signer.sign(&g.payload());
+            Some(g)
+        }
+    };
+    let acc = state.store.account(account);
+    let (essence, planet_slots) = (acc.essence, acc.planet_slots());
+    shared.save(&state);
+    ServerMsg::Purchased {
+        item,
+        grant,
+        essence,
+        planet_slots,
+    }
+}
+
+/// Sells a spoil of war back to the server for its value; the grant is
+/// deleted and can never enter a world.
+fn sell_loot(shared: &Shared, account: &str, grant: u64) -> ServerMsg {
+    let mut state = shared.state.lock().unwrap();
+    if state.store.redeemed.contains_key(&grant) {
+        return rejected("sell_loot", "those spoils are already in a world");
+    }
+    let Some(value) = state.store.account(account).spoils.remove(&grant) else {
+        return rejected("sell_loot", "you hold no such spoils");
+    };
+    state.store.sold.insert(grant);
+    let acc = state.store.account(account);
+    acc.essence += value;
+    let essence = acc.essence;
+    shared.save(&state);
+    ServerMsg::Sold {
+        grant,
+        essence_gained: value,
+        essence,
+    }
+}
+
 fn token_payload(t: &ChampionToken) -> Vec<u8> {
     let mut unsigned = t.clone();
     unsigned.signature.clear();
@@ -464,14 +542,42 @@ fn bind(
     };
 
     let mut state = shared.state.lock().unwrap();
-    // A loot grant enriches one world only.
+    // A loot grant enriches one world only, and a sold one none.
     for g in &v.loot {
+        if state.store.sold.contains(g) {
+            return rejected("bind", "this world uses spoils that were sold back to the server");
+        }
         if state.store.redeemed.get(g).is_some_and(|seed| *seed != log.seed) {
             return rejected("bind", "this world uses loot already brought into another world");
         }
     }
+    for g in &v.purchases {
+        if state.store.purchases_used.get(g).is_some_and(|seed| *seed != log.seed) {
+            return rejected("bind", "this world uses a purchase already used in another world");
+        }
+    }
+    // Champions come from the account's home worlds: one free, more bought.
+    let acc = state.store.account(account);
+    if !acc.worlds.contains(&log.seed) {
+        if acc.worlds.len() >= acc.planet_slots() as usize {
+            return rejected(
+                "bind",
+                format!(
+                    "your army draws on {} home world(s); buy another planet ({} Essence) to bind champions from a new one",
+                    acc.planet_slots(),
+                    sim_core::shop::PLANET_PRICE
+                ),
+            );
+        }
+        acc.worlds.push(log.seed);
+    }
     for g in &v.loot {
         state.store.redeemed.insert(*g, log.seed);
+        // Brought home: no longer for sale.
+        state.store.account(account).spoils.remove(g);
+    }
+    for g in &v.purchases {
+        state.store.purchases_used.insert(*g, log.seed);
     }
     if let Some(fp) = v.fingerprint {
         if state.store.dead.contains(&fp) {
@@ -762,10 +868,10 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
         ArenaResult::Draw => None,
     };
     // Permadeath: the fallen are gone (ranked only). The winner loots the
-    // bodies of the loser's fallen and earns Essence for each (§6.2a).
+    // bodies of the loser's fallen (§6.2a) and earns Essence for the win (§3).
     let mut fallen = Vec::new();
     let mut loot = Vec::new();
-    let mut essence_gained = 0u64;
+    let essence_gained = if ranked && winner.is_some() { WIN_ESSENCE } else { 0 };
     for team in 0..2 {
         // Units are in roster order, team A first.
         let base = if team == 0 { 0 } else { info.tokens[0].len() };
@@ -782,17 +888,20 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
                 }
                 if let (Some(w), Some(remains)) = (winner, c.remains.clone()) {
                     if w != team {
-                        essence_gained += c.token.cost.max(1) as u64;
                         state.store.next_grant += 1;
+                        let value = c.token.cost.max(1) as u64;
                         let mut grant = LootGrant {
                             id: state.store.next_grant,
                             account: info.players[w].clone(),
                             from: c.token.name.clone(),
                             remains,
                             biomass: Fx::ONE + Fx::ratio(c.token.cost, 20),
+                            value,
                             signature: String::new(),
                         };
                         grant.signature = shared.signer.sign(&grant.payload());
+                        let id = grant.id;
+                        state.store.account(&info.players[w]).spoils.insert(id, value);
                         loot.push(grant);
                     }
                 }

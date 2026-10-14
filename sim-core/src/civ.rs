@@ -198,10 +198,10 @@ impl World {
     }
 
     /// The technology era of a civilization (index into `ERAS`), capped at
-    /// Crafting without metal in its lands.
+    /// Crafting without a forgeable metal (iron or tungsten) in its lands.
     pub fn era(&self, c: &Civilization) -> usize {
         let raw = level(&ERAS, c.tech);
-        if raw >= FORGING && !self.civ_has(c, "iron") {
+        if raw >= FORGING && !self.civ_has(c, "iron") && !self.civ_has(c, "tungsten") {
             FORGING - 1
         } else {
             raw
@@ -389,7 +389,11 @@ impl World {
         // Bigger peoples learn faster, with diminishing returns: from
         // stone tools to industry takes more than a thousand years.
         let pop = self.civs[k].population();
-        let learning = pop.sqrt() * (Fx::ratio(3, 10) + culture.openness) * Fx::ratio(1, 10);
+        let mut learning = pop.sqrt() * (Fx::ratio(3, 10) + culture.openness) * Fx::ratio(1, 10);
+        // Rare earths in their lands speed invention.
+        if self.civ_has(&self.civs[k], "rare_earths") {
+            learning = learning * Fx::ratio(13, 10);
+        }
         self.civs[k].tech += learning;
         if self.laws.arcane > Fx::ZERO {
             let caster = self

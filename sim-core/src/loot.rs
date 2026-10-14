@@ -31,6 +31,10 @@ pub struct LootGrant {
     pub remains: Remains,
     /// Biomass of the population it seeds.
     pub biomass: Fx,
+    /// Pseudo-cost: the fallen champion's cost. Selling the spoil back to
+    /// the server pays this much Essence (§3).
+    #[serde(default)]
+    pub value: u64,
     /// Server signature (hex) over the grant with this field empty.
     pub signature: String,
 }

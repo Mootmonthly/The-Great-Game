@@ -161,6 +161,8 @@ impl SimWorld {
                 json!({
                     "key": s.key, "name": s.name, "formula": s.formula,
                     "color": format!("{:02x}{:02x}{:02x}", s.color[0], s.color[1], s.color[2]),
+                    // Shop elements are bought with Essence, not added with the free tools.
+                    "shop": s.shop.map(|c| c.name()),
                 })
             })
             .collect();
@@ -884,6 +886,39 @@ impl SimWorld {
             .species
             .last()
             .map_or(GString::new(), |s| GString::from(s.name.as_str()))
+    }
+
+    /// Everything in the Essence shop: [{item, name, price}], where `item`
+    /// is the JSON to pass to `ArenaNet.buy`.
+    #[func]
+    fn shop_catalogue_json(&self) -> GString {
+        let items: Vec<Value> = sim_core::shop::catalogue(&self.world)
+            .into_iter()
+            .map(|(item, name, price)| json!({"item": item, "name": name, "price": price}))
+            .collect();
+        to_gstring(json!(items))
+    }
+
+    /// Logs a shop purchase (a grant from the server, as JSON) in the world.
+    /// A deposit lands around region (x, y) of the world in focus; a moon
+    /// slot goes to the planet. Returns false if the grant is unreadable.
+    #[func]
+    fn apply_purchase(&mut self, grant_json: GString, x: i64, y: i64) -> bool {
+        let Ok(grant) = serde_json::from_str::<sim_core::shop::ShopGrant>(&grant_json.to_string()) else {
+            return false;
+        };
+        let deposit = matches!(grant.item, sim_core::shop::ShopItem::Deposit { .. });
+        let action = Action::Purchase {
+            grant: Box::new(grant),
+            x: coord(x, WIDTH),
+            y: coord(y, HEIGHT),
+        };
+        if deposit {
+            self.act(action);
+        } else {
+            self.world.apply(action);
+        }
+        true
     }
 
     /// The planet's seed (champion tokens name their home planet by it).

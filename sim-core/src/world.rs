@@ -288,7 +288,7 @@ fn elements_of(substances: &[Substance]) -> Vec<String> {
 
 /// Bumped whenever the world's stored form or rules change, so old
 /// snapshots are not trusted.
-const SNAPSHOT_VERSION: u32 = 4;
+const SNAPSHOT_VERSION: u32 = 5;
 
 #[derive(Serialize)]
 struct SnapshotRef<'a> {
@@ -439,7 +439,7 @@ impl World {
                 substance,
                 amount,
             } => {
-                if *substance >= n {
+                if *substance >= n || self.bought_only(*substance, *amount) {
                     return;
                 }
                 for i in brush(*x, *y, *radius) {
@@ -448,7 +448,7 @@ impl World {
                 }
             }
             Action::AddSubstanceGlobal { substance, amount } => {
-                if *substance >= n {
+                if *substance >= n || self.bought_only(*substance, *amount) {
                     return;
                 }
                 for r in &mut self.regions {
@@ -539,6 +539,7 @@ impl World {
                         | Action::SetLaw { .. }
                         | Action::ChampionFell { .. }
                         | Action::Loot { .. }
+                        | Action::Purchase { .. }
                 );
                 if let (true, Some(m)) = (allowed, self.moon_worlds.get_mut(*moon as usize)) {
                     m.apply((**action).clone());
@@ -546,6 +547,7 @@ impl World {
             }
             Action::ChampionFell { individual } => self.champion_fell(*individual),
             Action::Loot { grant, x, y } => self.apply_loot(grant, *x, *y),
+            Action::Purchase { grant, x, y } => self.apply_purchase(grant, *x, *y),
             Action::SetLaw { law, value } => self.set_law(*law, *value),
             Action::SetVeilLaw { openness } => {
                 self.veil_law = (*openness).clamp(Fx::ZERO, Fx::ONE);
@@ -570,6 +572,12 @@ impl World {
             }
         }
         self.log.push(action);
+    }
+
+    /// Shop elements cannot be added with the free tools, only bought
+    /// (§3). Taking them away is free.
+    fn bought_only(&self, substance: u16, amount: Fx) -> bool {
+        amount > Fx::ZERO && self.substances[substance as usize].shop.is_some()
     }
 
     /// Adds a moon and the world on it. Too close and it is torn into
@@ -786,7 +794,16 @@ impl World {
                 let r = &mut self.regions[y * WIDTH + x];
                 let geo = r.geothermal * r.geothermal * Fx::from_int(60);
                 let lapse = r.elevation * Fx::from_int(25);
-                let t = t_row + geo - lapse + r.heat_offset + self.planet.global_heat;
+                // Decaying uranium and thorium warm the ground around them.
+                let radiogenic = self
+                    .substances
+                    .iter()
+                    .zip(&r.amounts)
+                    .filter(|(s, _)| s.shop == Some(crate::substance::ShopClass::Radioactive))
+                    .fold(Fx::ZERO, |a, (_, amount)| a + *amount)
+                    .min(Fx::from_int(10))
+                    * Fx::from_int(8);
+                let t = t_row + geo + radiogenic - lapse + r.heat_offset + self.planet.global_heat;
                 r.temperature = t.max(Fx::from_int(3));
                 sum += r.temperature;
             }

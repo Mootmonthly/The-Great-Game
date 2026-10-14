@@ -158,6 +158,31 @@ impl Client {
         }
     }
 
+    /// Buys from the Essence shop. Returns `Purchased` or `Rejected`.
+    pub fn buy(&mut self, item: sim_core::shop::ShopItem) -> io::Result<ServerMsg> {
+        self.send(&ClientMsg::Buy { item })?;
+        self.reply_to("buy")
+    }
+
+    /// Sells a spoil of war back to the server. Returns `Sold` or
+    /// `Rejected`.
+    pub fn sell_loot(&mut self, grant: u64) -> io::Result<ServerMsg> {
+        self.send(&ClientMsg::SellLoot { grant })?;
+        self.reply_to("sell_loot")
+    }
+
+    fn reply_to(&mut self, request: &str) -> io::Result<ServerMsg> {
+        loop {
+            match self.recv()? {
+                m @ (ServerMsg::Purchased { .. } | ServerMsg::Sold { .. }) => return Ok(m),
+                m @ ServerMsg::Rejected { .. } if matches!(&m, ServerMsg::Rejected { request: r, .. } if r == request) => {
+                    return Ok(m)
+                }
+                _ => continue,
+            }
+        }
+    }
+
     pub fn queue(&mut self, mode: QueueMode, cap: i64, champions: Vec<u64>) -> io::Result<()> {
         self.send(&ClientMsg::Queue {
             mode,

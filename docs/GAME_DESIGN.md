@@ -51,6 +51,18 @@
 
   - Purchases arrive as server-signed grants, like loot. The server checks them when it replays a world log (§6.2), so a world cannot hold more moons or bought elements than its owner paid for. Each extra planet is a separate world with its own seed and log. The server registers each world a player binds champions from, up to their number of planet slots.
   - Proposed element prices (for the owner to confirm): heavy metals 1,000, rare earths 2,000, radioactive elements 3,000 per deposit.
+  - **Built:**
+    - **Shop elements:** gold and tungsten (heavy metals), rare earths, and uranium and thorium (radioactive). The free tools cannot add them, only remove them. A deposit adds 2 units to each region within 2 of the chosen spot, on the planet or on a moon.
+    - **Tungsten** can be forged like iron, so peoples without iron reach the Forging era. It is the best gear material (grade 4).
+    - **Gold** carries enchantments: magic traditions with gold enchant their gear one arcana level sooner, and their spell foci gain +1 to hit.
+    - **Rare earths** make a people learn 30% faster.
+    - **Uranium and thorium** warm the ground (8 K per unit, up to 10 units) and feed heat-eating life. They also irradiate the life around them (3% extra death per unit, armour shields) and speed up its mutation (+20% speciation per unit).
+    - **Server:**
+      - It pays 500 Essence per ranked win.
+      - It records each spoil's value (the fallen champion's cost) and buys spoils back 1:1. A sold spoil can never enter a world, and a spoil already brought home cannot be sold.
+      - It sells deposits, moon slots and planet slots.
+      - It refuses a world whose purchases it never made, that belong to another player, or that were used twice or in another world.
+      - Each account binds champions from at most 1 + extra planets home worlds.
 - **Snowball risk:** winners earn Essence and loot (§6.2a), which makes them stronger. Losers get nothing. Mitigations to test: rating-based matchmaking keeps opponents close in strength; diminishing Essence and loot value from repeat wins against much weaker players.
 
 ## 4. World Simulation
@@ -557,8 +569,8 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
     - A grant carries the remains of the champion's kind: its biochemistry and genome. Brought home, it arrives as a small population of that kind in the region that suits it best, with traces of its medium and backbone substance. It may take root and seed new life, or die out.
     - The server checks every grant in a world log on replay: signed by the server, granted to this player, used once in the log, and brought into only one world.
     - Proposed numbers: the population's biomass is 1 + cost / 20.
-  - **Essence:** earning per fallen enemy is built (cost each, the old proposed rate). It is being replaced by the decided economy (§3): 500 per win, plus selling spoils back at their cost. The loser earns nothing. The balance shows on sign-in and after each match.
-  - Not yet: the shop (§3) and looting gear (with equipment, §5.4).
+  - **Essence (built, §3):** 500 per ranked win, plus selling spoils back at their cost. The loser earns nothing. The balance shows on sign-in and after each match.
+  - Not yet: looting gear (with equipment, §5.4).
 
 ### 6.3 Networking
 
