@@ -50,7 +50,7 @@ func _initialize() -> void:
 
 	var bytes: PackedByteArray = sim.overlay(0)
 	check(bytes.size() == sim.width() * sim.height() * 4, "overlay has one RGBA pixel per region")
-	for mode in range(7 + main.substances.size()):
+	for mode in range(8 + main.substances.size()):
 		main.overlay_select.select(mode)
 		main._refresh_map()
 	check(main.map_rect.texture != null, "map texture is shown")
@@ -118,6 +118,20 @@ func _initialize() -> void:
 		check(main.individual_detail.text.contains("Life story"), "individual detail shows life story")
 		check(main.individual_detail.text.contains("Character sheet"), "individual detail shows a character sheet")
 	check(main.individual_markers.size() > 0, "individual markers are drawn on the map")
+
+	# Civilizations may not exist yet; the readouts must work either way.
+	check(JSON.parse_string(sim.civilizations_json()) is Array, "civilizations_json is a list")
+	var civ_tab := -1
+	for k in main.tabs.get_tab_count():
+		if main.tabs.get_tab_title(k) == "Civilizations":
+			civ_tab = k
+	check(civ_tab >= 0, "there is a Civilizations tab")
+	if civ_tab >= 0:
+		main.tabs.current_tab = civ_tab
+		main._refresh_tabs()
+		check(main.civ_list.text != "", "the Civilizations tab shows something")
+	check(JSON.parse_string(sim.status_json()).has("civilizations"), "status reports the civilization count")
+	check(JSON.parse_string(sim.region_json(3, 3)).has("settlement"), "region info has a settlement entry")
 
 	# The metaphysical laws show up in status, the planet panel and sheets.
 	main._refresh_all()

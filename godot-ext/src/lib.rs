@@ -89,7 +89,7 @@ fn sheet_to_json(sh: &sim_core::sheet::CharacterSheet) -> Value {
             "name": b.name, "dice": b.dice, "damage": b.damage.name(), "dc": b.dc,
             "save_ability": b.save_ability, "targets": b.targets,
         })),
-        "class": sh.class,
+        "class": sh.class, "equipment": sh.equipment,
         "regeneration": sh.regeneration, "pack_tactics": sh.pack_tactics,
         "cost": c.cost,
         "cost_breakdown": {
@@ -332,7 +332,7 @@ impl SimWorld {
     }
 
     /// RGBA8 pixels, one per region. Modes: 0 surface, 1 temperature, 2 life,
-    /// 3 viability, 4 Veil, 5 mana, 6 qi, 7+ substance amount (7 + substance index).
+    /// 3 viability, 4 Veil, 5 mana, 6 qi, 7 civilizations, 8+ substance amount (8 + substance index).
     #[func]
     fn overlay(&self, mode: i64) -> PackedByteArray {
         PackedByteArray::from(self.world.overlay_rgba(Overlay::from_mode(mode)).as_slice())
@@ -349,6 +349,13 @@ impl SimWorld {
             .filter(|(_, a)| **a > Fx::ratio(1, 1000))
             .map(|(s, a)| json!({"name": s.name, "column": a.to_f64()}))
             .collect();
+        let living_civs: Vec<_> = w.living_civs().collect();
+        let wars = living_civs
+            .iter()
+            .enumerate()
+            .flat_map(|(k, a)| living_civs[k + 1..].iter().map(move |b| a.at_war_with(b.id) || b.at_war_with(a.id)))
+            .filter(|war| *war)
+            .count();
         to_gstring(json!({
             "seed": w.seed,
             "tick": w.tick,
@@ -396,6 +403,8 @@ impl SimWorld {
             "day_night_swing": w.day_night_swing().to_f64(),
             "living_species": w.living_species().count(),
             "living_individuals": w.living_individuals().count(),
+            "civilizations": living_civs.len(),
+            "wars": wars,
             "species_ever": w.species.last().map_or(0, |s| s.id),
             "atmosphere": atmosphere,
             "hash": format!("{:016x}", w.state_hash()),
@@ -459,8 +468,12 @@ impl SimWorld {
                 "viability": v.to_f64(),
             })
         });
+        let settlement = w.settlement_at(i).map(|(c, s)| {
+            json!({"name": s.name, "civ": c.name, "civ_id": c.id, "population": s.population.to_f64()})
+        });
         to_gstring(json!({
             "x": x, "y": y,
+            "settlement": settlement,
             "liquid_amount": liquid,
             "liquid_color": liquid_color.map(hex),
             "ice_amount": ice,
@@ -604,6 +617,56 @@ impl SimWorld {
             })
             .collect();
         to_gstring(json!({"year": w.year(), "nodes": nodes}))
+    }
+
+    /// Civilizations: the living ones first (largest first), then the fallen
+    /// (most recent first).
+    #[func]
+    fn civilizations_json(&self) -> GString {
+        let w = &self.world;
+        let tpy = sim_core::world::TICKS_PER_YEAR;
+        let mut civs: Vec<_> = w.civs.iter().collect();
+        civs.sort_by(|a, b| {
+            b.is_alive()
+                .cmp(&a.is_alive())
+                .then(b.fallen_tick.cmp(&a.fallen_tick))
+                .then(b.population().cmp(&a.population()))
+                .then(a.id.cmp(&b.id))
+        });
+        let name_of = |id: u32| w.civilization(id).map_or("a forgotten people".to_string(), |c| c.name.clone());
+        let list: Vec<Value> = civs
+            .iter()
+            .map(|c| {
+                let species = w.species_by_id(c.species);
+                let related = |keep: &dyn Fn(&sim_core::civ::Relation) -> bool| {
+                    c.relations
+                        .iter()
+                        .filter(|r| keep(r) && w.civilization(r.other).is_some_and(|o| o.is_alive()))
+                        .map(|r| name_of(r.other))
+                        .collect::<Vec<_>>()
+                };
+                let half = Fx::ratio(1, 2);
+                json!({
+                    "id": c.id, "name": c.name,
+                    "species": species.map(|s| s.name.clone()), "species_id": c.species,
+                    "color": hex(c.color),
+                    "era": sim_core::civ::ERAS[w.era(c)].0,
+                    "arcana": sim_core::civ::ARCANA[w.arcana_level(c)].0,
+                    "settlements": c.settlements.len(),
+                    "capital": c.capital().map(|s| s.name.clone()),
+                    "population": c.population().to_f64(),
+                    "culture": c.culture.describe(),
+                    "founded_year": c.founded_tick / tpy,
+                    "fallen_year": c.fallen_tick.map(|t| t / tpy),
+                    "parent": c.parent.map(name_of),
+                    "battles_won": c.battles_won, "battles_lost": c.battles_lost,
+                    "wars": related(&|r| r.at_war),
+                    "allies": related(&|r| r.opinion >= half),
+                    "rivals": related(&|r| r.opinion <= -half && !r.at_war),
+                })
+            })
+            .collect();
+        to_gstring(json!(list))
     }
 
     /// Living named individuals, most renowned first.
