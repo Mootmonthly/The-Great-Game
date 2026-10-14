@@ -36,6 +36,21 @@
 
 - **Essence** (working name) is the bridge currency. **Decided:** every world starts with a free set of basic resources. Players earn Essence by defeating other players in the arena and spend it to add extra and new resources beyond the basics.
 - Essence cannot be bought with real money (see §9). Paid Essence would be pay-to-win in a competitive game with permadeath.
+- **Essence economy (decided):**
+  - **Earning:** a player earns **500 Essence per ranked win**.
+  - **Selling war spoils:** each spoil of war (a loot grant, §6.2a) has a pseudo-cost: the fallen champion's cost (1–1000). Instead of bringing a spoil home, the winner may sell it back to the server at 1:1 for that much Essence. The server then deletes the grant, so it can never enter a world.
+  - **Shop:**
+
+    | Item | Price | What it gives |
+    |---|---|---|
+    | Heavy metals (e.g. gold, lead, tungsten) | *to set* | A deposit placed in one region of a world |
+    | Rare earths | *to set* | A deposit placed in one region of a world |
+    | Radioactive elements (e.g. uranium, thorium) | *to set* | A deposit placed in one region of a world |
+    | Extra moon | 10,000 | One more moon slot for one world (every world has one free slot) |
+    | Extra planet | 50,000 | One more home world for the player's army roster |
+
+  - Purchases arrive as server-signed grants, like loot. The server checks them when it replays a world log (§6.2), so a world cannot hold more moons or bought elements than its owner paid for. Each extra planet is a separate world with its own seed and log. The server registers each world a player binds champions from, up to their number of planet slots.
+  - Proposed element prices (for the owner to confirm): heavy metals 1,000, rare earths 2,000, radioactive elements 3,000 per deposit.
 - **Snowball risk:** winners earn Essence and loot (§6.2a), which makes them stronger. Losers get nothing. Mitigations to test: rating-based matchmaking keeps opponents close in strength; diminishing Essence and loot value from repeat wins against much weaker players.
 
 ## 4. World Simulation
@@ -234,7 +249,18 @@ Not all life has to come from the world's own chemistry. Some beings come from o
 **Implemented so far (Phase 2):**
 - **Day length:** days longer than Earth's add a day–night temperature swing (thick air holds heat overnight). Life must tolerate both the hot day and the cold night, so very slow-turning worlds are harder on life.
 - **Axial tilt:** seasons. Each year one hemisphere warms while the other cools, then they swap; thick atmospheres damp the swing.
-- **Moons:** each has a mass and a distance. Tides heat the planet (like Io's volcanoes) and add energy for life. A moon placed inside the Roche limit (0.3 Earth–Moon distances) is torn apart into rings; a moon on nearly the same orbit as another collides and merges with it. Up to 12 moons.
+- **Moons:** each has a mass and a distance. Tides heat the planet (like Io's volcanoes) and add energy for life. A moon placed inside the Roche limit (0.3 Earth–Moon distances) is torn apart into rings. A world has one moon slot; more can be bought with Essence (§3).
+- **Moon worlds (decided, building):** every moon is a world of its own, simulated alongside its planet.
+  - It has its own regions, chemistry, atmosphere, life, individuals, civilizations and laws. Every planet control works on it: substances, heat, gravity, radius, axial tilt, laws and the Veil. Its champions can join the player's army.
+  - It stays a moon of its planet:
+    - It shares the planet's star, distance and year, so the star controls are the planet's.
+    - Its mass, set by its own gravity and radius controls, is the moon's mass for the planet's tides.
+    - In Natural mode it is tidally locked: its day equals its orbital period, 27.3 days × √(distance³ / (planet mass + moon mass)), with distance in Earth–Moon distances and mass in Earth masses.
+    - The planet raises tides on it. A locked moon flexes only a little: 5% of the planet's tidal pull (planet mass in lunar masses / distance³) heats it, as with Io.
+    - The planet eclipses its sun for part of each orbit: the fraction is the planet's radius / (π × distance × 60.3 Earth radii). Eclipses dim its light and thin its Veil.
+    - A moon cannot have moons of its own.
+  - **Orbit:** the moon's distance is set from the planet. In Natural mode it stays between the Roche limit and the stable limit. If the stable limit shrinks, the moon is drawn in rather than lost, so a bought moon is never destroyed by a slider. In Godhand mode any distance is allowed, with strain as for any unstable moon.
+  - The whole moon, its actions included, is stored in the planet's action log (as actions aimed at that moon). Replaying the planet replays its moons.
 - The globe shows the tilt, a spin rate that follows the day length, orbiting moons and rings.
 - **Natural and Godhand modes** (new worlds start in Natural):
   - *Natural:* the planet has a mass and a radius, and gravity = mass / radius². Asking for a gravity changes the planet's mass instead. The star's brightness follows from its type and mass (main-sequence stars: L ∝ M^3.5); asking for a brightness picks the closest mass the star type allows. Year length follows Kepler: √(distance³ / star mass), and long years mean stronger seasons. Moons beyond the stable limit (about 1.95 Earth–Moon distances × distance in AU × ∛(planet mass / star mass)) escape.
@@ -528,8 +554,8 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
     - A grant carries the remains of the champion's kind: its biochemistry and genome. Brought home, it arrives as a small population of that kind in the region that suits it best, with traces of its medium and backbone substance. It may take root and seed new life, or die out.
     - The server checks every grant in a world log on replay: signed by the server, granted to this player, used once in the log, and brought into only one world.
     - Proposed numbers: the population's biomass is 1 + cost / 20.
-  - **Essence (implemented):** the winner earns Essence for each enemy champion that fell, equal to its cost (proposed rate). The loser earns nothing. The balance shows on sign-in and after each match.
-  - Not yet: spending Essence (which resources are gated and their prices, §11), and looting gear (with equipment, §5.4).
+  - **Essence:** earning per fallen enemy is built (cost each, the old proposed rate). It is being replaced by the decided economy (§3): 500 per win, plus selling spoils back at their cost. The loser earns nothing. The balance shows on sign-in and after each match.
+  - Not yet: the shop (§3) and looting gear (with equipment, §5.4).
 
 ### 6.3 Networking
 
@@ -662,6 +688,8 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Metaphysical laws (rules) | Built as in §4.6: Arcane Magic (ley-line mana, Spellcasting milestone), Soul Power (souls and rebirth), Daoist Cultivation (nine realms, tribulations); all thin the Veil in their own way. Numbers open to tuning |
 | — | Civilizations and equipment (rules) | Built as in §4.5 and §5.4: peoples found by sapient species, eras limited by materials, magic traditions, culture-driven diplomacy, wars and schisms; gear by body part from local materials. Numbers open to tuning |
 | — | Moons | A player has at most one moon for now; more moons are purchasable with Essence. A moon is its own world: it gets every planet control (temperature, composition, atmosphere, gravity, rotation…) and its own simulated life, while staying a moon of the main planet with all the orbital mechanics that entails |
+| — | Essence economy | 500 Essence per ranked win. War spoils have a pseudo-cost (the fallen champion's cost) and can be sold back to the server 1:1 for Essence, which deletes them. Shop: heavy metals, rare earths and radioactive elements; extra moons 10,000; extra planets 50,000 (§3) |
+| — | Moon orbits | A moon world is never lost to a slider: Natural mode keeps its orbit between the Roche limit and the stable limit, drawing it in if the limit shrinks (Claude's proposal, owner may revise) |
 | — | Ecology | Flora and fauna form a real food chain: plants hold the light niche, animals with nervous systems graze plants instead of photosynthesising, predators eat animals |
 | — | Humanoid sapients | Sapience biases evolution toward a humanoid body plan (two legs, two arms, a head with eyes) in the simulation itself |
 | — | Next work order | Civilizations and equipment together; then re-check cost balance; then the arena revisit, Essence spending, and final art |
@@ -677,4 +705,4 @@ Deferred until the world simulation is complete:
 
 1. Arena match structure: map types, match length, and victory conditions (§6.1). The owner finds the current arena bare-bones; it will be revisited after the online server.
 2. Practice queue details (§6.2a).
-3. **Essence unlocks:** which resources are free and which cost Essence (rare elements, unusual molecules, more moons, unusual star types, Veil-thinning resources), and their prices. Essence is already earned and stored (§6.2a).
+3. **Essence prices for elements:** heavy metals, rare earths and radioactive elements are in the shop (§3); their prices are proposed, not confirmed. Still open: whether unusual molecules, unusual star types or Veil-thinning resources join the shop.
