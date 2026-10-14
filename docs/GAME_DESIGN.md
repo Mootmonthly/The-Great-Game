@@ -166,6 +166,32 @@ Not all life has to come from the world's own chemistry. Some beings come from o
 - Sapient species run an agent-based civilization model at L1: settlements, technology or magic progression, resource use, culture values, diplomacy, war.
 - At L2, individuals get names, relationships (kin, rivals, allies, mentors), and a personal history. These feed the champion's backstory when bound.
 
+**Implemented (Phase 4, `sim-core/src/civ.rs`; numbers proposed, open to tuning):** civilizations update once a year.
+- **Founding:** every sapient species with enough biomass founds a people. Its capital is where the species is most numerous.
+- **Culture:** taken from the species' temperament.
+  - Militarism comes from aggression, openness from curiosity, cohesion from sociability, and caution from fear.
+  - Culture drives expansion, learning, diplomacy and war.
+- **Settlements:**
+  - Population follows the species' biomass in that region. A settlement is lost when the people leaves.
+  - Each year a people may found a new settlement in a neighbouring region where it lives. The chance rises with openness, up to 40 settlements.
+  - No two peoples share a region.
+  - A people with no settlements left falls.
+- **Technology:** progress grows with the square root of population and with openness.
+  - It moves through six eras: Primitive, Tribal, Crafting, Forging, Classical and Industrial.
+  - Forging and later need iron in the people's lands; without it a people stays at Crafting.
+  - On an Earth-like world, Forging comes about 300 years after founding and Classical about 600.
+- **Magic traditions:** under Arcane Magic, peoples living on ley lines develop Hedge Magic, then Rituals, then Arcane Schools, then High Magic. Spellcasting species learn twice as fast.
+- **Home advantage:** a people is stronger where it has settled, +15% per era.
+- **Diplomacy:**
+  - Opinion between peoples within 3 regions of each other drifts with how alike their cultures are. It drifts lower between different species and between cautious peoples.
+  - War breaks out when opinion falls below −0.4 and either side is warlike.
+  - Peace comes after at most 10 years, or earlier by chance.
+- **War:** each year, the stronger side wins a battle; strength is population × era × militarism, with luck.
+  - The loser's settlement nearest the winner loses 40% of its people.
+  - A small settlement is taken over by a winner of the same species, or razed by one of a different species.
+  - Individuals in the fighting remember it, which counts towards the Fighter class.
+- **Schisms:** a fractious people (cohesion below 0.4) with 12 or more settlements may split. The far half becomes a new people with a drifted culture and bad blood with the old one.
+
 ### 4.6 Laws of Reality
 
 **Decided launch set: planetary and physical controls.** The player controls these from the start:
@@ -363,6 +389,18 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 - **Unique gear by chemistry:** items carry the substance, damage type and laws of the world that made them. For example, silicon life forges heat-proof crystal blades, and beings from beyond make relics no native can craft.
 - **Refitting looted gear (decided):** looted gear can be refitted to a different body plan at a cost (cost unit to be set: resources, Essence or time). Until refitted, it fits only bodies with the parts it was made for.
 - **Timing (decided):** built in the content phase (roadmap phase 4).
+- **Implemented (`sim-core/src/equipment.rs`; numbers proposed):** a civilization from the Tribal era onwards arms every member of its species, both named individuals and rank and file.
+  - **Materials:** from the best its lands allow. Iron (grade 3) from Forging. Crystal (grade 2) for silicon life, and obsidian (grade 1) from silicate rock, both from Crafting. Otherwise bone and wood, or chitin (grade 0).
+  - **Gear by body part:**
+    - Hands: a weapon. A war axe for warlike peoples (d8 base), a spear for expansive ones (d6), otherwise a sword (d6), +2 die steps per grade. Cautious peoples with four or more limbs add a shield.
+    - Tentacles: blades, one per pair, up to 3.
+    - Body: armour, worth 1 + grade + era / 2 AC.
+    - Jaws (Crafting and later): fang caps that add damage to the bite.
+    - Wings (Forging and later): wing blades.
+    - Glands (Classical and later): a breath focus, +2d6 breath.
+    - Sapient minds (with a Rituals tradition): a spell focus that adds to-hit with spells.
+  - **Enchantment:** an Arcane Schools tradition or higher enchants weapons, giving +1 to hit and +2 damage.
+  - Equipment shows on the sheet and changes its cost. Gear carried home as loot and refitting come later.
 
 ### 5.5 Classes (decided: earned by named individuals)
 
@@ -574,7 +612,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 **Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, permadeath with a ledger of the dead, and online play from the arena screen. Remaining: Steam identity, cloud hosting, reconnects, client-side prediction, the Essence economy and looting, and large-army arena work (500 units per side).
 
-**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), and the Veil with beings from beyond (§4.4a). Remaining: civilizations, archetypes, equipment (§5.4), and gear looting.
+**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: archetypes, gear looting and refitting, and a cost-balance re-check.
 
 ## 9. Business Model
 
@@ -603,6 +641,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Natural/Godhand and star types | Built as in §4.6: Natural is the default; Godhand strain thins the air and heats the world; eight star types with light quality, radiation and flares (numbers open to tuning) |
 | — | Online server rules | Species champions are rank and file and can be bound again; named individuals die forever via a ledger of the dead; disconnecting mid-match counts as surrender unless the player rejoins within 30 s (owner asked for reconnecting); an unranked practice queue with no permadeath (§6.2–6.3) |
 | — | Metaphysical laws (rules) | Built as in §4.6: Arcane Magic (ley-line mana, Spellcasting milestone), Soul Power (souls and rebirth), Daoist Cultivation (nine realms, tribulations); all thin the Veil in their own way. Numbers open to tuning |
+| — | Civilizations and equipment (rules) | Built as in §4.5 and §5.4: peoples found by sapient species, eras limited by materials, magic traditions, culture-driven diplomacy, wars and schisms; gear by body part from local materials. Numbers open to tuning |
 | — | Next work order | Civilizations and equipment together; then re-check cost balance; then the arena revisit, Essence spending, and final art |
 | — | macOS | Development and CI on macOS paused for now; Windows and Linux only |
 | — | Classes | Named individuals only, earned from their life story and their world's laws (fighter from victories, wizard needs Arcane Magic, cultivator needs Daoist Cultivation…); not assigned. Built together with the metaphysical laws, before the arena revisit |
