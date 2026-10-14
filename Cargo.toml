@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["sim-core", "sim-cli", "godot-ext"]
+members = ["sim-core", "sim-cli", "godot-ext", "net-proto", "arena-server"]
 
 [workspace.package]
 edition = "2021"

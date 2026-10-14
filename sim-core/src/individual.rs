@@ -85,6 +85,19 @@ pub struct Individual {
 }
 
 impl Individual {
+    /// Identity of a being for the server's ledger of the dead: the same
+    /// being always has the same fingerprint, even in a branch of its
+    /// world replayed with different later actions.
+    pub fn fingerprint(&self, seed: u64) -> u64 {
+        let mut h = StateHasher::new();
+        h.u64(seed);
+        h.u64(self.id as u64);
+        h.u64(self.species as u64);
+        h.u64(self.born_tick);
+        h.bytes(self.name.as_bytes());
+        h.finish()
+    }
+
     pub fn is_alive(&self) -> bool {
         self.death_tick.is_none()
     }
@@ -302,6 +315,15 @@ impl World {
                 }
                 self.individuals.push(ind);
                 living += 1;
+            }
+        }
+    }
+
+    /// A champion died in the arena: it dies at home too.
+    pub(crate) fn champion_fell(&mut self, id: u32) {
+        if let Ok(k) = self.individuals.binary_search_by_key(&id, |x| x.id) {
+            if self.individuals[k].is_alive() {
+                self.kill_individual(k, "fell in the arena".into(), None);
             }
         }
     }
