@@ -5,9 +5,10 @@
 //! main-sequence star's luminosity follows from its mass; giants and stellar
 //! remnants have their own fixed brightness per unit mass.
 
+use serde::{Deserialize, Serialize};
 use crate::fixed::Fx;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum StarType {
     RedDwarf = 0,
     OrangeDwarf = 1,

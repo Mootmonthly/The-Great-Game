@@ -400,7 +400,10 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
 - The client uploads its world's seed and action log when it binds a champion. The server replays the log headless and rebuilds the sheet itself. It rejects a cost mismatch, a missing or dead being, or any edited log (an edit changes the world, so the claimed champion no longer matches).
 - Limits per verification: 200,000 actions and 10,000 simulated years, so one request cannot use unbounded CPU. Replays share half the server's cores.
 - A verified champion becomes a server-signed token (HMAC-SHA256). The server keeps the authoritative sheet and appearance; clients refer to champions only by token, so a client cannot alter them afterwards.
-- Not yet: signed checkpoints, so a re-bind replays only the new part of the log. Today every bind replays the whole history (about 25 ms per simulated year).
+- **Checkpoints:** after each verification the server keeps a snapshot of that player's world (about 1.3 MB). A later bind whose log extends the checkpointed log resumes from the snapshot and replays only the new actions.
+  - Any change to earlier history, or a different account, falls back to a full replay.
+  - Snapshots never leave the server, so they need no signature.
+  - Tests check that a restored world continues bit-identically.
 
 ### 6.2a Permadeath
 

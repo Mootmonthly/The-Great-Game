@@ -8,7 +8,7 @@
 use crate::sign::{digest, hex, Signer};
 use crate::steam::SteamConfig;
 use crate::store::{Champion, Store};
-use crate::verify::verify;
+use crate::verify::{verify_with, Checkpoints};
 use net_proto::{
     read_msg, write_msg, Auth, ChampionKind, ChampionToken, ClientMsg, Fallen, QueueMode, RatingView,
     ServerMsg, HASH_INTERVAL, PROTOCOL_VERSION,
@@ -77,6 +77,7 @@ pub struct ServerHandle {
 struct Shared {
     config: Config,
     tls: TlsServer,
+    checkpoints: Checkpoints,
     signer: Signer,
     state: Mutex<State>,
     verifying: Semaphore,
@@ -231,9 +232,11 @@ pub fn start(config: Config) -> io::Result<ServerHandle> {
     let listener = TcpListener::bind(&config.bind)?;
     let addr = listener.local_addr()?;
     let cores = thread::available_parallelism().map_or(2, |n| n.get());
+    let checkpoints = Checkpoints::new(config.data_dir.as_ref().map(|d| d.join("checkpoints")));
     let shared = Arc::new(Shared {
         config,
         tls,
+        checkpoints,
         signer,
         state: Mutex::new(State {
             store,
@@ -443,7 +446,7 @@ fn bind(
     cost: i64,
 ) -> ServerMsg {
     shared.verifying.acquire();
-    let verified = verify(log, kind, id, cost);
+    let verified = verify_with(Some(&shared.checkpoints), account, log, kind, id, cost);
     shared.verifying.release();
     let v = match verified {
         Ok(v) => v,

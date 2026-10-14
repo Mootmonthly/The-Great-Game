@@ -3,6 +3,7 @@
 //! Phase 0 runs only the regional layer (L1 in docs/GAME_DESIGN.md §4.1) on a
 //! 2D equirectangular grid. One tick is one season; four ticks make a year.
 
+use serde::{Deserialize, Serialize};
 use crate::action::{Action, ActionLog};
 use crate::fixed::Fx;
 use crate::hash::StateHasher;
@@ -21,7 +22,7 @@ pub const TICKS_PER_YEAR: u64 = 4;
 /// fraction of the full elevation range.
 const LIQUID_DEPTH_PER_UNIT: Fx = Fx::ratio(1, 6);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Planet {
     pub star_distance_au: Fx,
     pub star_luminosity: Fx,
@@ -48,7 +49,7 @@ pub struct Planet {
 }
 
 /// A moon. Mass in lunar masses, distance in Earth–Moon distances.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Moon {
     pub mass: Fx,
     pub distance: Fx,
@@ -170,13 +171,13 @@ impl Planet {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Population {
     pub species: u32,
     pub biomass: Fx,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Region {
     /// 0..1, generated from the seed.
     pub elevation: Fx,
@@ -191,13 +192,17 @@ pub struct Region {
     pub populations: Vec<Population>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct World {
     pub seed: u64,
     pub tick: u64,
     pub planet: Planet,
+    /// The substance table; not stored in snapshots (it is data).
+    #[serde(skip)]
     pub substances: Vec<Substance>,
     /// Distinct backbone elements (e.g. Carbon, Silicon), derived from the
     /// substance table.
+    #[serde(skip)]
     pub elements: Vec<String>,
     pub regions: Vec<Region>,
     /// Atmospheric column of each substance, in units per region.
@@ -220,15 +225,64 @@ pub struct World {
     log: ActionLog,
 }
 
+/// Backbone elements in substance-table order.
+fn elements_of(substances: &[Substance]) -> Vec<String> {
+    let mut elements: Vec<String> = Vec::new();
+    for s in substances {
+        if !s.backbone_element.is_empty() && !elements.contains(&s.backbone_element) {
+            elements.push(s.backbone_element.clone());
+        }
+    }
+    elements
+}
+
+/// Bumped whenever the world's stored form or rules change, so old
+/// snapshots are not trusted.
+const SNAPSHOT_VERSION: u32 = 1;
+
+#[derive(Serialize)]
+struct SnapshotRef<'a> {
+    version: u32,
+    world: &'a World,
+}
+
+#[derive(Deserialize)]
+struct SnapshotOwned {
+    version: u32,
+    world: World,
+}
+
 impl World {
+    /// The full world state, to resume later without replaying its log.
+    pub fn snapshot(&self) -> Vec<u8> {
+        serde_json::to_vec(&SnapshotRef {
+            version: SNAPSHOT_VERSION,
+            world: self,
+        })
+        .expect("worlds serialise")
+    }
+
+    /// Restores a world saved by `snapshot`. It continues exactly as the
+    /// original would have.
+    pub fn from_snapshot(bytes: &[u8]) -> Result<World, String> {
+        let s: SnapshotOwned = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        if s.version != SNAPSHOT_VERSION {
+            return Err("snapshot from another version".into());
+        }
+        let mut w = s.world;
+        w.substances = default_substances();
+        w.elements = elements_of(&w.substances);
+        if w.regions.iter().any(|r| r.amounts.len() != w.substances.len())
+            || w.atmosphere.len() != w.substances.len()
+        {
+            return Err("snapshot does not match the substance table".into());
+        }
+        Ok(w)
+    }
+
     pub fn new(seed: u64) -> World {
         let substances = default_substances();
-        let mut elements: Vec<String> = Vec::new();
-        for s in &substances {
-            if !s.backbone_element.is_empty() && !elements.contains(&s.backbone_element) {
-                elements.push(s.backbone_element.clone());
-            }
-        }
+        let elements = elements_of(&substances);
         let mut rng = Rng::new(seed);
         let elevation = value_noise(
             &mut rng,
