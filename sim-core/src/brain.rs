@@ -11,6 +11,7 @@
 //! - **Named individuals:** each carries a personal variant of its species'
 //!   brain and runs it every season to decide what to do.
 
+use serde::{Deserialize, Serialize};
 use crate::fixed::Fx;
 use crate::hash::StateHasher;
 use crate::rng::Rng;
@@ -41,8 +42,25 @@ pub mod output {
     pub const NAMES: [&str; 4] = ["approach", "flee", "attack", "socialize"];
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Fixed-size weight arrays (de)serialise as plain lists.
+mod weights_serde {
+    use super::{Fx, WEIGHTS};
+    use serde::{de::Error, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(w: &[Fx; WEIGHTS], s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(w.iter())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[Fx; WEIGHTS], D::Error> {
+        let v = Vec::<Fx>::deserialize(d)?;
+        v.try_into()
+            .map_err(|v: Vec<Fx>| D::Error::invalid_length(v.len(), &"the brain's weight count"))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Brain {
+    #[serde(with = "weights_serde")]
     pub weights: [Fx; WEIGHTS],
 }
 
@@ -119,7 +137,7 @@ impl Brain {
 }
 
 /// Behavioural tendencies measured from a brain, each 0..1.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Temperament {
     pub aggression: Fx,
     pub fear: Fx,

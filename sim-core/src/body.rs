@@ -6,11 +6,12 @@
 //! arena abilities from the same parts: wings give a fly speed, a gland's
 //! substance decides its breath weapon.
 
+use serde::{Deserialize, Serialize};
 use crate::fixed::Fx;
 use crate::hash::StateHasher;
 use crate::rng::Rng;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PartKind {
     Segment,
     Shell,
@@ -171,7 +172,7 @@ pub fn size_cap(flags: u16) -> Fx {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Part {
     pub kind: PartKind,
     pub count: u8,
@@ -181,14 +182,14 @@ pub struct Part {
     pub substance: Option<u16>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Body {
     /// At most one entry per part kind, kept sorted by kind.
     pub parts: Vec<Part>,
 }
 
 /// Values derived from a body, each 0..1 unless stated.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct BodyTraits {
     pub armor: Fx,
     pub speed: Fx,

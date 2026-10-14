@@ -1,0 +1,17 @@
+# One arena server with persistent state. From the repository root:
+#   docker compose -f deploy/docker-compose.yml up -d
+services:
+  arena:
+    build: ..
+    image: great-game-arena
+    restart: unless-stopped
+    ports:
+      - "7878:7878"
+    volumes:
+      - arena-data:/data
+      # For a real certificate, mount it and add to `command`:
+      # - /etc/letsencrypt:/etc/letsencrypt:ro
+    # command: ["--cert", "/etc/letsencrypt/live/arena.example.com/fullchain.pem",
+    #           "--key", "/etc/letsencrypt/live/arena.example.com/privkey.pem"]
+volumes:
+  arena-data:

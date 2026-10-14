@@ -10,6 +10,7 @@
 //! carbon and water: any substance in the data table with the right
 //! properties can take part.
 
+use serde::{Deserialize, Serialize};
 use crate::body::{self, Body, BodyTraits, PartKind};
 use crate::brain::{self, Brain, Temperament};
 use crate::fixed::Fx;
@@ -22,7 +23,7 @@ pub const MAX_LIVING_SPECIES: usize = 400;
 /// Cap on stored species records; the oldest extinct records are dropped.
 const MAX_SPECIES_RECORDS: usize = 1500;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum EnergyKind {
     Light = 0,
     Geothermal = 1,
@@ -55,7 +56,7 @@ impl EnergyKind {
 }
 
 /// A biochemistry profile: one answer to each part of the life triad.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Profile {
     /// Index into `World::elements`.
     pub element: u16,
@@ -65,7 +66,7 @@ pub struct Profile {
 }
 
 /// Heritable traits of a species.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Genome {
     /// Relative body mass; 1.0 is roughly human-sized.
     pub size: Fx,
@@ -82,7 +83,7 @@ pub struct Genome {
     pub brain: Brain,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Species {
     pub id: u32,
     pub name: String,
@@ -290,7 +291,7 @@ impl Species {
 }
 
 /// Life-triad scores for one region, recomputed each tick.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RegionLife {
     /// Backbone score per element.
     pub backbone: Vec<Fx>,

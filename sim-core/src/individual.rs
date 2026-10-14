@@ -5,6 +5,7 @@
 //! server replay covers them and they behave the same whether or not anyone
 //! is watching. They appear once a species has a nervous system.
 
+use serde::{Deserialize, Serialize};
 use crate::body;
 use crate::brain::{self, input, output, Brain, Temperament, INPUTS};
 use crate::fixed::Fx;
@@ -18,7 +19,7 @@ const MAX_RECORDS: usize = 600;
 const MAX_RELATIONS: usize = 8;
 const MAX_MEMORIES: usize = 12;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemoryKind {
     Born,
     Befriended,
@@ -47,14 +48,14 @@ impl MemoryKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Memory {
     pub tick: u64,
     pub kind: MemoryKind,
     pub other: Option<u32>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Relation {
     pub other: u32,
     /// -1 (hatred) .. 1 (deep bond).
@@ -62,7 +63,7 @@ pub struct Relation {
     pub kin: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Individual {
     pub id: u32,
     pub species: u32,
