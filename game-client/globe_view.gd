@@ -155,6 +155,8 @@ func refresh() -> void:
 	cloud_material.set_shader_parameter("cloud_color", Color(a["cloud_color"][0], a["cloud_color"][1], a["cloud_color"][2]))
 	var sunlight: float = a["sunlight"]
 	sun.light_energy = clampf(0.6 + 0.6 * sqrt(sunlight), 0.35, 1.6)
+	if a.has("star_color"):
+		sun.light_color = Color.html(a["star_color"])
 
 
 ## Updates rotation speed, tilt, moons and rings from the world status.

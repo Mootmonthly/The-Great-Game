@@ -9,6 +9,7 @@ use crate::hash::StateHasher;
 use crate::individual::Individual;
 use crate::life::{RegionLife, Species};
 use crate::rng::Rng;
+use crate::star::StarType;
 use crate::substance::{default_substances, Phase, Substance};
 
 pub const WIDTH: usize = 64;
@@ -33,6 +34,17 @@ pub struct Planet {
     pub moons: Vec<Moon>,
     /// Mass (in lunar masses) of rings left by moons torn apart.
     pub rings: Fx,
+    /// Godhand mode: every value is set freely, even impossible ones.
+    /// Natural mode (false): linked values follow physics.
+    pub godhand: bool,
+    pub star_type: StarType,
+    /// Star mass in solar masses.
+    pub star_mass: Fx,
+    /// Planet mass and radius relative to Earth.
+    pub planet_mass: Fx,
+    pub planet_radius: Fx,
+    /// Tick of the most recent stellar flare, if any.
+    pub last_flare_tick: Option<u64>,
 }
 
 /// A moon. Mass in lunar masses, distance in Earth–Moon distances.
@@ -58,11 +70,72 @@ impl Default for Planet {
             axial_tilt_deg: Fx::ZERO,
             moons: Vec::new(),
             rings: Fx::ZERO,
+            godhand: false,
+            star_type: StarType::YellowDwarf,
+            star_mass: Fx::ONE,
+            planet_mass: Fx::ONE,
+            planet_radius: Fx::ONE,
+            last_flare_tick: None,
         }
     }
 }
 
 impl Planet {
+    /// Surface gravity physics gives: mass / radius².
+    pub fn natural_gravity(&self) -> Fx {
+        self.planet_mass / (self.planet_radius * self.planet_radius)
+    }
+
+    pub fn natural_luminosity(&self) -> Fx {
+        self.star_type.natural_luminosity(self.star_mass)
+    }
+
+    /// Orbital period in Earth years (Kepler: √(d³ / M)).
+    pub fn year_length(&self) -> Fx {
+        let d = self.star_distance_au;
+        (d * d * d / self.star_mass).sqrt()
+    }
+
+    /// Farthest stable moon orbit, in Earth–Moon distances: about half the
+    /// planet's Hill sphere (3.9 Earth–Moon distances for Earth).
+    pub fn moon_limit(&self) -> Fx {
+        let ratio = self.planet_mass / self.star_mass;
+        let cube_root = (ratio.log2() / Fx::from_int(3)).exp2();
+        Fx::ratio(195, 100) * self.star_distance_au * cube_root
+    }
+
+    /// Harmful radiation reaching the top of the atmosphere, relative to
+    /// what the Sun delivers to Earth.
+    pub fn radiation_flux(&self) -> Fx {
+        let d = self.star_distance_au;
+        self.star_type.info().radiation / Fx::ratio(2, 10) / (d * d)
+    }
+
+    /// How far Godhand settings are from what physics allows. Zero in
+    /// Natural mode. Strain has harsh side effects and thins the Veil.
+    pub fn strain(&self) -> Fx {
+        if !self.godhand {
+            return Fx::ZERO;
+        }
+        let off = |actual: Fx, natural: Fx| (actual / natural.max(Fx::ratio(1, 10000))).log2().abs();
+        let limit = self.moon_limit();
+        let unstable = self.moons.iter().filter(|m| m.distance > limit).count() as i64;
+        (off(self.gravity, self.natural_gravity()) + off(self.star_luminosity, self.natural_luminosity()) + Fx::ratio(unstable, 2))
+            .min(Fx::from_int(20))
+    }
+
+    /// In Natural mode, recomputes linked values and lets moons beyond the
+    /// stable limit escape.
+    pub fn enforce_natural(&mut self) {
+        if self.godhand {
+            return;
+        }
+        self.gravity = self.natural_gravity().clamp(Fx::ratio(1, 100), Fx::from_int(50));
+        self.star_luminosity = self.natural_luminosity();
+        let limit = self.moon_limit();
+        self.moons.retain(|m| m.distance <= limit);
+    }
+
     /// Tidal strength relative to Earth's Moon: Σ mass / distance³.
     pub fn tidal_strength(&self) -> Fx {
         self.moons.iter().fold(Fx::ZERO, |acc, m| {
@@ -274,10 +347,41 @@ impl World {
                 self.planet.star_distance_au = (*au).clamp(Fx::ratio(1, 100), Fx::from_int(100));
             }
             Action::SetStarLuminosity { suns } => {
-                self.planet.star_luminosity = (*suns).clamp(Fx::ratio(1, 1000), Fx::from_int(1000));
+                let suns = (*suns).clamp(Fx::ratio(1, 10000), Fx::from_int(100_000));
+                if self.planet.godhand {
+                    self.planet.star_luminosity = suns;
+                } else {
+                    // Natural: brightness comes from the star's mass.
+                    self.planet.star_mass = self.planet.star_type.mass_for_luminosity(suns);
+                }
             }
             Action::SetGravity { g } => {
-                self.planet.gravity = (*g).clamp(Fx::ratio(1, 100), Fx::from_int(50));
+                let g = (*g).clamp(Fx::ratio(1, 100), Fx::from_int(50));
+                if self.planet.godhand {
+                    self.planet.gravity = g;
+                } else {
+                    // Natural: gravity comes from mass; keep the radius.
+                    let r = self.planet.planet_radius;
+                    self.planet.planet_mass = (g * r * r).clamp(Fx::ratio(1, 1000), Fx::from_int(5000));
+                }
+            }
+            Action::SetGodhand { on } => self.planet.godhand = *on,
+            Action::SetStarType { star } => {
+                let kind = StarType::from_index(*star);
+                self.planet.star_type = kind;
+                self.planet.star_mass = kind.info().mass;
+                self.planet.star_luminosity = kind.natural_luminosity(kind.info().mass);
+            }
+            Action::SetStarMass { solar } => {
+                let info = self.planet.star_type.info();
+                self.planet.star_mass = if self.planet.godhand {
+                    (*solar).clamp(Fx::ratio(5, 100), Fx::from_int(100))
+                } else {
+                    (*solar).clamp(info.min_mass, info.max_mass)
+                };
+            }
+            Action::SetPlanetRadius { earths } => {
+                self.planet.planet_radius = (*earths).clamp(Fx::ratio(1, 10), Fx::from_int(20));
             }
             Action::SetDayLength { hours } => {
                 self.planet.day_length_hours = (*hours).clamp(Fx::ONE, Fx::from_int(10_000));
@@ -292,6 +396,7 @@ impl World {
                 }
             }
         }
+        self.planet.enforce_natural();
         if !matches!(action, Action::Tick { .. }) {
             // Show the effect of tool use immediately, without advancing time.
             self.update_climate();
@@ -302,6 +407,8 @@ impl World {
 
     /// Advances one season.
     fn step(&mut self) {
+        self.planet.enforce_natural();
+        self.stellar_weather();
         self.update_climate();
         self.update_substance_cycle();
         self.update_climate();
@@ -309,6 +416,45 @@ impl World {
         self.update_life();
         self.update_individuals();
         self.tick += 1;
+    }
+
+    /// Flares and Godhand strain strip atmosphere.
+    fn stellar_weather(&mut self) {
+        let mut loss = (self.planet.strain() * Fx::ratio(4, 1000)).min(Fx::ratio(5, 100));
+        if self.planet.star_type.info().flares && self.rng.chance(Fx::ratio(5, 100)) {
+            self.planet.last_flare_tick = Some(self.tick);
+            loss += (Fx::ratio(3, 100) / self.planet.gravity).min(Fx::ratio(2, 10));
+        }
+        if loss > Fx::ZERO {
+            for a in &mut self.atmosphere {
+                let lost = *a * loss;
+                *a -= lost;
+            }
+        }
+    }
+
+    /// Radiation reaching the surface after atmospheric shielding.
+    pub fn surface_radiation(&self) -> Fx {
+        self.planet.radiation_flux() / (Fx::ONE + self.pressure * Fx::from_int(2))
+    }
+
+    /// Radiation above what life shrugs off (an airless Earth's dose).
+    /// Harms populations and speeds up mutation.
+    pub fn harmful_radiation(&self) -> Fx {
+        (self.surface_radiation() - Fx::ONE).max(Fx::ZERO)
+    }
+
+    /// How strained reality is here: Godhand strain plus extreme physics
+    /// (neutron stars, crushing gravity). Feeds the Veil later (§4.4a).
+    pub fn reality_strain(&self) -> Fx {
+        let mut s = self.planet.strain();
+        if self.planet.star_type == StarType::NeutronStar {
+            s += Fx::from_int(2);
+        }
+        if self.planet.gravity > Fx::from_int(5) {
+            s += (self.planet.gravity / Fx::from_int(5)).log2();
+        }
+        s
     }
 
     /// Extra day–night temperature swing (kelvin, half-amplitude) from days
@@ -358,9 +504,13 @@ impl World {
         // Seasons: tilt warms one hemisphere and cools the other, swapping
         // twice a year. Thick atmospheres damp them.
         let season = [0, 1, 0, -1][(self.tick % TICKS_PER_YEAR) as usize];
-        let season_amp = self.planet.axial_tilt_deg / Fx::from_int(23) * Fx::from_int(15) * spread;
+        // Longer years give seasons more time to bite.
+        let year_factor = self.planet.year_length().sqrt().clamp(Fx::ratio(3, 10), Fx::from_int(3));
+        let season_amp = self.planet.axial_tilt_deg / Fx::from_int(23) * Fx::from_int(15) * spread * year_factor;
         // Tidal heating from moons, like Io's volcanoes.
-        let tidal_heat = (self.planet.tidal_strength() * Fx::from_int(2)).min(Fx::from_int(300));
+        let tidal_heat = (self.planet.tidal_strength() * Fx::from_int(2)).min(Fx::from_int(300))
+            // Godhand strain shakes the crust: quakes and volcanism.
+            + self.planet.strain() * Fx::from_int(8);
 
         let mut sum = Fx::ZERO;
         for y in 0..HEIGHT {
@@ -505,6 +655,11 @@ impl World {
         h.i64(self.planet.day_length_hours.0);
         h.i64(self.planet.axial_tilt_deg.0);
         h.i64(self.planet.rings.0);
+        h.u64(self.planet.godhand as u64);
+        h.u64(self.planet.star_type as u64);
+        h.i64(self.planet.star_mass.0);
+        h.i64(self.planet.planet_mass.0);
+        h.i64(self.planet.planet_radius.0);
         for m in &self.planet.moons {
             h.i64(m.mass.0);
             h.i64(m.distance.0);

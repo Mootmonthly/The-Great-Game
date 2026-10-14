@@ -86,11 +86,11 @@ fn moons_too_close_become_rings_and_same_orbits_merge() {
     assert_eq!(w.planet.rings, Fx::HALF);
     w.apply(Action::AddMoon {
         mass: Fx::ONE,
-        distance: Fx::from_int(3),
+        distance: Fx::ratio(18, 10),
     });
     assert_eq!(w.planet.moons.len(), 2);
     w.apply(Action::RemoveMoon { index: 0 });
-    assert_eq!(w.planet.moons[0].distance, Fx::from_int(3));
+    assert_eq!(w.planet.moons[0].distance, Fx::ratio(18, 10));
 }
 
 #[test]

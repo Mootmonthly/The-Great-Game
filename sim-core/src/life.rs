@@ -336,6 +336,8 @@ impl World {
         let flux = self.stellar_flux();
         // Tides from moons stir and heat the planet: extra energy everywhere.
         let tidal_energy = (self.planet.tidal_strength() * Fx::ratio(5, 100)).min(Fx::HALF);
+        // Red and dim stars give light that is poorer for photosynthesis.
+        let light_quality = self.planet.star_type.info().light_quality;
         let p = self.pressure;
         let mut life = Vec::with_capacity(REGION_COUNT);
         for (i, r) in self.regions.iter().enumerate() {
@@ -365,7 +367,7 @@ impl World {
                 fuel += sub.fuel * available;
                 oxidizer += sub.oxidizer * available;
             }
-            let light = saturate(flux * World::insolation(y), Fx::ratio(3, 10));
+            let light = saturate(flux * World::insolation(y), Fx::ratio(3, 10)) * light_quality;
             let geothermal = (r.geothermal * Fx::ratio(7, 10) + tidal_energy).min(Fx::ONE);
             let chemical = fuel.min(oxidizer).min(Fx::ONE);
             let energy = [light, geothermal, chemical];
@@ -549,6 +551,8 @@ impl World {
     /// separate niches, which lets large creatures evolve alongside microbes.
     fn population_dynamics(&mut self) {
         let gravity = self.planet.gravity;
+        // Radiation kills; armour shields.
+        let radiation_harm = (self.harmful_radiation() * Fx::ratio(5, 100)).min(Fx::HALF);
         let swing = self.day_night_swing();
         // A predator must be at least this many times bigger than its prey.
         let prey_ratio = Fx::from_int(3);
@@ -591,7 +595,7 @@ impl World {
                     Info {
                         strength: s.strength(),
                         r: s.growth_rate(),
-                        death: s.death_rate(),
+                        death: s.death_rate() + radiation_harm * (Fx::ONE - s.traits.armor * Fx::HALF),
                         fit: self.life[i].fit(&s.profile) * tf * photo,
                         habitat: self.life[i].habitat(&s.profile) * tf,
                         size: s.genome.size,
@@ -728,6 +732,8 @@ impl World {
     /// Occasionally a local population splits off as a new species, adapted
     /// to its region.
     fn speciation(&mut self) {
+        // Radiation drives mutation: harsh stars speed up speciation.
+        let mutagen = Fx::ONE + self.harmful_radiation().min(Fx::from_int(3));
         let mut living = self.living_count();
         for i in 0..REGION_COUNT {
             let mut k = 0;
@@ -751,7 +757,7 @@ impl World {
                 } else {
                     Fx::ratio(3, 1000)
                 };
-                if !self.rng.chance(rate * crowding) {
+                if !self.rng.chance(rate * crowding * mutagen) {
                     continue;
                 }
                 let parent = self.species[self.species_index(p.species)].clone();

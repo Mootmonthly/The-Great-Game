@@ -147,5 +147,22 @@ func _initialize() -> void:
 	var species: Array = JSON.parse_string(sim.species_json(1))
 	check(species.size() == 1 and "Silicon" in species[0]["description"], "magma world evolves silicon life")
 
+	# Star types and Natural/Godhand modes.
+	var stars: Array = JSON.parse_string(sim.stars_json())
+	check(stars.size() == 8 and main.star_select.item_count == 8, "star picker lists the 8 star types")
+	main.star_select.select(0)
+	main.star_select.item_selected.emit(0)
+	var red: Dictionary = JSON.parse_string(sim.status_json())
+	check(red["star_name"] == "Red dwarf" and red["star_luminosity"] < 0.1, "a red dwarf is dim in Natural mode")
+	sim.set_star_luminosity(1.0)
+	check(JSON.parse_string(sim.status_json())["star_luminosity"] < 0.2, "Natural mode caps a red dwarf's brightness")
+	main.mode_select.select(1)
+	main.mode_select.item_selected.emit(1)
+	sim.set_star_luminosity(1.0)
+	main._refresh_all()
+	var god: Dictionary = JSON.parse_string(sim.status_json())
+	check(god["godhand"] and god["star_luminosity"] > 0.99 and god["strain"] > 1.0, "Godhand allows an impossible star, with strain")
+	check(main.star_label.text.contains("Strain"), "planet panel shows strain in Godhand mode")
+
 	print("%d failure(s)" % failures)
 	quit(1 if failures > 0 else 0)

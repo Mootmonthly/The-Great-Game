@@ -157,7 +157,25 @@ Not all life has to come from the world's own chemistry. Some beings come from o
 - **Axial tilt:** seasons. Each year one hemisphere warms while the other cools, then they swap; thick atmospheres damp the swing.
 - **Moons:** each has a mass and a distance. Tides heat the planet (like Io's volcanoes) and add energy for life. A moon placed inside the Roche limit (0.3 Earth–Moon distances) is torn apart into rings; a moon on nearly the same orbit as another collides and merges with it. Up to 12 moons.
 - The globe shows the tilt, a spin rate that follows the day length, orbiting moons and rings.
-- Not yet: Natural/Godhand coupling of orbital values, star types, moons affecting eclipses and the Veil.
+- **Natural and Godhand modes** (new worlds start in Natural):
+  - *Natural:* the planet has a mass and a radius, and gravity = mass / radius². Asking for a gravity changes the planet's mass instead. The star's brightness follows from its type and mass (main-sequence stars: L ∝ M^3.5); asking for a brightness picks the closest mass the star type allows. Year length follows Kepler: √(distance³ / star mass), and long years mean stronger seasons. Moons beyond the stable limit (about 1.95 Earth–Moon distances × distance in AU × ∛(planet mass / star mass)) escape.
+  - *Godhand:* gravity, brightness and moons are set freely. The distance from what physics allows is the world's **strain**: |log₂(gravity / natural gravity)| + |log₂(brightness / natural brightness)| + ½ per moon beyond the stable limit, capped at 20. Strain bleeds the atmosphere away (0.4% per point per season, up to 5%) and adds 8 K of heat per point. Switching back to Natural snaps the values back to physics.
+- **Star types:** eight types. Each sets the light quality for light-powered life, a harmful radiation level, and the sun's colour on the globe.
+
+  | Star | Mass (suns) | Brightness | Light quality | Radiation | Notes |
+  |---|---|---|---|---|---|
+  | Red dwarf | 0.1–0.5 | 0.015 | 0.5 | 0.6 | Flares (5% per season) strip the atmosphere |
+  | Orange dwarf | 0.5–0.8 | 0.25 | 0.85 | 0.2 | Steady; good home for life |
+  | Yellow dwarf | 0.8–1.2 | 1 | 1 | 0.2 | Sun-like |
+  | White star | 1.2–2.5 | 5 | 1 | 0.6 | |
+  | Blue giant | 2.5–30 | 3000 | 0.9 | 2 | Planets must orbit far out |
+  | Red giant | 0.8–3 | 300 | 0.6 | 0.3 | Dying star, not main sequence |
+  | White dwarf | 0.5–1.3 | 0.002 | 0.7 | 0.5 | Only very close planets stay warm |
+  | Neutron star | 1.4–2.1 | 0.0001 | 0.1 | 8 | Strains reality |
+
+  Brightness is at the typical mass. Radiation is relative to the Sun's, and falls with distance squared. The atmosphere shields the surface: dose = flux / (1 + 2 × pressure in bar). A dose above 1 (an airless Earth's) harms life, with armour as a shield, and speeds up speciation through mutation.
+- **Reality strain** (feeds the Veil, §4.4a): Godhand strain, +2 around a neutron star, and log₂(gravity / 5) above 5 g. Shown in the viewer; the Veil itself is not built yet.
+- Not yet: moons affecting eclipses and the Veil.
 
 Extra and exotic resources (rare elements, unusual molecules, more moons, unusual star types) are unlocked with Essence.
 
@@ -407,7 +425,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
 
-**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules now run in the deterministic Rust core with replayable command logs. Remaining: Natural/Godhand orbital coupling and star types, final art, and the network layer.
+**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules now run in the deterministic Rust core with replayable command logs. Natural/Godhand modes and star types are done. Remaining: final art and the network layer.
 
 ## 9. Business Model
 
@@ -433,6 +451,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Evolution model | Body-part genomes gated by evolutionary milestones, with neural-network brains used as far as cost allows (§4.4, §4.8) |
 | — | Sapience on Earth-like worlds | Almost always, given time; "never sapient" worlds come from unusual player choices (§4.4) |
 | — | Cost formula | Power = √(effective HP × damage per round), cost linear in power; commoner 1, ancient dragon about 310 (§5.3) |
+| — | Natural/Godhand and star types | Built as in §4.6: Natural is the default; Godhand strain thins the air and heats the world; eight star types with light quality, radiation and flares (numbers open to tuning) |
 | — | Extradimensional beings | Included as a possibility, arriving through a thin Veil; extreme physics alone can let them in (§4.4a) |
 
 ## 11. Open Questions

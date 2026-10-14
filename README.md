@@ -61,8 +61,9 @@ If the viewer says "The simulation extension is not loaded", step 6 did not fini
 - **Individuals tab:** named individuals, most renowned first. Click one for its personality, relationships and life story.
 - **Character sheets:** species and individual details end with a 5e-style stat block (ability scores, AC, HP, speeds, senses, resistances, traits, attacks, breath weapons) and the being's arena cost from 1 to 1000, with a breakdown of how the cost was reached.
 - **God tools:** pick a tool, then click or drag on the map. **Add substance** and **Remove substance** use the selected substance, amount and radius. **Heat** and **Cool** change local temperature by 10 K per unit of amount. **Inspect** shows a region's chemistry, its best life triad, and the species living there.
-- **Planet:** drag the sliders to change star distance, star luminosity, gravity, global temperature, day length and axial tilt. The change applies when you release the slider.
-- **Moons:** add moons with a mass and distance, or remove the outermost. Close, heavy moons heat the planet with tides; a moon closer than 0.3 Earth–Moon distances is torn into rings.
+- **Planet:** drag the sliders to change star mass, star distance, star luminosity, planet radius, gravity, global temperature, day length and axial tilt. The change applies when you release the slider.
+- **Mode and star:** pick a star type (red dwarf to neutron star) and a mode. In **Natural** mode physics links the settings: gravity comes from the planet's mass and radius, brightness from the star's type and mass, and moons too far out escape. **Godhand** mode lets you set anything, but impossible settings build up strain, which strips the atmosphere and heats the world. The panel shows year length, surface radiation, flares and strain.
+- **Moons:** add moons with a mass and distance, or remove the outermost. Close, heavy moons heat the planet with tides; a moon closer than 0.3 Earth–Moon distances is torn into rings, and one beyond the stable limit (about 2 for Earth) escapes in Natural mode.
 - **Visit a region:** inspect a region, then click **Visit this region** to see it at ground level with its creatures wandering about. Click a creature to possess it and look through its eyes (WASD to move, drag to look, Esc to release). Visiting never changes the world.
 - **Arena:** click **Enter the arena** to pick champions from your world under a cost cap and fight a rival world's champions. A rival world evolves while you choose. During the battle, click one of your units (blue rings) to possess it: WASD moves, Space attacks, Q breathes, Esc releases. Speed buttons run the fight at ×1, ×2 or ×4.
 - **Save / Load:** saves the world's action log to your Godot user folder and replays it on load. The state hash under the status panel should be identical after loading.
@@ -71,6 +72,8 @@ Things to try:
 - Start `blank`, add Water, Carbon and Nitrogen everywhere with a large radius, and watch where life starts.
 - Move an Earth-like world to 0.5 AU or 3 AU and watch the oceans boil away or freeze.
 - Lower gravity on an Earth-like world and watch large creatures appear.
+- Switch an Earth-like world to a red dwarf, move it to 0.12 AU to keep it warm, and watch flares thin the air.
+- Switch to Godhand, pick a neutron star, and set luminosity back to 1: the world stays warm but radiation kills unarmoured life unless you thicken the air.
 - Run the `frozen_moon` preset for a few hundred years: nervous systems evolve quickly there, so named individuals show up early.
 
 ### Command-line tools
