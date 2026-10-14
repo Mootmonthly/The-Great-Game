@@ -578,6 +578,8 @@ impl World {
                 continue;
             }
             let temp = self.regions[i].temperature;
+            // Arcane Magic: spellcasters are stronger where mana runs high.
+            let mana = self.mana(i);
             // Beings from beyond follow their own rules (`entity_dynamics`).
             let (entities, pops): (Vec<Population>, Vec<Population>) = self.regions[i]
                 .populations
@@ -614,15 +616,20 @@ impl World {
                     } else {
                         Fx::ONE
                     };
+                    let magic = if s.has(body::SPELLCASTING) {
+                        Fx::ONE + mana * Fx::HALF
+                    } else {
+                        Fx::ONE
+                    };
                     Info {
-                        strength: s.strength(),
+                        strength: s.strength() * magic,
                         r: s.growth_rate(),
                         death: s.death_rate() + radiation_harm * (Fx::ONE - s.traits.armor * Fx::HALF),
                         fit: self.life[i].fit(&s.profile) * tf * photo,
                         habitat: self.life[i].habitat(&s.profile) * tf,
                         size: s.genome.size,
                         vulnerability: s.vulnerability(),
-                        hunting: s.hunting(),
+                        hunting: s.hunting() * magic,
                     }
                 })
                 .collect();
@@ -704,8 +711,12 @@ impl World {
                     });
                 }
             }
+            let before = pops.iter().fold(Fx::ZERO, |a, p| a + p.biomass);
+            let after = next.iter().fold(Fx::ZERO, |a, p| a + p.biomass);
             next.extend(entities);
             self.regions[i].populations = next;
+            // Soul Power: mass deaths release souls and tear the Veil.
+            self.souls_released(i, before - after);
         }
     }
 
@@ -840,6 +851,7 @@ impl World {
             body::FLIGHT => {
                 self.planet.gravity <= Fx::from_int(2) && self.pressure >= Fx::ratio(15, 100)
             }
+            body::SPELLCASTING => self.mana(i) >= Fx::ratio(2, 10),
             body::SAPIENCE => {
                 parent.traits.intelligence >= Fx::ratio(35, 100)
                     && parent.has_manipulators()

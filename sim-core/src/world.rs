@@ -220,6 +220,12 @@ pub struct World {
     pub(crate) veil: Vec<Fx>,
     /// The Veil law: 0 sealed .. 1 wide open.
     pub veil_law: Fx,
+    /// Metaphysical laws (§4.6).
+    #[serde(default)]
+    pub laws: crate::laws::Laws,
+    /// Souls waiting to be reborn (Soul Power).
+    #[serde(default)]
+    pub souls: Vec<crate::laws::WanderingSoul>,
     pub last_breach_tick: Option<u64>,
     pub(crate) rng: Rng,
     log: ActionLog,
@@ -238,7 +244,7 @@ fn elements_of(substances: &[Substance]) -> Vec<String> {
 
 /// Bumped whenever the world's stored form or rules change, so old
 /// snapshots are not trusted.
-const SNAPSHOT_VERSION: u32 = 1;
+const SNAPSHOT_VERSION: u32 = 2;
 
 #[derive(Serialize)]
 struct SnapshotRef<'a> {
@@ -328,6 +334,8 @@ impl World {
             life: Vec::new(),
             veil: vec![Fx::ONE; REGION_COUNT],
             veil_law: Fx::ZERO,
+            laws: crate::laws::Laws::default(),
+            souls: Vec::new(),
             last_breach_tick: None,
             rng,
             log: ActionLog::new(seed),
@@ -454,6 +462,7 @@ impl World {
             Action::AddMoon { mass, distance } => self.planet.add_moon(*mass, *distance),
             Action::ChampionFell { individual } => self.champion_fell(*individual),
             Action::Loot { grant, x, y } => self.apply_loot(grant, *x, *y),
+            Action::SetLaw { law, value } => self.set_law(*law, *value),
             Action::SetVeilLaw { openness } => {
                 self.veil_law = (*openness).clamp(Fx::ZERO, Fx::ONE);
             }
@@ -730,6 +739,13 @@ impl World {
         h.i64(self.planet.planet_mass.0);
         h.i64(self.planet.planet_radius.0);
         h.i64(self.veil_law.0);
+        for v in [self.laws.arcane, self.laws.soul, self.laws.qi, self.laws.tribulation] {
+            h.i64(v.0);
+        }
+        for s in &self.souls {
+            h.u64(s.from as u64);
+            h.i64(s.strength.0);
+        }
         h.u64(self.last_breach_tick.map_or(u64::MAX, |t| t));
         for v in &self.veil {
             h.i64(v.0);
