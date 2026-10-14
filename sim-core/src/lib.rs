@@ -9,6 +9,8 @@ pub mod arena;
 pub mod battle;
 pub mod body;
 pub mod brain;
+pub mod civ;
+pub mod equipment;
 pub mod fixed;
 pub mod globe;
 pub mod hash;

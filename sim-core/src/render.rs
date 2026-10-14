@@ -23,12 +23,14 @@ pub enum Overlay {
     Mana,
     /// Ambient qi (cultivation law): dark to jade green.
     Qi,
+    /// Settled regions in their civilization's colour, capitals brighter.
+    Civilizations,
     /// Amount of one substance (surface plus atmosphere column).
     Substance(usize),
 }
 
 impl Overlay {
-    /// Mode numbers used by the Godot viewer: 0..6, then 7 + substance index.
+    /// Mode numbers used by the Godot viewer: 0..7, then 8 + substance index.
     pub fn from_mode(mode: i64) -> Overlay {
         match mode {
             0 => Overlay::Surface,
@@ -38,7 +40,8 @@ impl Overlay {
             4 => Overlay::Veil,
             5 => Overlay::Mana,
             6 => Overlay::Qi,
-            m => Overlay::Substance((m - 7).max(0) as usize),
+            7 => Overlay::Civilizations,
+            m => Overlay::Substance((m - 8).max(0) as usize),
         }
     }
 }
@@ -188,6 +191,18 @@ impl World {
                 [60.0, 220.0, 150.0],
                 self.qi(i).to_f64() * 1.2,
             ),
+            Overlay::Civilizations => match self.settlement_at(i) {
+                Some((civ, _)) => {
+                    let col = rgb(civ.color);
+                    let capital = civ.settlements.first().is_some_and(|s| s.region == i);
+                    if capital {
+                        mix(col, [255.0; 3], 0.35)
+                    } else {
+                        col
+                    }
+                }
+                None => mix([12.0, 12.0, 18.0], ground, 0.15),
+            },
             Overlay::Substance(s) => {
                 let Some(sub) = self.substances.get(s) else {
                     return ground;

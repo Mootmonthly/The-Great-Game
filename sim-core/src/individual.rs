@@ -32,6 +32,7 @@ pub enum MemoryKind {
     WitnessedHorror,
     Reborn,
     Breakthrough,
+    FoughtInWar,
 }
 
 impl MemoryKind {
@@ -48,6 +49,7 @@ impl MemoryKind {
             MemoryKind::WitnessedHorror => "glimpsed a being from beyond the Veil",
             MemoryKind::Reborn => "was born remembering a past life as",
             MemoryKind::Breakthrough => "broke through to a higher cultivation realm",
+            MemoryKind::FoughtInWar => "fought in a war between peoples",
         }
     }
 }

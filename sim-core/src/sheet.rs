@@ -257,6 +257,9 @@ pub struct CharacterSheet {
     /// Earned class and level, e.g. "Wizard 7" (named individuals only).
     #[serde(default)]
     pub class: Option<String>,
+    /// Gear from the being's civilization, described.
+    #[serde(default)]
+    pub equipment: Vec<String>,
     pub cost: CostBreakdown,
 }
 
@@ -374,7 +377,11 @@ pub fn class_of(world: &World, s: &Species, ind: &Individual, int: i64, cha: i64
         && memories(ind, MemoryKind::MournedFriend) > 0
     {
         Some(Class::Shaman)
-    } else if memories(ind, MemoryKind::Defeated) + memories(ind, MemoryKind::Killed) >= 3 {
+    } else if memories(ind, MemoryKind::Defeated)
+        + memories(ind, MemoryKind::Killed)
+        + memories(ind, MemoryKind::FoughtInWar)
+        >= 3
+    {
         Some(Class::Fighter)
     } else if memories(ind, MemoryKind::Fled) >= 2 {
         Some(Class::Rogue)
@@ -389,6 +396,16 @@ pub fn class_of(world: &World, s: &Species, ind: &Individual, int: i64, cha: i64
 pub fn class_level(world: &World, ind: &Individual) -> i64 {
     (1 + (ind.renown * Fx::from_int(4)).to_int() + ind.age_years(world.tick) as i64 / 10).clamp(1, 20)
 }
+
+/// Spell attacks that spell foci improve.
+const SPELLS: [&str; 6] = [
+    "Mana Bolt",
+    "Arcane Bolt",
+    "Chaos Bolt",
+    "Eldritch Blast",
+    "Spirit Lash",
+    "Vicious Mockery",
+];
 
 /// Dice of a cantrip at this level: 1, 2, 3 or 4 (at levels 1, 5, 11, 17).
 fn cantrip_dice(level: i64) -> i64 {
@@ -498,11 +515,15 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     let proficiency = (2 + hit_dice / 8).clamp(2, 9);
     // A phase membrane leaves part of the body elsewhere: harder to hit.
     let phased = if b.count(PartKind::PhaseMembrane) > 0 { 2 } else { 0 };
+    // A civilization arms its people (§5.4).
+    let gear = crate::equipment::loadout(world, s);
+    let gear_armor: i64 = gear.iter().map(|g| g.armor).sum();
     let armor_class = (10
         + modifier(dexterity)
         + (t.armor * Fx::from_int(9)).round()
         + phased
-        + realm / 2)
+        + realm / 2
+        + gear_armor)
         .clamp(5, 30);
 
     // Speeds in feet.
@@ -703,6 +724,28 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     if category >= SizeCategory::Large && t.intelligence > Fx::ratio(15, 100) {
         attacks[0].uses += 1;
     }
+    // Weapons from the civilization's forges; fang caps sharpen the bite.
+    for g in &gear {
+        if let Some(damage) = g.damage {
+            attacks.push(Attack {
+                name: g.name.clone(),
+                to_hit: to_hit + g.to_hit,
+                dice: 1,
+                die: g.die,
+                bonus: attack_mod + g.damage_bonus,
+                damage,
+                uses: g.uses,
+            });
+        } else if g.slot == crate::equipment::Slot::Jaw {
+            for a in attacks.iter_mut().filter(|a| a.name == "Bite") {
+                a.bonus += g.damage_bonus;
+            }
+        }
+    }
+    // A slam is only the fallback when nothing better is in hand.
+    if attacks.len() > 1 {
+        attacks.retain(|a| a.name != "Slam");
+    }
     if class == Some(Class::Fighter) {
         // Fighting Style, and Extra Attack from level 5.
         for a in &mut attacks {
@@ -799,6 +842,18 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
                 targets: if category >= SizeCategory::Huge { 3 } else { 2 },
             }
         }));
+    // Spell foci steady magic; breath foci widen breath.
+    let focus: i64 = gear.iter().map(|g| g.spell_to_hit).sum();
+    if focus > 0 {
+        for a in attacks.iter_mut().filter(|a| SPELLS.contains(&a.name.as_str())) {
+            a.to_hit += focus;
+        }
+    }
+    let breath_focus: i64 = gear.iter().map(|g| g.breath_dice).sum();
+    let breath = breath.map(|mut b| {
+        b.dice += breath_focus;
+        b
+    });
     // Wizards and sorcerers learn Fireball at level 5.
     let breath = match (breath, class) {
         (None, Some(c @ (Class::Wizard | Class::Sorcerer))) if level >= 5 => Some(Breath {
@@ -1003,6 +1058,7 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         pack_tactics,
         frighten_dc: otherworldly.then(|| 8 + proficiency + modifier(charisma)),
         class: class.map(|c| format!("{} {level}", c.name())),
+        equipment: gear.iter().map(|g| g.describe()).collect(),
         cost: CostBreakdown::default(),
     };
     sheet.cost = cost(&sheet);

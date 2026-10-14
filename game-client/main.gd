@@ -5,7 +5,7 @@ extends Control
 ## godot-ext crate). The UI is built in code so the scene file stays trivial.
 
 const SAVE_PATH := "user://world_log.json"
-const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability", "Veil", "Mana", "Qi"]
+const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability", "Veil", "Mana", "Qi", "Civilizations"]
 const TOOLS := ["Inspect", "Add substance", "Remove substance", "Heat", "Cool"]
 const TreeView := preload("res://tree_view.gd")
 const GlobeView := preload("res://globe_view.gd")
@@ -39,6 +39,7 @@ var tree_view: Control
 var individuals_list: RichTextLabel
 var individual_detail: RichTextLabel
 var tabs: TabContainer
+var civ_list: RichTextLabel
 var show_individuals: CheckBox
 var globe_view: SubViewportContainer
 var globe_toggle: CheckButton
@@ -159,6 +160,11 @@ func _build_ui() -> void:
 	individual_detail.meta_clicked.connect(_on_meta)
 	individual_detail.text = "Named individuals appear once a species evolves a nervous system. Click one to read its story."
 	people_tab.add_child(individual_detail)
+
+	civ_list = _scroll_rich()
+	civ_list.name = "Civilizations"
+	civ_list.meta_clicked.connect(_on_meta)
+	tabs.add_child(civ_list)
 	# Connected last: adding the first tab already emits tab_changed.
 	tabs.tab_changed.connect(func(_t): _refresh_tabs())
 
@@ -642,6 +648,9 @@ func _refresh_text() -> void:
 		st["pressure"], st["stellar_flux"], ", ".join(atmo) if atmo.size() > 0 else "none",
 		st["living_species"], st["species_ever"], st["living_individuals"], st["hash"]]
 
+	if st["civilizations"] > 0:
+		status_label.text += "\nCivilizations: %d (%d at war)" % [st["civilizations"], st["wars"]]
+
 	var moons := []
 	for m in st["moons"]:
 		moons.append("%.2f lunar masses at %.2f" % [m["mass"], m["distance"]])
@@ -706,6 +715,9 @@ func _refresh_region() -> void:
 	for i in range(min(pops.size(), 6)):
 		var p: Dictionary = pops[i]
 		text += "  • %s — %s (biomass %.1f)\n" % [p["name"], p["description"], p["biomass"]]
+	if r["settlement"] != null:
+		var st: Dictionary = r["settlement"]
+		text += "Settlement: %s of %s (population %.1f thousand)\n" % [st["name"], st["civ"], st["population"]]
 	region_label.text = text
 
 
@@ -739,6 +751,8 @@ func _refresh_tabs() -> void:
 			tree_view.set_data(JSON.parse_string(sim.tree_json(40)))
 		2:
 			_refresh_individuals()
+		3:
+			_refresh_civilizations()
 	individual_markers = JSON.parse_string(sim.individuals_json(1000))
 	map_rect.queue_redraw()
 
@@ -782,6 +796,36 @@ func _refresh_species_detail() -> void:
 	for a in d["ancestors"]:
 		text += "  ↑ [url=s:%d]%s[/url] %s%s\n" % [a["id"], a["name"], a["description"], "" if a["alive"] else " (extinct)"]
 	species_detail.text = text
+
+
+func _refresh_civilizations() -> void:
+	var civs: Array = JSON.parse_string(sim.civilizations_json())
+	var blocks := []
+	for c in civs:
+		var fallen = c["fallen_year"] != null
+		var b := "[color=#%s]●[/color] [b]%s[/b]" % [c["color"], c["name"]]
+		if c["species"] != null:
+			b += " (the [url=s:%d]%s[/url])" % [c["species_id"], c["species"]]
+		if fallen:
+			b += " — [i]fell in year %d[/i]" % c["fallen_year"]
+		b += "\n    %s era" % c["era"]
+		if c["arcana"] != "None":
+			b += " · %s" % c["arcana"]
+		b += "\n    %d settlement%s" % [c["settlements"], "" if c["settlements"] == 1 else "s"]
+		if c["capital"] != null:
+			b += ", capital %s" % c["capital"]
+		b += " · population %.0f thousand\n    %s" % [c["population"], c["culture"]]
+		if c["wars"].size() > 0:
+			b += "\n    [color=#dd7777]At war with %s[/color]" % ", ".join(c["wars"])
+		if c["allies"].size() > 0:
+			b += "\n    [color=#77dd77]Allies: %s[/color]" % ", ".join(c["allies"])
+		if c["rivals"].size() > 0:
+			b += "\n    Rivals: %s" % ", ".join(c["rivals"])
+		b += "\n    Battles won %d, lost %d · founded in year %d" % [c["battles_won"], c["battles_lost"], c["founded_year"]]
+		if c["parent"] != null:
+			b += " (broke away from %s)" % c["parent"]
+		blocks.append("[color=#888888]%s[/color]" % b if fallen else b)
+	civ_list.text = "\n\n".join(blocks) if blocks.size() > 0 else "No civilizations yet. They arise once a thinking species settles down."
 
 
 func _refresh_individuals() -> void:
@@ -861,6 +905,8 @@ func _sheet_text(sh) -> String:
 	t += "[b]Proficiency Bonus[/b] %+d\n" % sh["proficiency"]
 	for tr in sh["traits"]:
 		t += "[b][i]%s.[/i][/b] %s\n" % [tr["name"], tr["text"]]
+	if sh["equipment"].size() > 0:
+		t += "[b]Equipment[/b] %s\n" % "; ".join(sh["equipment"])
 	t += "[b]Actions[/b]\n"
 	for a in sh["actions"]:
 		t += "  %s\n" % a
