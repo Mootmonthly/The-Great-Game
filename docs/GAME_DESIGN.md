@@ -283,6 +283,17 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 - With a 1000 cost cap and a 500-unit cap, the cheapest legal army is 500 two-cost units, or a mix such as 400 one-cost units plus higher-cost champions.
 - **Translating 5e to real time:** turns become cooldowns. One "round" = 6 seconds. Actions have a cooldown or charge model; attack rolls happen on hit (accuracy vs. AC) so tabletop stats still matter; saves resolve against ability DCs. Legendary actions become extra charges.
 
+### 6.1a Arena prototype (Phase 2)
+
+A local, offline prototype (`game-client/arena.gd`), reached from the viewer's **Enter the arena** button:
+- **Teams:** your champions come from your world: its strongest distinct species (any number of copies) and its most renowned named individuals (one each, marked ★). The rival's come from a different world that evolves on the spot (Earth-like, frozen moon or sulfur world, random seed). Both sides pick under the same cost cap (25, 50, 100, 250 or 1000), up to 40 units a side; auto-pick fills a team greedily.
+- **Combat:** the character sheets in real time. One 5e round is 1.5 s of arena time. Units walk to the nearest enemy (keeping apart from allies) and attack with their sheet's attacks: d20 + to-hit against armour class, critical hits on 20, damage dice, resistances, immunities and vulnerabilities. Breath weapons hit the nearest enemies in front, with a save for half, and recharge on 5–6. Regeneration and pack tactics apply.
+- **Possession:** click one of your units to take control: WASD moves it relative to the follow camera, Space attacks, Q uses its breath weapon, Esc releases it.
+- **Result:** the battle ends when one side is wiped out. The log notes which champions fell; permadeath and looting are not yet applied to the world.
+- **Not yet:** server authority and replay (the prototype runs client-side in GDScript; the real arena runs these rules in the Rust core on the server, §6.3), online opponents, match structure and victory conditions (open question 1), surrender.
+
+![Arena prototype: methane-breathing winged dragons from a frozen moon against a rival world](images/arena-battle.png)
+
 ### 6.2 Champion Binding and Integrity
 
 - When the player binds a champion, the game takes an **immutable snapshot**: sheet, abilities, equipment, body plan, cosmetic data, and the computed cost.
@@ -387,10 +398,12 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | 0. Prototype: Petri Dish | Godot 4 + Rust sim-core. 2D top-down. 10 substances, temperature, gravity, star distance; life triad; species populations evolve. Determinism test across Windows and Linux | Two seeds with different chemistry produce visibly different life; identical replay hashes on both platforms; measured sim cost per world-hour |
 | 0.5 Prototype: Bodies & Minds | Body-part genomes, evolutionary milestones, brain genomes and temperament, named individuals with relationships, family tree view | Lineages progress from microbes to limbed, winged creatures; individuals form friendships and feuds; replay stays deterministic |
 | 1. Prototype: Sheet & Cost (done) | Genome → 5e sheet → cost. Headless auto-battler between two generated beings | Cost correlates with mock-battle win rate (target r > 0.8) |
-| 2. Vertical Slice | 3D planet view, full planetary controls (rotation, orbit, moons, atmosphere), body plan synthesis, possession, local 1v1 arena with small armies | Playable start-to-arena loop offline |
+| 2. Vertical Slice (in progress) | 3D planet view, full planetary controls (rotation, orbit, moons, atmosphere), body plan synthesis, possession, local 1v1 arena with small armies | Playable start-to-arena loop offline |
 | 3. Online Alpha | Dedicated server, replay verification, matchmaking, permadeath, Essence economy, large-army arena (500 units per side) | Closed test with external players |
 | 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
+
+**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Remaining: first-person possession inside the world, Natural/Godhand orbital coupling and star types, final art, and moving arena rules into the Rust core for server authority.
 
 ## 9. Business Model
 

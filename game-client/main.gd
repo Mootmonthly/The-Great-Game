@@ -10,6 +10,7 @@ const TOOLS := ["Inspect", "Add substance", "Remove substance", "Heat", "Cool"]
 const TreeView := preload("res://tree_view.gd")
 const GlobeView := preload("res://globe_view.gd")
 const CreaturePreview := preload("res://creature_preview.gd")
+const Arena := preload("res://arena.gd")
 
 var sim: RefCounted
 var substances: Array = []
@@ -327,6 +328,13 @@ func _build_ui() -> void:
 			globe_timer = 0.0
 			_refresh_all())
 	moon_buttons.add_child(remove_moon)
+
+	_section(panel, "Arena")
+	var arena_button := Button.new()
+	arena_button.text = "Enter the arena"
+	arena_button.tooltip_text = "Pick champions from this world and fight a rival world's champions."
+	arena_button.pressed.connect(open_arena)
+	panel.add_child(arena_button)
 
 	# Inspector
 	_section(panel, "Selected region")
@@ -783,3 +791,17 @@ func _draw_markers() -> void:
 		map_rect.draw_circle(centre, radius, col.lightened(0.3))
 		if int(p["id"]) == selected_individual:
 			map_rect.draw_arc(centre, radius + 4.0, 0, TAU, 16, Color.WHITE, 2.0)
+
+
+# --- Arena -------------------------------------------------------------------
+
+var arena: Control
+
+
+func open_arena() -> void:
+	running = false
+	play_button.text = "Play"
+	arena = Arena.new()
+	add_child(arena)
+	arena.open(sim)
+	arena.closed.connect(func(): arena = null)

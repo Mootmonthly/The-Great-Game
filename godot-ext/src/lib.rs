@@ -76,6 +76,15 @@ fn sheet_to_json(sh: &sim_core::sheet::CharacterSheet) -> Value {
         "resistances": names(&sh.resistances), "immunities": names(&sh.immunities), "vulnerabilities": names(&sh.vulnerabilities),
         "traits": sh.traits.iter().map(|t| json!({"name": t.name, "text": t.text})).collect::<Vec<_>>(),
         "actions": sh.attacks.iter().map(|a| a.describe()).chain(sh.breath.iter().map(|b| b.describe())).collect::<Vec<_>>(),
+        "attacks": sh.attacks.iter().map(|a| json!({
+            "name": a.name, "to_hit": a.to_hit, "dice": a.dice, "die": a.die, "bonus": a.bonus,
+            "damage": a.damage.name(), "uses": a.uses,
+        })).collect::<Vec<_>>(),
+        "breath": sh.breath.as_ref().map(|b| json!({
+            "name": b.name, "dice": b.dice, "damage": b.damage.name(), "dc": b.dc,
+            "save_ability": b.save_ability, "targets": b.targets,
+        })),
+        "regeneration": sh.regeneration, "pack_tactics": sh.pack_tactics,
         "cost": c.cost,
         "cost_breakdown": {
             "effective_hp": c.effective_hp.to_f64(), "damage_per_round": c.damage_per_round.to_f64(),
