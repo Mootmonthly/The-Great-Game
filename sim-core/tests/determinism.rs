@@ -85,7 +85,7 @@ fn golden_hash_with_individuals() {
     );
 }
 
-const GOLDEN_FROZEN_MOON_SEED1_600: &str = "3feb1396a3b22b8b";
+const GOLDEN_FROZEN_MOON_SEED1_600: &str = "a8ef2f751a0e3bb1";
 
 #[test]
 fn different_chemistry_gives_different_life() {

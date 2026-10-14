@@ -226,6 +226,11 @@ pub struct World {
     /// Souls waiting to be reborn (Soul Power).
     #[serde(default)]
     pub souls: Vec<crate::laws::WanderingSoul>,
+    /// Civilizations, living and fallen (§4.5).
+    #[serde(default)]
+    pub civs: Vec<crate::civ::Civilization>,
+    #[serde(default)]
+    pub(crate) next_civ_id: u32,
     pub last_breach_tick: Option<u64>,
     pub(crate) rng: Rng,
     log: ActionLog,
@@ -244,7 +249,7 @@ fn elements_of(substances: &[Substance]) -> Vec<String> {
 
 /// Bumped whenever the world's stored form or rules change, so old
 /// snapshots are not trusted.
-const SNAPSHOT_VERSION: u32 = 2;
+const SNAPSHOT_VERSION: u32 = 3;
 
 #[derive(Serialize)]
 struct SnapshotRef<'a> {
@@ -336,6 +341,8 @@ impl World {
             veil_law: Fx::ZERO,
             laws: crate::laws::Laws::default(),
             souls: Vec::new(),
+            civs: Vec::new(),
+            next_civ_id: 1,
             last_breach_tick: None,
             rng,
             log: ActionLog::new(seed),
@@ -493,6 +500,7 @@ impl World {
         self.breaches();
         self.update_life();
         self.update_individuals();
+        self.update_civilizations();
         self.tick += 1;
     }
 
@@ -745,6 +753,21 @@ impl World {
         for s in &self.souls {
             h.u64(s.from as u64);
             h.i64(s.strength.0);
+        }
+        for c in &self.civs {
+            h.u64(c.id as u64);
+            h.u64(c.species as u64);
+            h.i64(c.tech.0);
+            h.i64(c.arcana.0);
+            h.u64(c.fallen_tick.map_or(u64::MAX, |t| t));
+            for s in &c.settlements {
+                h.u64(s.region as u64);
+                h.i64(s.population.0);
+            }
+            for r in &c.relations {
+                h.u64(r.other as u64 | (r.at_war as u64) << 40);
+                h.i64(r.opinion.0);
+            }
         }
         h.u64(self.last_breach_tick.map_or(u64::MAX, |t| t));
         for v in &self.veil {

@@ -568,6 +568,7 @@ impl World {
     /// separate niches, which lets large creatures evolve alongside microbes.
     fn population_dynamics(&mut self) {
         let gravity = self.planet.gravity;
+        let settled = self.settled_bonus();
         // Radiation kills; armour shields.
         let radiation_harm = (self.harmful_radiation() * Fx::ratio(5, 100)).min(Fx::HALF);
         let swing = self.day_night_swing();
@@ -580,6 +581,8 @@ impl World {
             let temp = self.regions[i].temperature;
             // Arcane Magic: spellcasters are stronger where mana runs high.
             let mana = self.mana(i);
+            // A civilization's people are stronger where it has settled.
+            let home = settled.get(i).copied().flatten();
             // Beings from beyond follow their own rules (`entity_dynamics`).
             let (entities, pops): (Vec<Population>, Vec<Population>) = self.regions[i]
                 .populations
@@ -616,11 +619,16 @@ impl World {
                     } else {
                         Fx::ONE
                     };
-                    let magic = if s.has(body::SPELLCASTING) {
+                    let mut magic = if s.has(body::SPELLCASTING) {
                         Fx::ONE + mana * Fx::HALF
                     } else {
                         Fx::ONE
                     };
+                    if let Some((species, bonus)) = home {
+                        if species == s.id {
+                            magic = magic * bonus;
+                        }
+                    }
                     Info {
                         strength: s.strength() * magic,
                         r: s.growth_rate(),
