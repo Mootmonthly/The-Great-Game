@@ -5,16 +5,18 @@
 //! commands, steps the authoritative arena and broadcasts every tick's
 //! commands, so clients step identical arenas in lockstep.
 
-use crate::sign::{digest, Signer};
+use crate::sign::{digest, hex, Signer};
+use crate::steam::SteamConfig;
 use crate::store::{Champion, Store};
 use crate::verify::verify;
 use net_proto::{
-    read_msg, write_msg, ChampionKind, ChampionToken, ClientMsg, Fallen, QueueMode, RatingView,
+    read_msg, write_msg, Auth, ChampionKind, ChampionToken, ClientMsg, Fallen, QueueMode, RatingView,
     ServerMsg, HASH_INTERVAL, PROTOCOL_VERSION,
 };
 use sim_core::arena::{Arena, ArenaCommand, ArenaResult};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufReader};
+use net_proto::tls::{TlsReader, TlsServer};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,14 +38,38 @@ pub struct Config {
     pub data_dir: Option<PathBuf>,
     /// Real time per arena tick. Zero runs matches as fast as possible.
     pub tick_interval: Duration,
+    /// Allow server accounts (name plus server-issued secret).
+    pub allow_accounts: bool,
+    /// Steam sign-in, if configured.
+    pub steam: Option<SteamConfig>,
+    /// PEM certificate chain and key. Without them the server makes a
+    /// self-signed certificate (kept in `data_dir`).
+    pub tls_pem: Option<(PathBuf, PathBuf)>,
+}
+
+impl Config {
+    /// A local server with server accounts and no Steam.
+    pub fn local(bind: &str, data_dir: Option<PathBuf>, tick_interval: Duration) -> Config {
+        Config {
+            bind: bind.into(),
+            data_dir,
+            tick_interval,
+            allow_accounts: true,
+            steam: None,
+            tls_pem: None,
+        }
+    }
 }
 
 pub struct ServerHandle {
     pub addr: SocketAddr,
+    /// Fingerprint of the server's TLS certificate.
+    pub fingerprint: String,
 }
 
 struct Shared {
     config: Config,
+    tls: TlsServer,
     signer: Signer,
     state: Mutex<State>,
     verifying: Semaphore,
@@ -141,11 +167,18 @@ pub fn start(config: Config) -> io::Result<ServerHandle> {
         }
         None => (Store::default(), Signer::random()),
     };
+    let tls = match (&config.tls_pem, &config.data_dir) {
+        (Some((cert, key)), _) => TlsServer::from_pem(&std::fs::read(cert)?, &std::fs::read(key)?)?,
+        (None, Some(dir)) => TlsServer::self_signed_in(dir)?,
+        (None, None) => TlsServer::ephemeral()?,
+    };
+    let fingerprint = tls.fingerprint.clone();
     let listener = TcpListener::bind(&config.bind)?;
     let addr = listener.local_addr()?;
     let cores = thread::available_parallelism().map_or(2, |n| n.get());
     let shared = Arc::new(Shared {
         config,
+        tls,
         signer,
         state: Mutex::new(State {
             store,
@@ -171,14 +204,18 @@ pub fn start(config: Config) -> io::Result<ServerHandle> {
             });
         }
     });
-    Ok(ServerHandle { addr })
+    Ok(ServerHandle { addr, fingerprint })
 }
 
 fn connection(shared: &Arc<Shared>, stream: TcpStream) -> io::Result<()> {
-    stream.set_nodelay(true)?;
-    let mut reader = BufReader::new(stream.try_clone()?);
-    let mut writer = stream;
-    let Some(ClientMsg::Hello { name, version }) = read_msg(&mut reader)? else {
+    let (reader, mut writer) = shared.tls.accept(stream)?;
+    let mut reader = BufReader::new(reader);
+    let Some(ClientMsg::Hello {
+        name,
+        version,
+        auth,
+    }) = read_msg(&mut reader)?
+    else {
         write_msg(&mut writer, &rejected("hello", "expected hello"))?;
         return Ok(());
     };
@@ -187,10 +224,34 @@ fn connection(shared: &Arc<Shared>, stream: TcpStream) -> io::Result<()> {
         write_msg(&mut writer, &rejected("hello", reason))?;
         return Ok(());
     }
-    if !valid_name(&name) {
-        write_msg(&mut writer, &rejected("hello", "names are 1–24 letters, digits, - or _"))?;
-        return Ok(());
-    }
+    // Who is this? Steam vouches for Steam accounts; server accounts prove
+    // themselves with the secret issued when the name was claimed.
+    let (name, secret) = match auth {
+        Auth::Steam { ticket } => {
+            let Some(steam) = &shared.config.steam else {
+                write_msg(&mut writer, &rejected("hello", "this server does not use Steam sign-in"))?;
+                return Ok(());
+            };
+            match crate::steam::authenticate(steam, &ticket) {
+                Ok(id) => (format!("steam_{id}"), None),
+                Err(reason) => {
+                    write_msg(&mut writer, &rejected("hello", reason))?;
+                    return Ok(());
+                }
+            }
+        }
+        Auth::Account { secret } => {
+            if !shared.config.allow_accounts {
+                write_msg(&mut writer, &rejected("hello", "this server only accepts Steam sign-in"))?;
+                return Ok(());
+            }
+            if !valid_name(&name) || name.starts_with("steam_") {
+                write_msg(&mut writer, &rejected("hello", "names are 1–24 letters, digits, - or _"))?;
+                return Ok(());
+            }
+            (name, secret)
+        }
+    };
 
     let (tx, rx) = channel::<ServerMsg>();
     {
@@ -200,10 +261,35 @@ fn connection(shared: &Arc<Shared>, stream: TcpStream) -> io::Result<()> {
             write_msg(&mut writer, &rejected("hello", "already signed in elsewhere"))?;
             return Ok(());
         }
+        let is_steam = name.starts_with("steam_");
+        let account = state.store.account(&name);
+        let mut issued = None;
+        if !is_steam {
+            match (&account.secret_hash, &secret) {
+                (Some(hash), Some(s)) if *hash == digest(s.as_bytes()) => {}
+                (Some(_), _) => {
+                    drop(state);
+                    write_msg(&mut writer, &rejected("hello", "this name is taken (wrong or missing account secret)"))?;
+                    return Ok(());
+                }
+                // First sign-in claims the name.
+                (None, _) => {
+                    let mut b = [0u8; 24];
+                    getrandom::getrandom(&mut b).expect("system random source");
+                    let s = hex(&b);
+                    account.secret_hash = Some(digest(s.as_bytes()));
+                    issued = Some(s);
+                }
+            }
+        }
+        let account = account.clone();
         state.online.insert(name.clone(), tx.clone());
-        let account = state.store.account(&name).clone();
+        if issued.is_some() {
+            shared.save(&state);
+        }
         let _ = tx.send(ServerMsg::Welcome {
             account: name.clone(),
+            secret: issued,
             rating: RatingView {
                 rating: account.rating.rating,
                 deviation: account.rating.deviation,
@@ -217,7 +303,7 @@ fn connection(shared: &Arc<Shared>, stream: TcpStream) -> io::Result<()> {
                 break;
             }
         }
-        let _ = writer.shutdown(std::net::Shutdown::Both);
+        writer.shutdown();
     });
 
     let result = serve_client(shared, &name, &tx, &mut reader);
@@ -240,7 +326,7 @@ fn serve_client(
     shared: &Arc<Shared>,
     name: &str,
     tx: &Sender<ServerMsg>,
-    reader: &mut BufReader<TcpStream>,
+    reader: &mut BufReader<TlsReader>,
 ) -> io::Result<()> {
     while let Some(msg) = read_msg::<_, ClientMsg>(reader)? {
         match msg {

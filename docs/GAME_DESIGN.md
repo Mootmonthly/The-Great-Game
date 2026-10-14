@@ -443,7 +443,13 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
   - The match result and the fallen are decided by the server and signed.
 - **Surrender and disconnects:** surrender ends the match at once; the other side wins, the fallen stay fallen and survivors go home. **Decided:** disconnecting during a match counts as surrender.
 - **Test tools:** `arena-server bot` is a headless player that evolves a world, binds champions, queues and lets the arena AI fight.
-- **Not yet:** Steam identity (names are taken on trust), TLS, reconnecting to a running match, client-side prediction of the possessed unit (commands take one round trip), cloud hosting, and the Essence economy.
+- **Accounts:**
+  - The first sign-in with a new name claims it, and the server issues a secret. The client keeps the secret and must present it to sign in again.
+  - Steam sign-in is built: the client sends a Web API session ticket and the server asks Steam (ISteamUserAuth/AuthenticateUserTicket) who owns it, rejecting VAC- or publisher-banned accounts. It needs the game's Steam App ID and a publisher Web API key, so it is untested against Steam until those exist. A server can be set to Steam-only.
+- **Encryption:** every connection is TLS 1.3.
+  - A hosted server can use a real certificate (for example from Let's Encrypt). Otherwise it creates a self-signed one on first run and prints its fingerprint.
+  - Clients accept a certificate a public authority vouches for. Otherwise they pin the fingerprint on first contact and refuse a different certificate later, like SSH.
+- **Not yet:** the Steamworks SDK in the game client (needed to get Steam tickets), reconnecting to a running match, client-side prediction of the possessed unit (commands take one round trip), cloud hosting, and the Essence economy.
 
 ### 6.4 Balance Risk
 

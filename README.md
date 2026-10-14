@@ -89,8 +89,11 @@ The arena server verifies champions by replaying your world's history, matches p
    cargo run -p arena-server --release -- serve
    ```
    It listens on port 7878 and keeps its state in `server-data/`. To let friends on other machines connect, open port 7878 on your router or firewall and give them your IP address.
+
+   Connections are encrypted. On first run the server makes its own certificate and prints its fingerprint. The game remembers it after the first connection and refuses a server that suddenly shows a different one (an impostor). If you reinstall the server on purpose, click **Forget server certificate** in the arena. A hosted server with a domain can use a real certificate instead: `--cert fullchain.pem --key privkey.pem`.
 2. **Play:** in the viewer, open the arena and pick your team.
    - Under "Online", enter the server address (`127.0.0.1:7878` for your own machine), a player name, and Ranked or Practice.
+   - The first time you use a name on a server, it becomes yours. The game saves a secret for it, and nobody else can sign in with that name.
    - Click **Find online match**. The server checks your champions, then waits for another player with the same cost cap.
    - To test alone, run a second copy of the viewer, or start a bot opponent:
      ```

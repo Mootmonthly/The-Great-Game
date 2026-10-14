@@ -5,5 +5,6 @@
 pub mod glicko;
 pub mod server;
 pub mod sign;
+pub mod steam;
 pub mod store;
 pub mod verify;
