@@ -3,6 +3,7 @@
 
 use crate::glicko::Rating;
 use net_proto::ChampionToken;
+use sim_core::loot::Remains;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -16,6 +17,9 @@ pub struct Account {
     pub wins: u32,
     pub losses: u32,
     pub draws: u32,
+    /// Essence, earned by defeating players.
+    #[serde(default)]
+    pub essence: u64,
     /// Bound champions by token.
     pub champions: BTreeMap<u64, Champion>,
 }
@@ -25,6 +29,9 @@ pub struct Champion {
     pub token: ChampionToken,
     /// Individuals only: identity in the ledger of the dead.
     pub fingerprint: Option<u64>,
+    /// What the winner loots if this champion falls.
+    #[serde(default)]
+    pub remains: Option<Remains>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -36,6 +43,12 @@ pub struct Store {
     pub dead: BTreeSet<u64>,
     pub next_token: u64,
     pub next_match: u64,
+    #[serde(default)]
+    pub next_grant: u64,
+    /// Loot grants already brought into a world: grant id → world seed. A
+    /// grant enriches one world only.
+    #[serde(default)]
+    pub redeemed: BTreeMap<u64, u64>,
 }
 
 impl Store {

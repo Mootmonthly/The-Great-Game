@@ -101,6 +101,7 @@ The arena server verifies champions by replaying your world's history, matches p
      ```
    To host a server for other people (your own computer, a cloud server, Docker, real certificates), see [docs/HOSTING.md](docs/HOSTING.md).
 3. **Ranked is permadeath.** Named individuals who fall are gone forever: the server will never accept them again, and their death is written into your world's history. Species units that fall are lost, but the species can field more. Practice matches cost nothing.
+4. **Winning pays.** The winner earns Essence for each enemy champion that fell, and carries home their remains: a small population of the fallen being's kind arrives in your world and may take root. The loser gets nothing.
 
 During an online match, possession works as offline (WASD, Space, Q, Esc). Speed is fixed by the server, and **Surrender** ends the match at once.
 

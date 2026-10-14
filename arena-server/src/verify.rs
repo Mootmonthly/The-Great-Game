@@ -7,6 +7,8 @@
 use net_proto::client::appearance;
 use net_proto::{Appearance, ChampionKind};
 use sha2::{Digest, Sha256};
+use crate::sign::Signer;
+use sim_core::loot::Remains;
 use sim_core::sheet::{individual_sheet, species_sheet, CharacterSheet};
 use sim_core::{Action, ActionLog, World};
 use std::collections::HashMap;
@@ -27,6 +29,30 @@ pub struct Verified {
     pub fingerprint: Option<u64>,
     /// Actions skipped by resuming from a checkpoint (0 = full replay).
     pub resumed_from: usize,
+    pub remains: Remains,
+    /// Loot grants used in this world's history.
+    pub loot: Vec<u64>,
+}
+
+/// Checks every loot grant in the log: signed by this server, granted to
+/// this account, and used once.
+pub fn check_loot(signer: &Signer, account: &str, log: &ActionLog) -> Result<Vec<u64>, String> {
+    let mut ids = Vec::new();
+    for a in &log.actions {
+        if let Action::Loot { grant, .. } = a {
+            if !signer.verify(&grant.payload(), &grant.signature) {
+                return Err("the world contains loot this server never granted".into());
+            }
+            if grant.account != account {
+                return Err("the world contains another player's loot".into());
+            }
+            if ids.contains(&grant.id) {
+                return Err("the world uses the same loot twice".into());
+            }
+            ids.push(grant.id);
+        }
+    }
+    Ok(ids)
 }
 
 /// Hash of the first `n` actions of a log.
@@ -127,13 +153,14 @@ impl Checkpoints {
     }
 }
 
-/// Verifies with no checkpoints (a full replay).
+/// Verifies with no checkpoints (a full replay) and no loot.
 pub fn verify(log: &ActionLog, kind: ChampionKind, id: u32, cost: i64) -> Result<Verified, String> {
-    verify_with(None, "", log, kind, id, cost)
+    verify_with(None, &Signer::random(), "", log, kind, id, cost)
 }
 
 pub fn verify_with(
     checkpoints: Option<&Checkpoints>,
+    signer: &Signer,
     account: &str,
     log: &ActionLog,
     kind: ChampionKind,
@@ -154,6 +181,7 @@ pub fn verify_with(
     if ticks > MAX_TICKS {
         return Err(format!("world history too long (over {} years)", MAX_TICKS / 4));
     }
+    let loot = check_loot(signer, account, log)?;
     let (world, resumed_from) = match checkpoints.and_then(|c| c.resume(account, log)) {
         Some((mut world, n)) => {
             for a in &log.actions[n..] {
@@ -190,12 +218,25 @@ pub fn verify_with(
         ));
     }
     let appearance = appearance(&world, kind, id).ok_or("being has no species")?;
+    let species_id = match kind {
+        ChampionKind::Species => id,
+        ChampionKind::Individual => world.individual_by_id(id).map_or(0, |i| i.species),
+    };
+    let s = world.species_by_id(species_id).ok_or("being has no species")?;
+    let remains = Remains {
+        name: s.name.clone(),
+        profile: s.profile,
+        genome: s.genome.clone(),
+        color: s.color,
+    };
     Ok(Verified {
         name,
         sheet,
         appearance,
         fingerprint,
         resumed_from,
+        remains,
+        loot,
     })
 }
 
@@ -212,9 +253,10 @@ mod tests {
         }
         w.apply(Action::Tick { ticks: 800 });
         let cps = Checkpoints::new(None);
+        let signer = Signer::random();
         let id = w.living_individuals().next().expect("individuals").id;
         let cost = |w: &World| individual_sheet(w, w.individual_by_id(id).unwrap()).unwrap().cost.cost;
-        let first = verify_with(Some(&cps), "ann", w.log(), ChampionKind::Individual, id, cost(&w)).unwrap();
+        let first = verify_with(Some(&cps), &signer, "ann", w.log(), ChampionKind::Individual, id, cost(&w)).unwrap();
         assert_eq!(first.resumed_from, 0);
 
         // The world goes on; the next bind resumes from the checkpoint.
@@ -223,7 +265,7 @@ mod tests {
             return;
         };
         let c2 = individual_sheet(&w, w.individual_by_id(id2).unwrap()).unwrap().cost.cost;
-        let resumed = verify_with(Some(&cps), "ann", w.log(), ChampionKind::Individual, id2, c2).unwrap();
+        let resumed = verify_with(Some(&cps), &signer, "ann", w.log(), ChampionKind::Individual, id2, c2).unwrap();
         assert!(resumed.resumed_from > 0);
         let full = verify(w.log(), ChampionKind::Individual, id2, c2).unwrap();
         assert_eq!(resumed.sheet, full.sheet);
@@ -231,10 +273,10 @@ mod tests {
         // A different history (an edit in the past) cannot use it.
         let mut forked = w.log().clone();
         forked.actions.insert(1, Action::SetGlobalHeat { kelvin: sim_core::Fx::ONE });
-        let r = verify_with(Some(&cps), "ann", &forked, ChampionKind::Species, 1, 0);
+        let r = verify_with(Some(&cps), &signer, "ann", &forked, ChampionKind::Species, 1, 0);
         assert!(r.map_or(true, |v| v.resumed_from == 0));
         // Nor another account.
-        let other = verify_with(Some(&cps), "bob", w.log(), ChampionKind::Individual, id2, c2).unwrap();
+        let other = verify_with(Some(&cps), &signer, "bob", w.log(), ChampionKind::Individual, id2, c2).unwrap();
         assert_eq!(other.resumed_from, 0);
     }
 }

@@ -56,6 +56,33 @@ fn connect_secret(addr: SocketAddr, name: &str) -> (Client, String) {
     (c, secret)
 }
 
+fn world_seeded(seed: u64) -> World {
+    let mut w = World::new(seed);
+    for a in preset_actions(&w, "earthlike").unwrap() {
+        w.apply(a);
+    }
+    w.apply(Action::Tick { ticks: 40 });
+    w
+}
+
+trait WithLoot {
+    fn clone_log_with_loot(&self, grant: &sim_core::loot::LootGrant) -> World;
+}
+
+impl WithLoot for World {
+    /// A copy of this world (by replay) with the grant applied.
+    fn clone_log_with_loot(&self, grant: &sim_core::loot::LootGrant) -> World {
+        let mut w = World::replay(self.log());
+        let (x, y) = w.best_region_for(&grant.remains.profile);
+        w.apply(Action::Loot {
+            grant: Box::new(grant.clone()),
+            x,
+            y,
+        });
+        w
+    }
+}
+
 fn individuals(w: &World, n: usize) -> Vec<u32> {
     let mut ids: Vec<u32> = w.living_individuals().map(|i| i.id).collect();
     ids.sort();
@@ -391,4 +418,112 @@ fn staying_away_too_long_is_surrender() {
     };
     assert_eq!(surrendered, Some(a_team));
     assert!(!mb.desynced);
+}
+
+#[test]
+fn the_winner_loots_the_fallen_and_earns_essence() {
+    let addr = server(None);
+    let mut worlds = [world(1), world(2)];
+    let (mut a, _) = connect_secret(addr, "ivy");
+    let (mut b, _) = connect_secret(addr, "jack");
+    let sa = biggest_species(&worlds[0]);
+    let sb = biggest_species(&worlds[1]);
+    let ta: Vec<u64> = (0..2)
+        .map(|_| a.bind(&worlds[0], ChampionKind::Species, sa).unwrap().unwrap().token)
+        .collect();
+    let tb: Vec<u64> = (0..2)
+        .map(|_| b.bind(&worlds[1], ChampionKind::Species, sb).unwrap().unwrap().token)
+        .collect();
+    a.queue(QueueMode::Ranked, 1000, ta).unwrap();
+    b.queue(QueueMode::Ranked, 1000, tb).unwrap();
+    let (ma, mb) = play(&mut a, &mut b);
+    let ends = [ma.end.clone().unwrap(), mb.end.clone().unwrap()];
+    let teams = [ma.team, mb.team];
+    let Some(ServerMsg::MatchEnd { result, .. }) = ma.end else {
+        panic!()
+    };
+    let winner_team = match result {
+        ArenaResult::TeamA => 0,
+        ArenaResult::TeamB => 1,
+        ArenaResult::Draw => return, // rare: nobody loots
+    };
+    let w = if teams[0] == winner_team { 0 } else { 1 };
+    let ServerMsg::MatchEnd {
+        loot,
+        essence_gained,
+        essence,
+        ..
+    } = ends[w].clone()
+    else {
+        panic!()
+    };
+    assert!(!loot.is_empty(), "the loser's fallen are looted");
+    assert!(essence_gained > 0 && essence == essence_gained);
+    let ServerMsg::MatchEnd {
+        loot: loser_loot,
+        essence_gained: loser_gain,
+        ..
+    } = ends[1 - w].clone()
+    else {
+        panic!()
+    };
+    assert!(loser_loot.is_empty() && loser_gain == 0, "the loser gets nothing");
+
+    // The remains come home and the world still verifies.
+    let clients = [&mut a, &mut b];
+    let [c0, c1] = clients;
+    let (winner, loser) = if w == 0 { (c0, c1) } else { (c1, c0) };
+    let grant = loot[0].clone();
+    let world = &mut worlds[w];
+    let (x, y) = world.best_region_for(&grant.remains.profile);
+    world.apply(Action::Loot {
+        grant: Box::new(grant.clone()),
+        x,
+        y,
+    });
+    world.apply(Action::Tick { ticks: 4 });
+    let s = biggest_species(world);
+    assert!(winner.bind(world, ChampionKind::Species, s).unwrap().is_ok());
+
+    // A tampered grant is refused.
+    let mut forged = worlds[w].log().clone();
+    if let Some(Action::Loot { grant, .. }) = forged
+        .actions
+        .iter_mut()
+        .find(|a| matches!(a, Action::Loot { .. }))
+    {
+        grant.biomass = grant.biomass * sim_core::Fx::from_int(10);
+    }
+    let cost = local_sheet(&worlds[w], ChampionKind::Species, s).unwrap().cost.cost;
+    winner
+        .send(&ClientMsg::Bind {
+            log: forged,
+            kind: ChampionKind::Species,
+            id: s,
+            cost,
+        })
+        .unwrap();
+    let ServerMsg::Rejected { reason, .. } = winner.recv().unwrap() else {
+        panic!()
+    };
+    assert!(reason.contains("never granted"), "{reason}");
+
+    // Someone else cannot use it.
+    let mut stolen = worlds[1 - w].clone_log_with_loot(&grant);
+    let s2 = biggest_species(&stolen);
+    let r = loser.bind(&stolen, ChampionKind::Species, s2).unwrap();
+    assert!(r.unwrap_err().contains("another player's loot"));
+
+    // And it enriches one world only.
+    let mut second = world_seeded(9);
+    let (x, y) = second.best_region_for(&grant.remains.profile);
+    second.apply(Action::Loot {
+        grant: Box::new(grant),
+        x,
+        y,
+    });
+    stolen = second;
+    let s3 = biggest_species(&stolen);
+    let r = winner.bind(&stolen, ChampionKind::Species, s3).unwrap();
+    assert!(r.unwrap_err().contains("another world"));
 }

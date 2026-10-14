@@ -702,6 +702,26 @@ impl SimWorld {
         }
     }
 
+    /// Brings looted remains (a grant from the arena server, as JSON) into
+    /// this world, in the region that suits them best. Returns the new
+    /// species' name, or "" if the grant is unreadable.
+    #[func]
+    fn apply_loot(&mut self, grant_json: GString) -> GString {
+        let Ok(grant) = serde_json::from_str::<sim_core::loot::LootGrant>(&grant_json.to_string()) else {
+            return GString::new();
+        };
+        let (x, y) = self.world.best_region_for(&grant.remains.profile);
+        self.world.apply(Action::Loot {
+            grant: Box::new(grant),
+            x,
+            y,
+        });
+        self.world
+            .species
+            .last()
+            .map_or(GString::new(), |s| GString::from(s.name.as_str()))
+    }
+
     #[func]
     fn seed(&self) -> i64 {
         self.world.seed as i64

@@ -14,6 +14,8 @@ use net_proto::{
     ServerMsg, HASH_INTERVAL, PROTOCOL_VERSION,
 };
 use sim_core::arena::{Arena, ArenaCommand, ArenaResult};
+use sim_core::loot::LootGrant;
+use sim_core::Fx;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufReader};
 use net_proto::tls::{TlsReader, TlsServer};
@@ -354,6 +356,7 @@ fn connection(shared: &Arc<Shared>, stream: TcpStream) -> io::Result<()> {
                 rating: account.rating.rating,
                 deviation: account.rating.deviation,
             },
+            essence: account.essence,
             champions: account.champions.values().map(|c| c.token.clone()).collect(),
         });
         if let Some((ctl, team)) = state.playing.get(&name) {
@@ -446,7 +449,7 @@ fn bind(
     cost: i64,
 ) -> ServerMsg {
     shared.verifying.acquire();
-    let verified = verify_with(Some(&shared.checkpoints), account, log, kind, id, cost);
+    let verified = verify_with(Some(&shared.checkpoints), &shared.signer, account, log, kind, id, cost);
     shared.verifying.release();
     let v = match verified {
         Ok(v) => v,
@@ -454,6 +457,15 @@ fn bind(
     };
 
     let mut state = shared.state.lock().unwrap();
+    // A loot grant enriches one world only.
+    for g in &v.loot {
+        if state.store.redeemed.get(g).is_some_and(|seed| *seed != log.seed) {
+            return rejected("bind", "this world uses loot already brought into another world");
+        }
+    }
+    for g in &v.loot {
+        state.store.redeemed.insert(*g, log.seed);
+    }
     if let Some(fp) = v.fingerprint {
         if state.store.dead.contains(&fp) {
             return rejected("bind", format!("{} died in the arena", v.name));
@@ -499,6 +511,7 @@ fn bind(
         Champion {
             token: token.clone(),
             fingerprint: v.fingerprint,
+            remains: Some(v.remains),
         },
     );
     shared.save(&state);
@@ -735,8 +748,16 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
     let ranked = info.mode == QueueMode::Ranked;
     let mut state = shared.state.lock().unwrap();
 
-    // Permadeath: the fallen are gone (ranked only).
+    let winner = match result {
+        ArenaResult::TeamA => Some(0usize),
+        ArenaResult::TeamB => Some(1usize),
+        ArenaResult::Draw => None,
+    };
+    // Permadeath: the fallen are gone (ranked only). The winner loots the
+    // bodies of the loser's fallen and earns Essence for each (§6.2a).
     let mut fallen = Vec::new();
+    let mut loot = Vec::new();
+    let mut essence_gained = 0u64;
     for team in 0..2 {
         // Units are in roster order, team A first.
         let base = if team == 0 { 0 } else { info.tokens[0].len() };
@@ -750,6 +771,22 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
             if let Some(c) = state.store.account(account).champions.remove(&token) {
                 if let Some(fp) = c.fingerprint {
                     state.store.dead.insert(fp);
+                }
+                if let (Some(w), Some(remains)) = (winner, c.remains.clone()) {
+                    if w != team {
+                        essence_gained += c.token.cost.max(1) as u64;
+                        state.store.next_grant += 1;
+                        let mut grant = LootGrant {
+                            id: state.store.next_grant,
+                            account: info.players[w].clone(),
+                            from: c.token.name.clone(),
+                            remains,
+                            biomass: Fx::ONE + Fx::ratio(c.token.cost, 20),
+                            signature: String::new(),
+                        };
+                        grant.signature = shared.signer.sign(&grant.payload());
+                        loot.push(grant);
+                    }
                 }
                 fallen.push(Fallen {
                     token,
@@ -788,6 +825,13 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
             });
         }
     }
+    if let Some(w) = winner {
+        state.store.account(&info.players[w]).essence += essence_gained;
+    }
+    let balances = [
+        state.store.account(&info.players[0]).essence,
+        state.store.account(&info.players[1]).essence,
+    ];
     for p in &info.players {
         state.playing.remove(p);
     }
@@ -797,12 +841,14 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
     let record = serde_json::json!({
         "match_id": info.id, "seed": info.seed, "players": info.players,
         "tokens": info.tokens, "result": result, "surrendered": surrendered,
-        "fallen": fallen, "ticks": arena.tick(),
+        "fallen": fallen, "ticks": arena.tick(), "essence_gained": essence_gained,
+        "loot": loot.iter().map(|g| g.id).collect::<Vec<_>>(),
         "commands": digest(&serde_json::to_vec(&arena.command_log).unwrap_or_default()),
     });
     let signature = shared.signer.sign(record.to_string().as_bytes());
     let senders = info.ctl.feed.lock().unwrap().senders.clone();
-    for (tx, rating) in senders.iter().zip(ratings) {
+    for (team, (tx, rating)) in senders.iter().zip(ratings).enumerate() {
+        let won = winner == Some(team);
         if let Some(tx) = tx {
             let _ = tx.send(ServerMsg::MatchEnd {
                 match_id: info.id,
@@ -810,6 +856,9 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
                 surrendered,
                 fallen: fallen.clone(),
                 rating,
+                essence_gained: if won { essence_gained } else { 0 },
+                essence: balances[team],
+                loot: if won { loot.clone() } else { Vec::new() },
                 signature: signature.clone(),
             });
         }

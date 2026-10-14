@@ -453,6 +453,7 @@ impl World {
             }
             Action::AddMoon { mass, distance } => self.planet.add_moon(*mass, *distance),
             Action::ChampionFell { individual } => self.champion_fell(*individual),
+            Action::Loot { grant, x, y } => self.apply_loot(grant, *x, *y),
             Action::SetVeilLaw { openness } => {
                 self.veil_law = (*openness).clamp(Fx::ZERO, Fx::ONE);
             }
