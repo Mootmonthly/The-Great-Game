@@ -1,0 +1,42 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  :root { --ink:#1d2330; --muted:#5b6475; --line:#e3e6ec; --bg:#f7f5f0; --card:#ffffff;
+          --easy:#1f8a4c; --feas:#2f6fd6; --disp:#8a5cd1; --no:#c0392b; }
+  * { box-sizing:border-box; }
+  body { margin:0; width:1920px; height:1080px; background:var(--bg); font-family:"DejaVu Sans","Liberation Sans",Arial,sans-serif; color:var(--ink); }
+  .wrap { padding:48px 64px; height:100%; display:flex; flex-direction:column; }
+  h1 { margin:0; font-size:44px; letter-spacing:-0.5px; }
+  .sub { margin:10px 0 26px; font-size:21px; color:var(--muted); }
+  table { width:100%; border-collapse:separate; border-spacing:0; background:var(--card); border-radius:16px; overflow:hidden; box-shadow:0 2px 10px rgba(0,0,0,.06); }
+  th { text-align:left; font-size:17px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); padding:14px 20px; background:#eef0f4; }
+  td { padding:13px 20px; font-size:19px; line-height:1.32; border-top:1px solid var(--line); vertical-align:top; }
+  td.lvl { font-weight:700; white-space:nowrap; width:300px; }
+  td.lvl span { display:inline-block; width:30px; color:var(--muted); }
+  td.scale { white-space:nowrap; width:240px; color:var(--muted); }
+  td.verdict { width:250px; white-space:nowrap; }
+  .pill { display:inline-block; padding:5px 14px; border-radius:999px; color:#fff; font-weight:700; font-size:16px; }
+  .easy { background:var(--easy); } .feas { background:var(--feas); } .disp { background:var(--disp); } .no { background:var(--no); }
+  .foot { margin-top:22px; display:flex; gap:28px; font-size:18px; color:var(--muted); }
+  .foot b { color:var(--ink); }
+  .rule { flex:1; background:#fff7e0; border:1px solid #f0d98a; border-radius:12px; padding:14px 18px; color:#5a4a12; }
+</style></head><body><div class="wrap">
+<h1>The Great Game — how far can neural-network minds go?</h1>
+<div class="sub">Each brain: 8 senses → 6 hidden neurons → 4 actions, integer maths. One decision ≈ 200 multiply-adds; one CPU core runs 1–2 million per second. The limit is how many beings think at once.</div>
+<table>
+<tr><th>Level</th><th>What it is</th><th>Scale</th><th>Verdict</th></tr>
+<tr><td class="lvl"><span>1</span>Species instincts</td><td>Every species carries brain weights. Testing them in standard situations gives a temperament — aggression, fear, curiosity, sociability — that drives hunting, fleeing, pack cooperation.</td><td class="scale">Every species</td><td class="verdict"><span class="pill easy">Easy · built</span></td></tr>
+<tr><td class="lvl"><span>2</span>Named individuals</td><td>Persistent beings tracked planet-wide: leaders, prophets, heroes, future champions. Own brain, personality, memories, relationships.</td><td class="scale">1,000–10,000 per world</td><td class="verdict"><span class="pill feas">Feasible · started</span></td></tr>
+<tr><td class="lvl"><span>3</span>Crowds near the camera</td><td>Ordinary creatures around the camera get full brains and act in real time: hunting, fleeing, flocking.</td><td class="scale">10,000–50,000 on screen</td><td class="verdict"><span class="pill disp">Display only</span></td></tr>
+<tr><td class="lvl"><span>4</span>Relationships</td><td>Kinship, trust, rivalry, love, debt between named individuals; brains decide how they react to each other.</td><td class="scale">Thousands of links</td><td class="verdict"><span class="pill feas">Feasible · started</span></td></tr>
+<tr><td class="lvl"><span>5</span>Culture</td><td>Settlements hold shared values. Ideas — rituals, taboos, crafts, beliefs — spread person to person; each brain decides whether to adopt them.</td><td class="scale">Per settlement</td><td class="verdict"><span class="pill feas">Feasible</span></td></tr>
+<tr><td class="lvl"><span>6</span>Religion</td><td>Beings explain what they can't account for. The god is real: the player's meteors, blessings and heat waves are witnessable, so faiths form around the player.</td><td class="scale">Per culture</td><td class="verdict"><span class="pill feas">Feasible · standout</span></td></tr>
+<tr><td class="lvl"><span>7</span>Arena AI</td><td>A champion's personality steers a tactical AI: cautious beings keep distance, loyal ones protect allies.</td><td class="scale">~1,000 units per match</td><td class="verdict"><span class="pill feas">Feasible</span></td></tr>
+<tr><td class="lvl"><span>8</span>Language and dialogue</td><td>Can't be evolved. Faked with made-up languages per culture and templated speech; an AI language model could add cosmetic lines during possession.</td><td class="scale">—</td><td class="verdict"><span class="pill no">Not realistic</span></td></tr>
+<tr><td class="lvl"><span>9</span>A brain for every creature</td><td>Millions of individual brains across the planet, all the time. Level 1 covers this statistically instead.</td><td class="scale">—</td><td class="verdict"><span class="pill no">Not feasible</span></td></tr>
+</table>
+<div class="foot">
+  <div class="rule"><b>Camera rule:</b> anything that changes the world (individuals, culture, religion) runs in the main simulation, so server replay reproduces it. Crowds near the camera are display only — moving the camera never changes the world.</div>
+  <div><b>Feeds the character sheet:</b><br>Charisma ← sociability, friendships, renown<br>INT / WIS ← brain size, experience · Alignment ← personality + culture</div>
+</div>
+</div></body></html>

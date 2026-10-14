@@ -151,6 +151,11 @@ Every being's behaviour comes from a small neural network in its genome: 8 sense
 
 Brains run at several levels, chosen so cost stays bounded:
 
+![Neural-network feasibility levels](images/neural-network-feasibility.png)
+
+(Source for the image: `images/neural-network-feasibility.html`.)
+
+
 | Level | What runs | Scale | Where | Status |
 |---|---|---|---|---|
 | 1. Species instincts | Each species' brain is tested once in standard situations. The answers become its temperament (aggression, fear, curiosity, sociability), which drives hunting, fleeing, pack cooperation and migration in the population simulation. | Every species | Main simulation | Phase 0.5 |
