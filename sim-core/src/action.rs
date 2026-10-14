@@ -57,6 +57,9 @@ pub enum Action {
     SetPlanetRadius { earths: Fx },
     /// The Veil law (§4.4a): 0 sealed .. 1 wide open.
     SetVeilLaw { openness: Fx },
+    /// A metaphysical law's strength, 0..1 (`laws::ARCANE`, `SOUL`, `QI`,
+    /// `TRIBULATION`).
+    SetLaw { law: u8, value: Fx },
     /// A named individual died in the arena (§6.2a). The server reports
     /// the death; the client logs it so the world replays without them.
     ChampionFell { individual: u32 },

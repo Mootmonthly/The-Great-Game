@@ -13,6 +13,7 @@ pub mod fixed;
 pub mod globe;
 pub mod hash;
 pub mod individual;
+pub mod laws;
 pub mod life;
 pub mod loot;
 pub mod presets;

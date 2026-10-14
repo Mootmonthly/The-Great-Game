@@ -105,6 +105,8 @@ pub const SAPIENCE: u16 = 1 << 6;
 /// Came through the Veil (§4.4a). Not an evolutionary milestone: no native
 /// lineage can reach it.
 pub const OTHERWORLDLY: u16 = 1 << 7;
+/// Innate magic (needs the Arcane Magic law and mana where it evolves).
+pub const SPELLCASTING: u16 = 1 << 8;
 
 pub struct Milestone {
     pub flag: u16,
@@ -112,7 +114,7 @@ pub struct Milestone {
     pub requires: u16,
 }
 
-pub const MILESTONES: [Milestone; 7] = [
+pub const MILESTONES: [Milestone; 8] = [
     Milestone {
         flag: MULTICELLULAR,
         name: "Multicellularity",
@@ -146,6 +148,12 @@ pub const MILESTONES: [Milestone; 7] = [
     Milestone {
         flag: SAPIENCE,
         name: "Sapience",
+        requires: NERVOUS,
+    },
+    // Last, so worlds without Arcane Magic draw the same random numbers.
+    Milestone {
+        flag: SPELLCASTING,
+        name: "Spellcasting",
         requires: NERVOUS,
     },
 ];

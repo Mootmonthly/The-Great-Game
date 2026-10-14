@@ -72,7 +72,7 @@ fn golden_hash() {
     );
 }
 
-const GOLDEN_EARTHLIKE_SEED1_200: &str = "fe2c2a6e6268e359";
+const GOLDEN_EARTHLIKE_SEED1_200: &str = "f8335fb3f7c047b9";
 
 /// Same check on a world with named individuals, brains and relationships.
 #[test]
@@ -85,7 +85,7 @@ fn golden_hash_with_individuals() {
     );
 }
 
-const GOLDEN_FROZEN_MOON_SEED1_600: &str = "5099ce6d0aeae423";
+const GOLDEN_FROZEN_MOON_SEED1_600: &str = "3feb1396a3b22b8b";
 
 #[test]
 fn different_chemistry_gives_different_life() {

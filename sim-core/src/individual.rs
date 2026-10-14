@@ -30,6 +30,8 @@ pub enum MemoryKind {
     Fled,
     MournedFriend,
     WitnessedHorror,
+    Reborn,
+    Breakthrough,
 }
 
 impl MemoryKind {
@@ -44,6 +46,8 @@ impl MemoryKind {
             MemoryKind::Fled => "fled danger",
             MemoryKind::MournedFriend => "mourned the death of",
             MemoryKind::WitnessedHorror => "glimpsed a being from beyond the Veil",
+            MemoryKind::Reborn => "was born remembering a past life as",
+            MemoryKind::Breakthrough => "broke through to a higher cultivation realm",
         }
     }
 }
@@ -83,6 +87,18 @@ pub struct Individual {
     pub last_action: Option<usize>,
     pub death_tick: Option<u64>,
     pub cause_of_death: Option<String>,
+    /// Soul strength (Soul Power), 0..10.
+    #[serde(default)]
+    pub soul: Fx,
+    /// Who this soul was in its last life (Soul Power).
+    #[serde(default)]
+    pub past_life: Option<u32>,
+    /// Qi gathered towards the next breakthrough (Daoist Cultivation).
+    #[serde(default)]
+    pub qi: Fx,
+    /// Cultivation realm reached: 0 none, 1 Qi Condensation, ...
+    #[serde(default)]
+    pub realm: u8,
 }
 
 impl Individual {
@@ -164,7 +180,7 @@ impl Individual {
         }
     }
 
-    fn remember(&mut self, tick: u64, kind: MemoryKind, other: Option<u32>) {
+    pub(crate) fn remember(&mut self, tick: u64, kind: MemoryKind, other: Option<u32>) {
         self.memories.push(Memory { tick, kind, other });
         if self.memories.len() > MAX_MEMORIES {
             // Keep the birth memory; forget the oldest event after it.
@@ -227,6 +243,9 @@ impl Individual {
         }
         h.u64(self.memories.len() as u64);
         h.u64(self.death_tick.map_or(u64::MAX, |t| t));
+        h.i64(self.soul.0);
+        h.i64(self.qi.0);
+        h.u64(self.realm as u64 | (self.past_life.map_or(0, |p| p as u64 + 1) << 8));
     }
 }
 
@@ -245,6 +264,7 @@ impl World {
     pub(crate) fn update_individuals(&mut self) {
         self.spawn_individuals();
         self.individuals_act();
+        self.laws_season();
         while self.individuals.len() > MAX_RECORDS {
             match self.individuals.iter().position(|x| !x.is_alive()) {
                 Some(i) => {
@@ -304,6 +324,10 @@ impl World {
                     last_action: None,
                     death_tick: None,
                     cause_of_death: None,
+                    soul: Fx::ZERO,
+                    past_life: None,
+                    qi: Fx::ZERO,
+                    realm: 0,
                 };
                 ind.remember(self.tick, MemoryKind::Born, None);
                 // Members of a group are siblings.
@@ -315,6 +339,8 @@ impl World {
                     first = Some(id);
                 }
                 self.individuals.push(ind);
+                let k = self.individuals.len() - 1;
+                self.soul_arrives(k);
                 living += 1;
             }
         }
@@ -342,11 +368,12 @@ impl World {
             .collect()
     }
 
-    fn kill_individual(&mut self, k: usize, cause: String, killer: Option<u32>) {
+    pub(crate) fn kill_individual(&mut self, k: usize, cause: String, killer: Option<u32>) {
         let tick = self.tick;
         let id = self.individuals[k].id;
         self.individuals[k].death_tick = Some(tick);
         self.individuals[k].cause_of_death = Some(cause);
+        self.soul_departs(k);
         // Friends mourn, and hold a grudge against the killer.
         let friends: Vec<u32> = self.individuals[k]
             .relations

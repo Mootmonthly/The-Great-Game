@@ -11,7 +11,7 @@
 
 use crate::body::{self, PartKind};
 use crate::fixed::Fx;
-use crate::individual::Individual;
+use crate::individual::{Individual, MemoryKind};
 use crate::life::{EnergyKind, Species};
 use crate::world::World;
 use serde::{Deserialize, Serialize};
@@ -88,6 +88,9 @@ pub enum DamageType {
     Lightning,
     Thunder,
     Psychic,
+    Force,
+    Necrotic,
+    Radiant,
 }
 
 impl DamageType {
@@ -103,6 +106,9 @@ impl DamageType {
             DamageType::Lightning => "lightning",
             DamageType::Thunder => "thunder",
             DamageType::Psychic => "psychic",
+            DamageType::Force => "force",
+            DamageType::Necrotic => "necrotic",
+            DamageType::Radiant => "radiant",
         }
     }
 
@@ -248,6 +254,9 @@ pub struct CharacterSheet {
     pub pack_tactics: bool,
     /// Wisdom save DC against being frightened by its presence, if any.
     pub frighten_dc: Option<i64>,
+    /// Earned class and level, e.g. "Wizard 7" (named individuals only).
+    #[serde(default)]
+    pub class: Option<String>,
     pub cost: CostBreakdown,
 }
 
@@ -301,6 +310,89 @@ pub fn species_sheet(world: &World, species: &Species) -> CharacterSheet {
 pub fn individual_sheet(world: &World, individual: &Individual) -> Option<CharacterSheet> {
     let species = world.species_by_id(individual.species)?;
     Some(build(world, species, Some(individual)))
+}
+
+/// Classes are earned by named individuals from their life story and their
+/// world's laws (docs/GAME_DESIGN.md §5.5). Nobody is assigned one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Class {
+    Fighter,
+    Rogue,
+    Wizard,
+    Sorcerer,
+    Warlock,
+    Shaman,
+    Bard,
+    Cultivator,
+}
+
+impl Class {
+    pub fn name(self) -> &'static str {
+        match self {
+            Class::Fighter => "Fighter",
+            Class::Rogue => "Rogue",
+            Class::Wizard => "Wizard",
+            Class::Sorcerer => "Sorcerer",
+            Class::Warlock => "Warlock",
+            Class::Shaman => "Shaman",
+            Class::Bard => "Bard",
+            Class::Cultivator => "Cultivator",
+        }
+    }
+
+    /// Hit die per class level, as in 5e.
+    pub fn hit_die(self) -> i64 {
+        match self {
+            Class::Fighter => 10,
+            Class::Wizard | Class::Sorcerer => 6,
+            _ => 8,
+        }
+    }
+}
+
+fn memories(ind: &Individual, kind: MemoryKind) -> usize {
+    ind.memories.iter().filter(|m| m.kind == kind).count()
+}
+
+/// The class an individual has earned, if any; the first that fits, in
+/// this order.
+pub fn class_of(world: &World, s: &Species, ind: &Individual, int: i64, cha: i64) -> Option<Class> {
+    let laws = &world.laws;
+    let arcane = laws.arcane > Fx::ZERO;
+    let sapient = s.has(body::SAPIENCE);
+    if ind.realm >= 1 {
+        Some(Class::Cultivator)
+    } else if arcane && s.has(body::SPELLCASTING) && cha >= 12 {
+        Some(Class::Sorcerer)
+    } else if arcane && sapient && int >= 13 && ind.personality.curiosity >= Fx::HALF {
+        // Scholars: bright and curious.
+        Some(Class::Wizard)
+    } else if memories(ind, MemoryKind::WitnessedHorror) > 0 && (arcane || laws.soul > Fx::ZERO) {
+        Some(Class::Warlock)
+    } else if laws.soul > Fx::ZERO
+        && ind.soul >= Fx::ONE
+        && memories(ind, MemoryKind::MournedFriend) > 0
+    {
+        Some(Class::Shaman)
+    } else if memories(ind, MemoryKind::Defeated) + memories(ind, MemoryKind::Killed) >= 3 {
+        Some(Class::Fighter)
+    } else if memories(ind, MemoryKind::Fled) >= 2 {
+        Some(Class::Rogue)
+    } else if sapient && ind.friends() >= 3 && cha >= 14 {
+        Some(Class::Bard)
+    } else {
+        None
+    }
+}
+
+/// Class level 1–20, from renown and age.
+pub fn class_level(world: &World, ind: &Individual) -> i64 {
+    (1 + (ind.renown * Fx::from_int(4)).to_int() + ind.age_years(world.tick) as i64 / 10).clamp(1, 20)
+}
+
+/// Dice of a cantrip at this level: 1, 2, 3 or 4 (at levels 1, 5, 11, 17).
+fn cantrip_dice(level: i64) -> i64 {
+    1 + (level >= 5) as i64 + (level >= 11) as i64 + (level >= 17) as i64
 }
 
 fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet {
@@ -367,6 +459,12 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         ),
         None => 1,
     };
+    // Daoist Cultivation: every realm hardens body and spirit.
+    let realm = ind.map_or(0, |i| i.realm as i64);
+    let strength = (strength + 2 * realm).min(40);
+    let dexterity = (dexterity + 2 * realm).min(30);
+    let constitution = (constitution + 2 * realm).min(40);
+    let wisdom = (wisdom + 2 * realm).min(30);
     let abilities = [
         strength,
         dexterity,
@@ -375,6 +473,15 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         wisdom,
         charisma,
     ];
+    let class = ind.and_then(|i| class_of(world, s, i, intelligence, charisma));
+    let level = match (class, ind) {
+        (Some(_), Some(i)) => class_level(world, i),
+        _ => 0,
+    };
+    let arcane = world.laws.arcane > Fx::ZERO;
+    let soul = ind
+        .filter(|_| world.laws.soul > Fx::ZERO)
+        .map_or(Fx::ZERO, |i| i.soul);
 
     // Hit dice grow with body mass: about 1 for a person, 9 for an elephant,
     // 22 for an ancient dragon.
@@ -382,11 +489,21 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     let die = category.hit_die();
     let con_mod = modifier(constitution);
     let hit_points = (hit_dice * ((die + 1) / 2 + con_mod)).max(1);
+    // Cultivation multiplies vitality; class levels add their hit dice; a
+    // strong soul wards the body (Soul Power).
+    let soul_ward = (soul * Fx::from_int(hit_dice) * Fx::HALF).round();
+    let hit_points = hit_points * (4 + realm) / 4
+        + class.map_or(0, |c| level * (c.hit_die() / 2 + 1 + con_mod).max(1))
+        + soul_ward;
     let proficiency = (2 + hit_dice / 8).clamp(2, 9);
     // A phase membrane leaves part of the body elsewhere: harder to hit.
     let phased = if b.count(PartKind::PhaseMembrane) > 0 { 2 } else { 0 };
-    let armor_class =
-        (10 + modifier(dexterity) + (t.armor * Fx::from_int(9)).round() + phased).clamp(5, 30);
+    let armor_class = (10
+        + modifier(dexterity)
+        + (t.armor * Fx::from_int(9)).round()
+        + phased
+        + realm / 2)
+        .clamp(5, 30);
 
     // Speeds in feet.
     let speed_scale =
@@ -464,6 +581,9 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
             DamageType::Slashing,
             DamageType::Psychic,
         ]);
+    }
+    if soul >= Fx::from_int(3) || class == Some(Class::Shaman) {
+        resistances.push(DamageType::Necrotic);
     }
     resistances.sort();
     resistances.dedup();
@@ -583,6 +703,74 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     if category >= SizeCategory::Large && t.intelligence > Fx::ratio(15, 100) {
         attacks[0].uses += 1;
     }
+    if class == Some(Class::Fighter) {
+        // Fighting Style, and Extra Attack from level 5.
+        for a in &mut attacks {
+            a.to_hit += 2;
+        }
+        if level >= 5 {
+            attacks[0].uses += 1;
+        }
+    }
+
+    // Magic, souls and qi.
+    let int_mod = modifier(intelligence);
+    let wis_mod = modifier(wisdom);
+    let cha_mod = modifier(charisma);
+    if arcane && s.has(body::SPELLCASTING) {
+        let m = int_mod.max(cha_mod);
+        attacks.push(Attack {
+            name: "Mana Bolt".into(),
+            to_hit: proficiency + m,
+            dice: 1 + hit_dice / 4,
+            die: 8,
+            bonus: m.max(0),
+            damage: DamageType::Force,
+            uses: 1,
+        });
+    }
+    if realm >= 1 {
+        attacks.push(Attack {
+            name: "Qi Strike".into(),
+            to_hit: proficiency + attack_mod,
+            dice: realm,
+            die: 10,
+            bonus: attack_mod.max(0),
+            damage: DamageType::Force,
+            uses: 1 + (realm >= 5) as i64,
+        });
+    }
+    let cantrip = |name: &str, die: i64, ability: i64, damage: DamageType, uses: i64| Attack {
+        name: name.into(),
+        to_hit: proficiency + ability,
+        dice: cantrip_dice(level),
+        die,
+        bonus: 0,
+        damage,
+        uses,
+    };
+    match class {
+        Some(Class::Rogue) => attacks.push(Attack {
+            name: "Sneak Attack".into(),
+            to_hit: proficiency + modifier(dexterity),
+            dice: (level + 1) / 2,
+            die: 6,
+            bonus: 0,
+            damage: DamageType::Piercing,
+            uses: 1,
+        }),
+        Some(Class::Wizard) => attacks.push(cantrip("Arcane Bolt", 10, int_mod, DamageType::Force, 1)),
+        Some(Class::Sorcerer) => attacks.push(cantrip("Chaos Bolt", 10, cha_mod, DamageType::Force, 1)),
+        Some(Class::Warlock) => {
+            let mut blast = cantrip("Eldritch Blast", 10, cha_mod, DamageType::Force, cantrip_dice(level));
+            blast.dice = 1;
+            blast.bonus = cha_mod.max(0);
+            attacks.push(blast);
+        }
+        Some(Class::Shaman) => attacks.push(cantrip("Spirit Lash", 8, wis_mod, DamageType::Necrotic, 1)),
+        Some(Class::Bard) => attacks.push(cantrip("Vicious Mockery", 4, cha_mod, DamageType::Psychic, 1)),
+        _ => {}
+    }
 
     let void = b.part(PartKind::Void).map(|_| Breath {
         name: "Void Pulse".into(),
@@ -611,6 +799,18 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
                 targets: if category >= SizeCategory::Huge { 3 } else { 2 },
             }
         }));
+    // Wizards and sorcerers learn Fireball at level 5.
+    let breath = match (breath, class) {
+        (None, Some(c @ (Class::Wizard | Class::Sorcerer))) if level >= 5 => Some(Breath {
+            name: "Fireball".into(),
+            dice: 8 + (level - 5) / 2,
+            damage: DamageType::Fire,
+            save_ability: DEX,
+            dc: 8 + proficiency + if c == Class::Wizard { int_mod } else { cha_mod },
+            targets: 3,
+        }),
+        (b, _) => b,
+    };
 
     // Traits.
     let mut traits = Vec::new();
@@ -625,7 +825,9 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
             ),
         });
     }
-    let pack_tactics = nervous && temperament.sociability > Fx::ratio(6, 10);
+    // Bards inspire their allies.
+    let pack_tactics =
+        (nervous && temperament.sociability > Fx::ratio(6, 10)) || class == Some(Class::Bard);
     if pack_tactics {
         traits.push(Trait {
             name: "Pack Tactics".into(),
@@ -669,6 +871,55 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
                 text: "Part of its body is always elsewhere (+2 AC).".into(),
             });
         }
+    }
+    if arcane && s.has(body::SPELLCASTING) {
+        traits.push(Trait {
+            name: "Innate Spellcasting".into(),
+            text: "Draws on the world's mana to hurl bolts of force.".into(),
+        });
+    }
+    if realm >= 1 {
+        traits.push(Trait {
+            name: format!("Cultivator: {}", crate::laws::REALMS[(realm - 1) as usize]),
+            text: format!(
+                "Has broken through {realm} cultivation realm{}: stronger, tougher and longer-lived than its kind.",
+                if realm == 1 { "" } else { "s" }
+            ),
+        });
+    }
+    if soul_ward > 0 {
+        traits.push(Trait {
+            name: "Soul Ward".into(),
+            text: format!("A strong soul adds {soul_ward} hit points."),
+        });
+    }
+    if let Some(past) = ind.and_then(|i| i.past_life) {
+        let who = world
+            .individual_by_id(past)
+            .map_or_else(|| "someone long gone".to_string(), |p| p.name.clone());
+        traits.push(Trait {
+            name: "Old Soul".into(),
+            text: format!("Remembers a past life as {who}."),
+        });
+    }
+    match class {
+        Some(Class::Fighter) => traits.push(Trait {
+            name: "Fighting Style".into(),
+            text: if level >= 5 {
+                "+2 to hit with weapons; Extra Attack.".into()
+            } else {
+                "+2 to hit with weapons.".into()
+            },
+        }),
+        Some(Class::Rogue) => traits.push(Trait {
+            name: "Cunning Action".into(),
+            text: "Survived by running; strikes where it hurts.".into(),
+        }),
+        Some(Class::Bard) => traits.push(Trait {
+            name: "Inspiration".into(),
+            text: "Allies fight better beside it (+2 to hit).".into(),
+        }),
+        _ => {}
     }
     if sapient {
         traits.push(Trait {
@@ -751,6 +1002,7 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         regeneration,
         pack_tactics,
         frighten_dc: otherworldly.then(|| 8 + proficiency + modifier(charisma)),
+        class: class.map(|c| format!("{} {level}", c.name())),
         cost: CostBreakdown::default(),
     };
     sheet.cost = cost(&sheet);
