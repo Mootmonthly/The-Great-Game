@@ -120,7 +120,8 @@ Not all life has to come from the world's own chemistry. Some beings come from o
 - **Character sheet:** type Aberration. Typical traits: psychic damage, Frightened and madness effects, truesight, telepathy, resistance to non-magical damage. Usually high cost.
 - **Risk and reward:** a world with a thin Veil can produce the strongest champions in the game, but the entities can destabilise or consume the world's own life. They can arrive uninvited if the player creates the right conditions, so world-building choices have consequences.
 - **Naming:** all entities get original generated names. No names from commercial mythos products.
-- **Status:** design only; planned with the metaphysical laws (roadmap phase 4). **[OPEN]** Can extradimensional beings appear in a world with no metaphysical laws at all, through extreme physics alone?
+- **Physics alone is enough (decided):** extreme enough physics can thin the Veil even in a world with no metaphysical laws at all. A purely physical world is safer, not immune.
+- **Status:** design only; planned with the metaphysical laws (roadmap phase 4).
 
 ### 4.5 Sapience and Civilization
 
@@ -381,12 +382,11 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Surrender | Allowed; fallen champions are looted, survivors return home |
 | — | Evolution model | Body-part genomes gated by evolutionary milestones, with neural-network brains used as far as cost allows (§4.4, §4.8) |
 | — | Sapience on Earth-like worlds | Almost always, given time; "never sapient" worlds come from unusual player choices (§4.4) |
-| — | Extradimensional beings | Included as a possibility, arriving through a thin Veil (§4.4a) |
+| — | Extradimensional beings | Included as a possibility, arriving through a thin Veil; extreme physics alone can let them in (§4.4a) |
 
 ## 11. Open Questions
 
 Deferred until the world simulation is complete:
 
 1. Arena match structure: map types, match length, and victory conditions (§6.1).
-2. Whether extradimensional beings can appear through extreme physics alone, without metaphysical laws (§4.4a).
-3. Practice queue details (§6.2a).
+2. Practice queue details (§6.2a).
