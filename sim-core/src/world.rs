@@ -211,6 +211,11 @@ pub struct World {
     pub individuals: Vec<Individual>,
     pub(crate) next_individual_id: u32,
     pub(crate) life: Vec<RegionLife>,
+    /// Veil strength per region, 0 (open) .. 1 (sealed). See `veil`.
+    pub(crate) veil: Vec<Fx>,
+    /// The Veil law: 0 sealed .. 1 wide open.
+    pub veil_law: Fx,
+    pub last_breach_tick: Option<u64>,
     pub(crate) rng: Rng,
     log: ActionLog,
 }
@@ -267,6 +272,9 @@ impl World {
             individuals: Vec::new(),
             next_individual_id: 1,
             life: Vec::new(),
+            veil: vec![Fx::ONE; REGION_COUNT],
+            veil_law: Fx::ZERO,
+            last_breach_tick: None,
             rng,
             log: ActionLog::new(seed),
             substances,
@@ -390,6 +398,9 @@ impl World {
                 self.planet.axial_tilt_deg = (*degrees).clamp(Fx::ZERO, Fx::from_int(90));
             }
             Action::AddMoon { mass, distance } => self.planet.add_moon(*mass, *distance),
+            Action::SetVeilLaw { openness } => {
+                self.veil_law = (*openness).clamp(Fx::ZERO, Fx::ONE);
+            }
             Action::RemoveMoon { index } => {
                 if (*index as usize) < self.planet.moons.len() {
                     self.planet.moons.remove(*index as usize);
@@ -413,6 +424,8 @@ impl World {
         self.update_substance_cycle();
         self.update_climate();
         self.update_life_scores();
+        self.update_veil();
+        self.breaches();
         self.update_life();
         self.update_individuals();
         self.tick += 1;
@@ -660,6 +673,11 @@ impl World {
         h.i64(self.planet.star_mass.0);
         h.i64(self.planet.planet_mass.0);
         h.i64(self.planet.planet_radius.0);
+        h.i64(self.veil_law.0);
+        h.u64(self.last_breach_tick.map_or(u64::MAX, |t| t));
+        for v in &self.veil {
+            h.i64(v.0);
+        }
         for m in &self.planet.moons {
             h.i64(m.mass.0);
             h.i64(m.distance.0);

@@ -124,7 +124,40 @@ Not all life has to come from the world's own chemistry. Some beings come from o
 - **Risk and reward:** a world with a thin Veil can produce the strongest champions in the game, but the entities can destabilise or consume the world's own life. They can arrive uninvited if the player creates the right conditions, so world-building choices have consequences.
 - **Naming:** all entities get original generated names. No names from commercial mythos products.
 - **Physics alone is enough (decided):** extreme enough physics can thin the Veil even in a world with no metaphysical laws at all. A purely physical world is safer, not immune.
-- **Status:** design only; planned with the metaphysical laws (roadmap phase 4).
+- **Implemented (prototype):**
+  - *Veil strength:* each region has a Veil from 0 (wide open) to 1 (sealed). It moves 20% of the way toward its target each season.
+  - *Planet-wide thinning:*
+    - The Veil law: 0–100% open, worth up to 0.8.
+    - Reality strain (§4.6) s: worth 0.8 × s / (s + 3).
+    - Eclipses: 0.05 per moon beyond the second, up to 0.3.
+  - *Local variation:* seeded fault lines give each region from 0.7× to 1.3× the planet-wide thinning. Beings already through hold their region open by a further 0.1.
+  - *Breaches:* each region below 0.5 adds to the breach chance per season: 0.0002 × (0.5 − Veil), at most 25% for the planet. Thinner regions are likelier breach points.
+  - *New kinds:* a breach brings a new kind of being, up to 8 kinds alive at once. After that, more of an existing kind comes through.
+  - *Physics alone:* a Natural neutron star thins the Veil to about 0.6–0.8 but it holds. Godhand settings that break physics (for example, a neutron star shining like the Sun) open it.
+  - *Bodies:* new parts no native lineage can evolve:
+    - Eye clusters (2–8 eyes).
+    - Tendrils.
+    - Phase membranes (armour, +2 AC).
+    - Voids (offence).
+    - Sometimes jaws.
+    - Size from half to about 40× human, beyond native size caps. Bodies are random, with alien brains wired at random.
+  - *Feeding:* they ignore the life triad and temperature. Carrying capacity per region is 0.5 × the biomass of nearby native minds (nervous-system species, weighted by intelligence), plus a little from the Veil itself (4 × openness²). Each season they drain native minds in proportion to their own biomass and hunting. They fade where the Veil is strong: death rate 0.03 + 0.25 × Veil².
+  - *Spread and behaviour:* they spread toward minds and thin places, and do not speciate.
+  - *Effect on native minds:*
+    - Native individuals count them as a major threat and flee them.
+    - Native individuals remember the first time they glimpse one.
+    - The beings themselves can become named individuals.
+    - At 100% open on an Earth-like world, native minds lose about 10% of their biomass to them within a century, and more after.
+    - Sealing the Veil again makes them fade within about 50 years.
+  - *Character sheet:*
+    - Type Aberration, alignment "Unknowable".
+    - Resistance to bludgeoning, piercing, slashing and psychic damage.
+    - Truesight 60 ft. with 4+ eyes, otherwise darkvision 120 ft.; telepathy 120 ft.
+    - Tendril attacks, plus a psychic Mind Lash. A void gives a Void Pulse (psychic, Wisdom save).
+    - Maddening Presence: in the arena, enemies within 30 ft. must pass a Wisdom save each round or attack with disadvantage.
+    - Higher Intelligence and Charisma than native creatures. They float, with walk and fly speeds.
+  - *Viewer:* Veil overlay, Veil law slider, Veil readout, violet sky tint on the globe, and floating models with tendrils, voids and a shimmering membrane.
+  - *Not yet:* mass deaths (Soul Power), mana convergence (Arcane Magic), cultivation breakthroughs, worship (religions, §4.8 level 6), cults, and Essence-unlocked Veil resources. These thinning sources arrive with their systems.
 
 ### 4.5 Sapience and Civilization
 
@@ -174,8 +207,8 @@ Not all life has to come from the world's own chemistry. Some beings come from o
   | Neutron star | 1.4–2.1 | 0.0001 | 0.1 | 8 | Strains reality |
 
   Brightness is at the typical mass. Radiation is relative to the Sun's, and falls with distance squared. The atmosphere shields the surface: dose = flux / (1 + 2 × pressure in bar). A dose above 1 (an airless Earth's) harms life, with armour as a shield, and speeds up speciation through mutation.
-- **Reality strain** (feeds the Veil, §4.4a): Godhand strain, +2 around a neutron star, and log₂(gravity / 5) above 5 g. Shown in the viewer; the Veil itself is not built yet.
-- Not yet: moons affecting eclipses and the Veil.
+- **Reality strain** (feeds the Veil, §4.4a): Godhand strain, +2 around a neutron star, and log₂(gravity / 5) above 5 g.
+- **Eclipses:** every moon beyond the second thins the Veil (§4.4a). Eclipse visuals are not built yet.
 
 Extra and exotic resources (rare elements, unusual molecules, more moons, unusual star types) are unlocked with Essence.
 
@@ -425,7 +458,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
 
-**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules now run in the deterministic Rust core with replayable command logs. Natural/Godhand modes and star types are done. Remaining: final art and the network layer.
+**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules now run in the deterministic Rust core with replayable command logs. Natural/Godhand modes and star types are done. A prototype of the Veil and extradimensional beings (§4.4a, planned for phase 4) was pulled forward. Remaining: final art and the network layer.
 
 ## 9. Business Model
 
@@ -452,6 +485,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Sapience on Earth-like worlds | Almost always, given time; "never sapient" worlds come from unusual player choices (§4.4) |
 | — | Cost formula | Power = √(effective HP × damage per round), cost linear in power; commoner 1, ancient dragon about 310 (§5.3) |
 | — | Natural/Godhand and star types | Built as in §4.6: Natural is the default; Godhand strain thins the air and heats the world; eight star types with light quality, radiation and flares (numbers open to tuning) |
+| — | The Veil | Built as in §4.4a: a Veil law slider (0–100% open), reality strain and many moons thin it; beings from beyond feed on native minds and fade when the Veil is sealed (numbers open to tuning) |
 | — | Extradimensional beings | Included as a possibility, arriving through a thin Veil; extreme physics alone can let them in (§4.4a) |
 
 ## 11. Open Questions

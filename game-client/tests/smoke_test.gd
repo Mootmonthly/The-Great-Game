@@ -35,7 +35,7 @@ func _initialize() -> void:
 
 	var bytes: PackedByteArray = sim.overlay(0)
 	check(bytes.size() == sim.width() * sim.height() * 4, "overlay has one RGBA pixel per region")
-	for mode in range(4 + main.substances.size()):
+	for mode in range(5 + main.substances.size()):
 		main.overlay_select.select(mode)
 		main._refresh_map()
 	check(main.map_rect.texture != null, "map texture is shown")
@@ -163,6 +163,32 @@ func _initialize() -> void:
 	var god: Dictionary = JSON.parse_string(sim.status_json())
 	check(god["godhand"] and god["star_luminosity"] > 0.99 and god["strain"] > 1.0, "Godhand allows an impossible star, with strain")
 	check(main.star_label.text.contains("Strain"), "planet panel shows strain in Godhand mode")
+
+	# The Veil and beings from beyond.
+	main.seed_box.value = 2
+	main.preset_select.select(1)
+	main._new_world()
+	main._advance(600)
+	main.planet_sliders["veil_law"]["slider"].value = 100
+	sim.set_veil_law(100.0)
+	main._advance(160)
+	var veiled: Dictionary = JSON.parse_string(sim.status_json())
+	check(veiled["veil_law"] > 99.0 and veiled["veil_min"] < 0.5, "the Veil law thins the Veil")
+	check(veiled["entity_species"] > 0 and main.veil_label.text.contains("beyond"), "beings from beyond come through an open Veil")
+	main.overlay_select.select(4)
+	main._refresh_map()
+	check(main.map_rect.texture != null, "Veil overlay renders")
+	var horror_id := -1
+	for sp in JSON.parse_string(sim.species_json(500)):
+		if sp["otherworldly"]:
+			horror_id = int(sp["id"])
+			break
+	var horror_sheet = JSON.parse_string(sim.sheet_json("species", horror_id))
+	check(horror_sheet != null and horror_sheet["type"] == "Aberration", "beings from beyond are Aberrations")
+	main.tabs.current_tab = 0
+	main._on_meta("s:%d" % horror_id)
+	await process_frame
+	check(main.creature_preview.creature != null and main.creature_preview.creature.tentacles.size() > 0, "beings from beyond get a model with tendrils")
 
 	print("%d failure(s)" % failures)
 	quit(1 if failures > 0 else 0)

@@ -5,7 +5,7 @@ extends Control
 ## godot-ext crate). The UI is built in code so the scene file stays trivial.
 
 const SAVE_PATH := "user://world_log.json"
-const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability"]
+const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability", "Veil"]
 const TOOLS := ["Inspect", "Add substance", "Remove substance", "Heat", "Cool"]
 const TreeView := preload("res://tree_view.gd")
 const GlobeView := preload("res://globe_view.gd")
@@ -60,6 +60,7 @@ var planet_sliders := {}
 var mode_select: OptionButton
 var star_select: OptionButton
 var star_label: RichTextLabel
+var veil_label: RichTextLabel
 
 
 func _ready() -> void:
@@ -317,6 +318,11 @@ func _build_ui() -> void:
 	_planet_slider(panel, "global_heat", "Global heat (K)", -200.0, 1000.0, 0.0, false, "set_global_heat")
 	_planet_slider(panel, "day_length", "Day length (hours)", 2.0, 5000.0, 24.0, true, "set_day_length")
 	_planet_slider(panel, "axial_tilt", "Axial tilt (degrees)", 0.0, 90.0, 0.0, false, "set_axial_tilt")
+
+	_section(panel, "Laws")
+	_planet_slider(panel, "veil_law", "Veil (% open)", 0.0, 100.0, 0.0, false, "set_veil_law")
+	veil_label = _rich(50)
+	panel.add_child(veil_label)
 
 	_section(panel, "Moons")
 	moons_label = _rich(40)
@@ -649,6 +655,12 @@ func _refresh_text() -> void:
 	if st["reality_strain"] > 0.0:
 		star_text += "\n[color=#b080ff]Reality strain %.2f[/color]" % st["reality_strain"]
 	star_label.text = star_text
+	var veil_text := "Veil: weakest %.2f, average %.2f (1 = sealed; below 0.5 things can come through)" % [st["veil_min"], st["veil_mean"]]
+	if st["entity_species"] > 0:
+		veil_text += "\n[color=#c080ff]%d kind%s of being from beyond[/color]" % [st["entity_species"], "" if st["entity_species"] == 1 else "s"]
+	if st["last_breach_year"] >= 0:
+		veil_text += " · last breach in year %d" % st["last_breach_year"]
+	veil_label.text = veil_text
 	globe_view.set_planet(st)
 
 	if selected_region.x >= 0:
@@ -658,8 +670,8 @@ func _refresh_text() -> void:
 func _refresh_region() -> void:
 	visit_button.disabled = false
 	var r: Dictionary = JSON.parse_string(sim.region_json(selected_region.x, selected_region.y))
-	var text := "[b]Region (%d, %d)[/b]\n%.1f K (%.1f °C), elevation %.2f, geothermal %.2f\n" % [
-		r["x"], r["y"], r["temperature"], r["temperature"] - 273.15, r["elevation"], r["geothermal"]]
+	var text := "[b]Region (%d, %d)[/b]\n%.1f K (%.1f °C), elevation %.2f, geothermal %.2f, Veil %.2f\n" % [
+		r["x"], r["y"], r["temperature"], r["temperature"] - 273.15, r["elevation"], r["geothermal"], r["veil"]]
 	var subs := []
 	for s in r["substances"]:
 		subs.append("%s %.2f (%s)" % [s["name"], s["amount"], s["phase"]])

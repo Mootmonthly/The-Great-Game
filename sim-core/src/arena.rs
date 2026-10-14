@@ -8,7 +8,7 @@
 
 use crate::fixed::Fx;
 use crate::rng::Rng;
-use crate::sheet::{CharacterSheet, SizeCategory, DEX};
+use crate::sheet::{CharacterSheet, SizeCategory, DEX, WIS};
 
 /// Simulation step: 0.1 s of arena time.
 pub const TICK: Fx = Fx::ratio(1, 10);
@@ -17,6 +17,8 @@ pub const ROUND: Fx = Fx::ratio(3, 2);
 pub const ARENA_RADIUS: Fx = Fx::from_int(16);
 /// Breath weapons reach this far (arena units).
 const BREATH_RANGE: Fx = Fx::from_int(6);
+/// Reach of a Maddening Presence (30 ft.).
+const PRESENCE_RANGE: Fx = Fx::from_int(6);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Vec2 {
@@ -80,6 +82,8 @@ pub struct ArenaUnit {
     pub speed: Fx,
     /// Steered by a player instead of the AI.
     pub possessed: bool,
+    /// Frightened this round: attacks roll with disadvantage.
+    pub frightened: bool,
     /// Player steering for the current tick (unit vector or zero).
     steer: Vec2,
 }
@@ -189,6 +193,7 @@ impl Arena {
                     breath_ready: true,
                     cooldown: Fx::ZERO,
                     possessed: false,
+                    frightened: false,
                     steer: Vec2::default(),
                 });
             }
@@ -297,12 +302,16 @@ impl Arena {
         let allies = self.alive(self.units[i].team);
         let attacks = self.units[i].sheet.attacks.clone();
         let pack = self.units[i].sheet.pack_tactics && allies > 1;
+        let frightened = self.units[i].frightened;
         for a in &attacks {
             for _ in 0..a.uses {
                 if !self.units[target].alive {
                     return;
                 }
-                let natural = d(&mut self.rng, 20);
+                let mut natural = d(&mut self.rng, 20);
+                if frightened {
+                    natural = natural.min(d(&mut self.rng, 20));
+                }
                 let bonus = a.to_hit + if pack { 2 } else { 0 };
                 let ac = self.units[target].sheet.armor_class;
                 if natural == 1 || (natural != 20 && natural + bonus < ac) {
@@ -324,6 +333,26 @@ impl Arena {
                 });
                 self.hurt(target, damage, i);
             }
+        }
+    }
+
+    /// Whether an enemy's Maddening Presence frightens unit `i` this round:
+    /// a Wisdom save against the strongest presence within range.
+    fn presence_frightens(&mut self, i: usize) -> bool {
+        let me = self.units[i].pos;
+        let dc = self
+            .units
+            .iter()
+            .filter(|u| {
+                u.alive
+                    && u.team != self.units[i].team
+                    && u.pos.sub(me).length() <= PRESENCE_RANGE + u.radius
+            })
+            .filter_map(|u| u.sheet.frighten_dc)
+            .max();
+        match dc {
+            Some(dc) => d(&mut self.rng, 20) + self.units[i].sheet.modifier(WIS) < dc,
+            None => false,
         }
     }
 
@@ -427,6 +456,7 @@ impl Arena {
             }
             // One action per round.
             self.units[i].cooldown = ROUND;
+            self.units[i].frightened = self.presence_frightens(i);
             if !self.units[i].breath_ready && d(&mut self.rng, 6) >= 5 {
                 self.units[i].breath_ready = true;
             }

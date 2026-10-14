@@ -54,6 +54,8 @@ pub enum Action {
     SetStarMass { solar: Fx },
     /// Planet radius relative to Earth.
     SetPlanetRadius { earths: Fx },
+    /// The Veil law (§4.4a): 0 sealed .. 1 wide open.
+    SetVeilLaw { openness: Fx },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

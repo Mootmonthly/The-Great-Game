@@ -210,6 +210,20 @@ impl Species {
             "Huge"
         };
         let mut words = vec![size_word.to_string()];
+        if self.has(body::OTHERWORLDLY) {
+            words.push("Otherworldly".into());
+            if g.body.count(PartKind::Eye) >= 4 {
+                words.push("Many-eyed".into());
+            }
+            if g.body.count(PartKind::Tendril) > 0 {
+                words.push("Tendrilled".into());
+            }
+            if g.body.count(PartKind::Void) > 0 {
+                words.push("Hollow".into());
+            }
+            words.push("Veil-born Horror".into());
+            return words.join(" ");
+        }
         if self.has(body::SAPIENCE) {
             words.push("Sapient".into());
         }
@@ -405,7 +419,7 @@ impl World {
         self.life = life;
     }
 
-    fn species_index(&self, id: u32) -> usize {
+    pub(crate) fn species_index(&self, id: u32) -> usize {
         self.species
             .binary_search_by_key(&id, |s| s.id)
             .expect("population refers to a known species")
@@ -447,7 +461,7 @@ impl World {
         }
     }
 
-    fn add_species(&mut self, profile: Profile, genome: Genome, parent: Option<u32>) -> u32 {
+    pub(crate) fn add_species(&mut self, profile: Profile, genome: Genome, parent: Option<u32>) -> u32 {
         let id = self.next_species_id;
         self.next_species_id += 1;
         let name = self.new_name();
@@ -472,6 +486,7 @@ impl World {
     pub(crate) fn update_life(&mut self) {
         self.abiogenesis();
         self.population_dynamics();
+        self.entity_dynamics();
         self.migration();
         self.speciation();
         self.census();
@@ -493,6 +508,7 @@ impl World {
             let s = &self.species[k];
             if !s.is_alive()
                 || s.has(body::SAPIENCE)
+                || s.has(body::OTHERWORLDLY)
                 || !s.has(body::NERVOUS)
                 || s.biomass < Fx::from_int(5)
                 || s.traits.intelligence < Fx::ratio(35, 100)
@@ -561,7 +577,12 @@ impl World {
                 continue;
             }
             let temp = self.regions[i].temperature;
-            let pops = self.regions[i].populations.clone();
+            // Beings from beyond follow their own rules (`entity_dynamics`).
+            let (entities, pops): (Vec<Population>, Vec<Population>) = self.regions[i]
+                .populations
+                .iter()
+                .cloned()
+                .partition(|p| self.is_otherworldly(p.species));
             let n = pops.len();
             struct Info {
                 strength: Fx,
@@ -682,6 +703,7 @@ impl World {
                     });
                 }
             }
+            next.extend(entities);
             self.regions[i].populations = next;
         }
     }
@@ -700,9 +722,15 @@ impl World {
                     + s.traits.speed * Fx::ratio(1, 10)
                     + s.temperament.curiosity * s.behaviour_weight() * Fx::ratio(5, 100);
                 let profile = s.profile;
+                let otherworldly = s.has(body::OTHERWORLDLY);
                 let ns: Vec<usize> = neighbours(i).collect();
                 let j = ns[self.rng.below(ns.len() as u64) as usize];
-                if self.life[j].fit(&profile) > Fx::ZERO {
+                let suits = if otherworldly {
+                    self.entity_target(j)
+                } else {
+                    self.life[j].fit(&profile) > Fx::ZERO
+                };
+                if suits {
                     moves.push((i, j, p.species, p.biomass * frac));
                 }
             }
@@ -740,7 +768,7 @@ impl World {
             while k < self.regions[i].populations.len() {
                 let p = self.regions[i].populations[k].clone();
                 k += 1;
-                if p.biomass < Fx::from_int(2) {
+                if p.biomass < Fx::from_int(2) || self.is_otherworldly(p.species) {
                     continue;
                 }
                 // Speciation slows as the planet fills with species.

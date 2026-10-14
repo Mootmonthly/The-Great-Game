@@ -2,6 +2,8 @@
 //! class. Structured data crosses the boundary as JSON strings, which keeps
 //! the binding surface small; the map overlay crosses as raw RGBA bytes.
 
+#![recursion_limit = "256"]
+
 use godot::prelude::*;
 use serde_json::{json, Value};
 use sim_core::presets::{preset_actions, PRESETS};
@@ -52,6 +54,7 @@ fn species_summary(w: &World, s: &sim_core::life::Species) -> Value {
         "size": g.size.to_f64(), "temp_opt": g.temp_opt.to_f64(), "temp_tol": g.temp_tol.to_f64(),
         "body": g.body.describe(&substance_names(w)),
         "milestones": sim_core::body::milestone_names(g.milestones),
+        "otherworldly": s.has(sim_core::body::OTHERWORLDLY),
         "temperament": s.temperament.describe(),
         "parent": s.parent, "born_year": s.born_tick / sim_core::world::TICKS_PER_YEAR,
         "cost": sim_core::sheet::species_sheet(w, s).cost.cost,
@@ -262,6 +265,14 @@ impl SimWorld {
         });
     }
 
+    /// The Veil law (§4.4a), in percent: 0 sealed .. 100 wide open.
+    #[func]
+    fn set_veil_law(&mut self, percent: f64) {
+        self.world.apply(Action::SetVeilLaw {
+            openness: Fx::from_f64(percent / 100.0),
+        });
+    }
+
     /// The star types, in index order.
     #[func]
     fn stars_json(&self) -> GString {
@@ -322,6 +333,12 @@ impl SimWorld {
             "strain": p.strain().to_f64(),
             "reality_strain": w.reality_strain().to_f64(),
             "last_flare_year": p.last_flare_tick.map_or(-1, |t| (t / 4) as i64),
+            "veil_law": w.veil_law.to_f64() * 100.0,
+            "veil_thinning": w.veil_thinning().to_f64(),
+            "veil_min": w.veil_min().to_f64(),
+            "veil_mean": w.veil_mean().to_f64(),
+            "entity_species": w.living_species().filter(|s| s.has(sim_core::body::OTHERWORLDLY)).count(),
+            "last_breach_year": w.last_breach_tick.map_or(-1, |t| (t / 4) as i64),
             "global_heat": p.global_heat.to_f64(),
             "day_length": p.day_length_hours.to_f64(),
             "axial_tilt": p.axial_tilt_deg.to_f64(),
@@ -406,6 +423,7 @@ impl SimWorld {
             "temperature": r.temperature.to_f64(),
             "elevation": r.elevation.to_f64(),
             "geothermal": r.geothermal.to_f64(),
+            "veil": w.veil(i).to_f64(),
             "substances": substances,
             "best_profile": best,
             "populations": pops,
@@ -646,6 +664,7 @@ impl SimWorld {
         to_gstring(json!({
             "color": a.color, "thickness": a.thickness, "clouds": a.clouds,
             "cloud_color": a.cloud_color, "sunlight": a.sunlight,
+            "veil_open": (Fx::ONE - self.world.veil_mean()).to_f64(),
             "star_color": hex(self.world.planet.star_type.info().color),
         }))
     }

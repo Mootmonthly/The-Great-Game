@@ -214,6 +214,7 @@ fn run(preset: &str, seed: u64, years: u64, every: u64, png_dir: Option<&str>) -
             ("temperature", Overlay::Temperature),
             ("life", Overlay::Life),
             ("viability", Overlay::Viability),
+            ("veil", Overlay::Veil),
         ] {
             let path = Path::new(dir).join(format!("{preset}_{seed}_{name}.png"));
             write_png(&path, &world.overlay_rgba(overlay), 8);
