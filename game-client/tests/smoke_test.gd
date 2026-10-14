@@ -65,6 +65,12 @@ func _initialize() -> void:
 	check(main.globe_view.albedo_texture != null and main.globe_view.albedo_texture.get_width() == 1024, "3D globe builds its surface textures")
 	var atmo: Dictionary = JSON.parse_string(sim.atmosphere_json())
 	check(atmo["thickness"] > 0.3, "earthlike globe has a visible atmosphere")
+	sim.add_moon(1.0, 1.0)
+	sim.add_moon(0.5, 0.1)
+	main._refresh_all()
+	var planet: Dictionary = JSON.parse_string(sim.status_json())
+	check(planet["moons"].size() == 1 and planet["rings"] > 0.0, "moons can be added; a moon inside the Roche limit becomes rings")
+	check(main.globe_view.moon_nodes.size() == 1 and main.globe_view.rings.visible, "globe shows moons and rings")
 	main.globe_toggle.button_pressed = false
 
 	# Species tab and detail.

@@ -152,6 +152,13 @@ Not all life has to come from the world's own chemistry. Some beings come from o
 - **Natural mode:** linked values update together. Unstable configurations (for example, moons too close or too many) degrade over time with visible consequences such as tidal breakup or moons colliding.
 - **Godhand mode:** each value is set independently, which is physically impossible but fun. **Decided:** allowed in ranked worlds. Godhand worlds are hard to make viable: impossible settings cause harsh side effects (for example, extreme tidal stress, atmosphere loss, or runaway heating), so only skilled players get good results.
 
+**Implemented so far (Phase 2):**
+- **Day length:** days longer than Earth's add a day–night temperature swing (thick air holds heat overnight). Life must tolerate both the hot day and the cold night, so very slow-turning worlds are harder on life.
+- **Axial tilt:** seasons. Each year one hemisphere warms while the other cools, then they swap; thick atmospheres damp the swing.
+- **Moons:** each has a mass and a distance. Tides heat the planet (like Io's volcanoes) and add energy for life. A moon placed inside the Roche limit (0.3 Earth–Moon distances) is torn apart into rings; a moon on nearly the same orbit as another collides and merges with it. Up to 12 moons.
+- The globe shows the tilt, a spin rate that follows the day length, orbiting moons and rings.
+- Not yet: Natural/Godhand coupling of orbital values, star types, moons affecting eclipses and the Veil.
+
 Extra and exotic resources (rare elements, unusual molecules, more moons, unusual star types) are unlocked with Essence.
 
 **Decided launch set: metaphysical laws.** Arcane Magic, Soul Power, and Daoist Cultivation ship at launch alongside the planetary controls. Divine Favour and further Altered Physics are post-launch candidates. Metaphysical laws are rule modules that change simulation equations and unlock new traits and abilities. Each law has tunable parameters.
@@ -371,6 +378,8 @@ Procedurally generated champions plus player-written laws can produce degenerate
 **Visual test (done before Phase 1):** a stylised 3D globe built from a simulated world: toon lighting with a hard day/night edge, height-based relief, seas with glints, ice, lava with glowing cracks, banded clouds, and an atmosphere glow coloured by the simulated gases. It is a test of the art direction (§1), not final art.
 
 ![Globe visual test: Earth-like, frozen moon, sulfur world, magma world](images/globe-visual-test.png)
+
+![Tilted Earth-like world with three moons and rings from a moon torn apart](images/globe-moons-rings.png)
 
 
 | Phase | Goal | Exit criteria |
