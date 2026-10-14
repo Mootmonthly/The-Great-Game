@@ -3,7 +3,8 @@
 
 use crate::glicko::Rating;
 use net_proto::ChampionToken;
-use sim_core::loot::Remains;
+use sim_core::loot::{LootGrant, Remains};
+use sim_core::shop::ShopGrant;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -28,9 +29,14 @@ pub struct Account {
     /// Seeds of the home worlds champions have been bound from.
     #[serde(default)]
     pub worlds: Vec<u64>,
-    /// Spoils of war not yet brought home or sold: grant id → value.
+    /// Spoils of war not yet brought home or sold, by grant id. Kept in
+    /// full so a client that missed the match end can still claim them.
     #[serde(default)]
-    pub spoils: BTreeMap<u64, u64>,
+    pub spoils: BTreeMap<u64, LootGrant>,
+    /// Shop grants bought but not yet seen in a bound world, by grant id.
+    /// Sent again at sign-in, so a purchase is never lost in transit.
+    #[serde(default)]
+    pub purchases: BTreeMap<u64, ShopGrant>,
 }
 
 impl Account {

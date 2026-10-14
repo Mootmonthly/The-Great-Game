@@ -921,6 +921,25 @@ impl SimWorld {
         true
     }
 
+    /// Ids of the loot and shop grants already logged in this world (its
+    /// moons included): {"loot": [..], "purchases": [..]}.
+    #[func]
+    fn used_grants_json(&self) -> GString {
+        let (mut loot, mut purchases) = (Vec::new(), Vec::new());
+        for a in &self.world.log().actions {
+            let a = match a {
+                Action::OnMoon { action, .. } => action.as_ref(),
+                a => a,
+            };
+            match a {
+                Action::Loot { grant, .. } => loot.push(grant.id),
+                Action::Purchase { grant, .. } => purchases.push(grant.id),
+                _ => {}
+            }
+        }
+        to_gstring(json!({"loot": loot, "purchases": purchases}))
+    }
+
     /// The planet's seed (champion tokens name their home planet by it).
     #[func]
     fn seed(&self) -> i64 {

@@ -562,7 +562,7 @@ fn the_shop_sells_moons_planets_and_elements() {
     store.account("rich").essence = 2 * PLANET_PRICE;
     store.save(&dir.join("state.json")).unwrap();
     let addr = server(Some(dir.clone()));
-    let (mut c, _) = connect_secret(addr, "rich");
+    let (mut c, secret) = connect_secret(addr, "rich");
 
     let grant = |m: ServerMsg| match m {
         ServerMsg::Purchased { grant, essence, planet_slots, .. } => (grant, essence, planet_slots),
@@ -579,6 +579,16 @@ fn the_shop_sells_moons_planets_and_elements() {
     assert!(reason.contains(&essence.to_string()), "{reason}");
     let water = ShopItem::Deposit { substance: "water".into() };
     assert!(matches!(c.buy(water).unwrap(), ServerMsg::Rejected { .. }));
+
+    // Unused purchases come back at sign-in, so none is lost in transit.
+    drop(c);
+    std::thread::sleep(Duration::from_millis(200));
+    let mut l = login(addr, "rich");
+    l.auth = Auth::Account { secret: Some(secret) };
+    let (mut c, welcome) = Client::connect(&l).unwrap();
+    let ServerMsg::Welcome { purchases, planet_slots, .. } = welcome else { panic!("{welcome:?}") };
+    assert_eq!(purchases.len(), 2);
+    assert_eq!(planet_slots, 2);
 
     // Bought items enter a world as signed grants, which verify.
     let mut home = world_seeded(21);

@@ -63,6 +63,11 @@
       - It sells deposits, moon slots and planet slots.
       - It refuses a world whose purchases it never made, that belong to another player, or that were used twice or in another world.
       - Each account binds champions from at most 1 + extra planets home worlds.
+      - It keeps every spoil and purchase not yet used in a world and sends them again at sign-in, so nothing won or bought is lost if a reply never arrives.
+    - **Client:**
+      - After a ranked win, each spoil offers "Bring home" or "Sell for N Essence". Undecided spoils wait in the arena's online panel.
+      - The shop lists every item, with Buy buttons enabled when the player can afford them. A bought moon slot is added to the planet at once. A bought deposit waits until the player places it at the selected region of the planet or moon in view.
+      - The free substance tool lists shop elements greyed out, as "(buy with Essence)".
 - **Snowball risk:** winners earn Essence and loot (§6.2a), which makes them stronger. Losers get nothing. Mitigations to test: rating-based matchmaking keeps opponents close in strength; diminishing Essence and loot value from repeat wins against much weaker players.
 
 ## 4. World Simulation

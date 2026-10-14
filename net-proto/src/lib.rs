@@ -175,9 +175,13 @@ pub enum ServerMsg {
         /// How many home worlds this account may bind champions from.
         #[serde(default)]
         planet_slots: u8,
-        /// Spoils of war not yet brought home or sold: (grant id, value).
+        /// Spoils of war not yet brought home or sold.
         #[serde(default)]
-        spoils: Vec<(u64, u64)>,
+        spoils: Vec<LootGrant>,
+        /// Shop grants bought but not yet seen in a bound world. A client
+        /// skips those its world already holds.
+        #[serde(default)]
+        purchases: Vec<ShopGrant>,
     },
     /// A shop purchase went through. World items come as a signed grant to
     /// log in the world (`Action::Purchase`); a planet slot has none.

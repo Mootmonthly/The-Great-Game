@@ -363,7 +363,8 @@ fn connection(shared: &Arc<Shared>, stream: TcpStream) -> io::Result<()> {
             essence: account.essence,
             champions: account.champions.values().map(|c| c.token.clone()).collect(),
             planet_slots: account.planet_slots(),
-            spoils: account.spoils.iter().map(|(g, v)| (*g, *v)).collect(),
+            spoils: account.spoils.values().cloned().collect(),
+            purchases: account.purchases.values().cloned().collect(),
         });
         if let Some((ctl, team)) = state.playing.get(&name) {
             ctl.rejoin(*team, &tx);
@@ -482,6 +483,7 @@ fn buy(shared: &Shared, account: &str, item: ShopItem) -> ServerMsg {
                 signature: String::new(),
             };
             g.signature = shared.signer.sign(&g.payload());
+            state.store.account(account).purchases.insert(g.id, g.clone());
             Some(g)
         }
     };
@@ -503,7 +505,7 @@ fn sell_loot(shared: &Shared, account: &str, grant: u64) -> ServerMsg {
     if state.store.redeemed.contains_key(&grant) {
         return rejected("sell_loot", "those spoils are already in a world");
     }
-    let Some(value) = state.store.account(account).spoils.remove(&grant) else {
+    let Some(value) = state.store.account(account).spoils.remove(&grant).map(|g| g.value) else {
         return rejected("sell_loot", "you hold no such spoils");
     };
     state.store.sold.insert(grant);
@@ -578,6 +580,7 @@ fn bind(
     }
     for g in &v.purchases {
         state.store.purchases_used.insert(*g, log.seed);
+        state.store.account(account).purchases.remove(g);
     }
     if let Some(fp) = v.fingerprint {
         if state.store.dead.contains(&fp) {
@@ -900,8 +903,7 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
                             signature: String::new(),
                         };
                         grant.signature = shared.signer.sign(&grant.payload());
-                        let id = grant.id;
-                        state.store.account(&info.players[w]).spoils.insert(id, value);
+                        state.store.account(&info.players[w]).spoils.insert(grant.id, grant.clone());
                         loot.push(grant);
                     }
                 }

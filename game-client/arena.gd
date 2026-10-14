@@ -23,6 +23,10 @@ const RIVAL_PRESETS := ["earthlike", "frozen_moon", "sulfur_world"]
 const DEFAULT_PORT := 7878
 ## Account secrets and pinned server certificates, per server.
 const ONLINE_CFG := "user://online.cfg"
+## Spoils of war not yet brought home or sold (grant id -> grant), and shop
+## deposits bought but not yet placed (a list of grants).
+const SPOILS_PATH := "user://spoils.json"
+const PURCHASES_PATH := "user://purchases.json"
 
 
 ## What the scene shows for one arena unit; the simulation owns the rules.
@@ -79,6 +83,24 @@ var match_end: Dictionary = {}
 var server_key := ""
 var resuming := false
 var rejoin_button: Button
+## Connected only to shop and sell, not to queue for a match.
+var signin_only := false
+var signed_in := false
+var essence := 0
+var planet_slots := 1
+var shop_items: Array = []
+var shop_buttons: Array = []
+var buy_busy := false
+var spoils: Dictionary = {}
+var spoils_busy := {}
+var purchases: Array = []
+var essence_label: Label
+var shop_note: Label
+var signin_button: Button
+## Containers listing the undecided spoils (the setup panel's and, after a
+## match, the battle screen's), and the one listing unplaced deposits.
+var spoil_boxes: Array = []
+var purchase_box: VBoxContainer
 ## Online, the possessed unit is drawn slightly ahead of the server's
 ## position in the direction you steer, so it reacts at once.
 var predicted_offset := Vector3.ZERO
@@ -108,6 +130,11 @@ func open(world_sim: RefCounted) -> void:
 	_build_setup()
 	_load_my_roster()
 	_start_rival()
+	_load_spoils()
+	_load_purchases()
+	_refresh_spoils()
+	_refresh_purchases()
+	_refresh_shop()
 
 
 func close() -> void:
@@ -283,6 +310,43 @@ func _build_setup() -> void:
 	online_row.add_child(forget)
 	online_label = _label("")
 	v.add_child(online_label)
+	_build_shop(v)
+
+
+## The Essence shop, undecided spoils and unplaced purchases, in a scroll
+## box under the online controls.
+func _build_shop(v: Control) -> void:
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, 130)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	var box := VBoxContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(box)
+	var head := HBoxContainer.new()
+	box.add_child(head)
+	head.add_child(_label("Essence shop"))
+	essence_label = _label("")
+	head.add_child(essence_label)
+	signin_button = Button.new()
+	signin_button.text = "Sign in to shop"
+	signin_button.tooltip_text = "Connect to the server to buy items and sell spoils, without queueing for a match."
+	signin_button.pressed.connect(func(): _connect(true))
+	head.add_child(signin_button)
+	var items := HFlowContainer.new()
+	box.add_child(items)
+	shop_items = JSON.parse_string(sim.shop_catalogue_json())
+	for entry in shop_items:
+		var b := Button.new()
+		b.text = "%s — %d Essence" % [entry["name"], int(entry["price"])]
+		b.pressed.connect(_buy.bind(entry))
+		items.add_child(b)
+		shop_buttons.append(b)
+	var spoil_box := VBoxContainer.new()
+	box.add_child(spoil_box)
+	spoil_boxes.append(spoil_box)
+	purchase_box = VBoxContainer.new()
+	box.add_child(purchase_box)
 
 
 func _label(text: String) -> Label:
@@ -721,6 +785,12 @@ func find_online_match() -> void:
 	if _team_cost(my_roster, my_counts) == 0:
 		online_label.text = "Pick at least one champion first."
 		return
+	_connect(false)
+
+
+## Opens the connection to the server in the host box. With `shop_only` it
+## signs in without binding champions or queueing.
+func _connect(shop_only: bool) -> void:
 	var host := host_edit.text.strip_edges()
 	var port := DEFAULT_PORT
 	if host.contains(":"):
@@ -731,10 +801,18 @@ func find_online_match() -> void:
 	var cfg := _online_cfg()
 	var secret: String = cfg.get_value(server_key, "secret_" + my_name, "")
 	var pin: String = cfg.get_value(server_key, "pin", "")
+	if net:
+		net.close_connection()
+	signin_only = shop_only
+	signed_in = false
+	buy_busy = false
+	spoils_busy.clear()
 	net = ClassDB.instantiate("NetClient")
 	net.connect_to(host, port, my_name, secret, pin)
 	online_button.disabled = true
+	signin_button.disabled = true
 	online_label.text = "Connecting to %s:%d…" % [host, port]
+	_refresh_shop()
 
 
 func _poll_net() -> void:
@@ -752,8 +830,17 @@ func _poll_net() -> void:
 					var cfg := _online_cfg()
 					cfg.set_value(server_key, "secret_" + str(msg["account"]), msg["secret"])
 					cfg.save(ONLINE_CFG)
+				signed_in = true
+				signin_button.disabled = false
+				essence = int(msg["essence"])
+				planet_slots = int(msg.get("planet_slots", planet_slots))
+				_sync_grants(msg.get("spoils", []), msg.get("purchases", []))
+				_refresh_shop()
 				if resuming:
 					online_label.text = "Rejoining your match…"
+				elif signin_only:
+					online_label.text = "Signed in as %s (%d Essence). The shop is open." % [msg["account"], essence]
+					online_button.disabled = false
 				else:
 					online_label.text = "Signed in as %s (rating %.0f, %d Essence). The server is replaying your world to verify your champions…" % [msg["account"], msg["rating"]["rating"], int(msg["essence"])]
 					pending_binds.clear()
@@ -766,7 +853,18 @@ func _poll_net() -> void:
 				pending_binds.pop_front()
 				bound_tokens.append(int(msg["champion"]["token"]))
 				_queue_when_bound()
+			"purchased":
+				_on_purchased(msg)
+			"sold":
+				_on_sold(msg)
 			"rejected":
+				if msg["request"] == "buy" or msg["request"] == "sell_loot":
+					buy_busy = false
+					spoils_busy.clear()
+					_note("Server refused the %s: %s" % ["purchase" if msg["request"] == "buy" else "sale", msg["reason"]])
+					_refresh_shop()
+					_refresh_spoils()
+					continue
 				_log("Server: %s" % msg["reason"])
 				online_label.text = "Server: %s" % msg["reason"]
 				if msg["request"] == "bind":
@@ -783,6 +881,12 @@ func _poll_net() -> void:
 			"disconnected":
 				online_label.text = "Disconnected: %s" % msg["reason"]
 				online_button.disabled = false
+				signin_button.disabled = false
+				signed_in = false
+				buy_busy = false
+				spoils_busy.clear()
+				_refresh_shop()
+				_refresh_spoils()
 				if running and not finished:
 					_log("[color=#dd7777]Disconnected: %s. Rejoin within 30 seconds or it counts as surrender.[/color]" % msg["reason"])
 					if rejoin_button:
@@ -852,15 +956,274 @@ func _online_end(msg: Dictionary) -> void:
 		_log("Your rating is now %.0f ± %.0f." % [msg["rating"]["rating"], msg["rating"]["deviation"]])
 	if int(msg["essence_gained"]) > 0:
 		_log("[color=#e0c060]You earn %d Essence[/color] (now %d)." % [int(msg["essence_gained"]), int(msg["essence"])])
-	# The bodies of the fallen are the winner's: their kind comes home.
+	essence = int(msg["essence"])
+	planet_slots = int(msg.get("planet_slots", planet_slots))
+	# The bodies of the fallen are the winner's: bring them home or sell them.
 	for g in msg["loot"]:
-		var kind: String = sim.apply_loot(JSON.stringify(g))
-		if kind != "":
-			_log("You carry home the remains of %s: %s now lives in your world." % [g["from"], kind])
+		spoils[int(g["id"])] = g
+		_log("Spoils: the remains of %s (worth %d Essence)." % [g["from"], int(g.get("value", 0))])
+	if not msg["loot"].is_empty():
+		_save_spoils()
+		_add_battle_spoils()
+		_refresh_spoils()
 	if msg.get("desynced", false):
 		_log("[color=#dd7777]Warning: this client fell out of step with the server.[/color]")
-	net.close_connection()
-	net = null
+	# Stay connected: selling spoils and shopping need the session.
+	signed_in = true
+	_refresh_shop()
+
+
+# --- Spoils and the shop ----------------------------------------------------
+
+## Logs a line and shows it in the online panel.
+func _note(text: String) -> void:
+	_log(text)
+	if online_label:
+		online_label.text = text
+
+
+func _load_json_file(path: String, fallback: Variant) -> Variant:
+	if not FileAccess.file_exists(path):
+		return fallback
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	return parsed if typeof(parsed) == typeof(fallback) else fallback
+
+
+func _store_json_file(path: String, data: Variant) -> void:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		push_error("Could not write %s" % path)
+		return
+	f.store_string(JSON.stringify(data))
+
+
+func _load_spoils() -> void:
+	spoils.clear()
+	var saved: Dictionary = _load_json_file(SPOILS_PATH, {})
+	for key in saved:
+		spoils[int(key)] = saved[key]
+
+
+func _save_spoils() -> void:
+	var out := {}
+	for id in spoils:
+		if not spoils[id].get("stub", false):
+			out[str(id)] = spoils[id]
+	_store_json_file(SPOILS_PATH, out)
+
+
+func _load_purchases() -> void:
+	purchases = _load_json_file(PURCHASES_PATH, [])
+
+
+func _save_purchases() -> void:
+	_store_json_file(PURCHASES_PATH, purchases)
+
+
+## Reconciles spoils and purchases with the server's lists at sign-in. The
+## server keeps every grant not yet used in a world, so nothing bought or
+## won is lost if a reply never arrived; grants the world already holds are
+## skipped.
+func _sync_grants(server_spoils: Array, server_purchases: Array) -> void:
+	var used: Dictionary = JSON.parse_string(sim.used_grants_json())
+	var used_loot := {}
+	for id in used["loot"]:
+		used_loot[int(id)] = true
+	var used_buys := {}
+	for id in used["purchases"]:
+		used_buys[int(id)] = true
+	spoils.clear()
+	for g in server_spoils:
+		if not used_loot.has(int(g["id"])):
+			spoils[int(g["id"])] = g
+	_save_spoils()
+	_refresh_spoils()
+	purchases.clear()
+	var applied := false
+	for g in server_purchases:
+		if used_buys.has(int(g["id"])):
+			continue
+		if str(g["item"].get("kind", "")) == "moon_slot":
+			applied = sim.apply_purchase(JSON.stringify(g), 0, 0) or applied
+		else:
+			purchases.append(g)
+	if applied:
+		_save_world()
+		_log("A moon slot bought earlier was added to your planet.")
+	_save_purchases()
+	_refresh_purchases()
+
+
+## Gives the battle screen its own list of spoils to decide on.
+func _add_battle_spoils() -> void:
+	if battle_ui == null:
+		return
+	var box := VBoxContainer.new()
+	battle_ui.add_child(box)
+	spoil_boxes.append(box)
+
+
+func _refresh_spoils() -> void:
+	spoil_boxes = spoil_boxes.filter(func(b): return is_instance_valid(b))
+	for box in spoil_boxes:
+		for c in box.get_children():
+			box.remove_child(c)
+			c.queue_free()
+		for id in spoils:
+			var g: Dictionary = spoils[id]
+			var row := HBoxContainer.new()
+			box.add_child(row)
+			row.add_child(_label("Spoils: remains of %s" % g["from"]))
+			var busy: bool = spoils_busy.has(id)
+			var home := Button.new()
+			home.text = "Bring home"
+			home.disabled = busy or g.get("stub", false)
+			if g.get("stub", false):
+				home.tooltip_text = "This spoil's remains are not saved on this computer; it can only be sold."
+			home.pressed.connect(_bring_home.bind(id))
+			row.add_child(home)
+			var sell := Button.new()
+			sell.text = "Sell for %d Essence" % int(g.get("value", 0))
+			sell.disabled = busy or not signed_in or net == null
+			sell.tooltip_text = "" if signed_in else "Sign in to sell."
+			sell.pressed.connect(_sell_spoil.bind(id))
+			row.add_child(sell)
+
+
+func _bring_home(id: int) -> void:
+	if not spoils.has(id) or spoils_busy.has(id):
+		return
+	var g: Dictionary = spoils[id]
+	var kind: String = sim.apply_loot(JSON.stringify(g))
+	if kind == "":
+		_note("The remains of %s could not be brought home." % g["from"])
+		return
+	_note("You carry home the remains of %s: %s now lives in your world." % [g["from"], kind])
+	spoils.erase(id)
+	_save_spoils()
+	_save_world()
+	_refresh_spoils()
+
+
+func _sell_spoil(id: int) -> void:
+	if not spoils.has(id) or spoils_busy.has(id) or net == null:
+		return
+	if net.sell_loot(id):
+		spoils_busy[id] = true
+		_refresh_spoils()
+	else:
+		_note("Could not reach the server to sell.")
+
+
+func _on_sold(msg: Dictionary) -> void:
+	var id := int(msg["grant"])
+	var from: String = spoils[id]["from"] if spoils.has(id) else "a spoil"
+	spoils.erase(id)
+	spoils_busy.erase(id)
+	essence = int(msg["essence"])
+	_save_spoils()
+	_note("Sold %s for %d Essence (now %d)." % [from, int(msg["essence_gained"]), essence])
+	_refresh_spoils()
+	_refresh_shop()
+
+
+func _refresh_shop() -> void:
+	if essence_label == null:
+		return
+	essence_label.text = "  %d Essence · %d home world%s  " % [essence, planet_slots, "" if planet_slots == 1 else "s"]
+	for i in shop_buttons.size():
+		var price := int(shop_items[i]["price"])
+		shop_buttons[i].disabled = buy_busy or not signed_in or net == null or essence < price
+		shop_buttons[i].tooltip_text = "" if signed_in else "Sign in to shop."
+
+
+func _buy(entry: Dictionary) -> void:
+	if net == null or buy_busy:
+		return
+	if net.buy(JSON.stringify(entry["item"])):
+		buy_busy = true
+		_refresh_shop()
+	else:
+		_note("Could not reach the server to buy.")
+
+
+func _item_name(item: Dictionary) -> String:
+	for entry in shop_items:
+		if entry["item"] == item:
+			return entry["name"]
+	return str(item.get("kind", "item"))
+
+
+func _on_purchased(msg: Dictionary) -> void:
+	buy_busy = false
+	essence = int(msg["essence"])
+	planet_slots = int(msg.get("planet_slots", planet_slots))
+	var item: Dictionary = msg["item"]
+	_note("Bought %s (now %d Essence)." % [_item_name(item), essence])
+	var grant = msg.get("grant")
+	match str(item.get("kind", "")):
+		"moon_slot":
+			if grant != null and sim.apply_purchase(JSON.stringify(grant), 0, 0):
+				_save_world()
+				_log("Your planet has room for another moon.")
+		"planet_slot":
+			_note("You can now bring champions from %d worlds." % planet_slots)
+		"deposit":
+			if grant != null:
+				purchases.append(grant)
+				_save_purchases()
+				_refresh_purchases()
+				_log("Place the %s deposit with the Place button." % item.get("substance", ""))
+	_refresh_shop()
+
+
+func _refresh_purchases() -> void:
+	if purchase_box == null:
+		return
+	for c in purchase_box.get_children():
+		purchase_box.remove_child(c)
+		c.queue_free()
+	for i in purchases.size():
+		var row := HBoxContainer.new()
+		purchase_box.add_child(row)
+		row.add_child(_label("Unplaced: %s" % _item_name(purchases[i]["item"])))
+		var place := Button.new()
+		place.text = "Place"
+		place.tooltip_text = "Place it at the region selected on the map, or the centre of the map if none is."
+		place.pressed.connect(_place_purchase.bind(i))
+		row.add_child(place)
+
+
+## Places a bought deposit at the region selected in the main viewer, or the
+## centre of the map if nothing is selected.
+func _place_purchase(i: int) -> void:
+	if i >= purchases.size():
+		return
+	var cell := Vector2i(sim.width() / 2, sim.height() / 2)
+	var chosen := false
+	var main := get_parent()
+	if main != null and "selected_region" in main and main.selected_region.x >= 0:
+		cell = main.selected_region
+		chosen = true
+	var grant: Dictionary = purchases[i]
+	if not sim.apply_purchase(JSON.stringify(grant), cell.x, cell.y):
+		_note("That deposit could not be placed.")
+		return
+	purchases.remove_at(i)
+	_save_purchases()
+	_save_world()
+	_refresh_purchases()
+	_note("Placed the %s deposit at region (%d, %d)%s." % [
+		grant["item"].get("substance", ""), cell.x, cell.y, "" if chosen else " (the centre; select a region on the map first to choose)"])
+
+
+## Saves the world the way the Save button does, and refreshes the map.
+func _save_world() -> void:
+	var main := get_parent()
+	if main != null and main.has_method("_save"):
+		main._save()
+	if main != null and main.has_method("_refresh_all"):
+		main._refresh_all()
 
 
 func _online_cfg() -> ConfigFile:
