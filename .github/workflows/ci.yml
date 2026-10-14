@@ -39,7 +39,10 @@ jobs:
         run: |
           curl -sSL -o godot.zip https://github.com/godotengine/godot/releases/download/4.6.2-stable/Godot_v4.6.2-stable_linux.x86_64.zip
           unzip -q godot.zip
+      # Opens the editor once so it imports the project, then quits.
+      # `--import` is avoided: Godot 4.6.2 crashes on exit after a first
+      # import when a GDExtension is loaded, even though the import succeeds.
       - name: Import project
-        run: ./Godot_v4.6.2-stable_linux.x86_64 --headless --path game-client --import
+        run: ./Godot_v4.6.2-stable_linux.x86_64 --headless --path game-client --editor --quit-after 300
       - name: Run smoke test
         run: ./Godot_v4.6.2-stable_linux.x86_64 --headless --path game-client -s res://tests/smoke_test.gd

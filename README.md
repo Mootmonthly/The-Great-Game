@@ -81,7 +81,7 @@ The `golden_hash` test checks that the simulation gives bit-identical results to
 ### Headless viewer test
 
 ```
-godot --headless --path game-client --import
+godot --headless --path game-client --editor --quit-after 300   # first-time import
 godot --headless --path game-client -s res://tests/smoke_test.gd
 ```
 
