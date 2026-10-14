@@ -15,6 +15,7 @@ jobs:
         # cross-platform determinism check replay verification relies on.
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -29,6 +30,8 @@ jobs:
   viewer:
     name: Godot viewer smoke test
     runs-on: ubuntu-latest
+    # A GDScript parse error makes Godot wait instead of exiting; fail fast.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

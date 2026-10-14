@@ -311,6 +311,7 @@ impl SimWorld {
                 json!({
                     "part": p.kind.name(), "count": p.count, "size": p.size.to_f64(),
                     "substance": p.substance.and_then(|i| names.get(i as usize)).cloned(),
+                    "substance_color": p.substance.and_then(|i| w.substances.get(i as usize)).map(|x| hex(x.color)),
                 })
             })
             .collect();
