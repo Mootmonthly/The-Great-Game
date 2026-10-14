@@ -1,8 +1,8 @@
 //! End-to-end tests: a real server on a local port and real clients.
 
 use arena_server::server::{start, Config};
-use net_proto::client::{local_sheet, Client, LockstepMatch};
-use net_proto::{ChampionKind, ClientMsg, QueueMode, ServerMsg};
+use net_proto::client::{local_sheet, Client, Login, LockstepMatch};
+use net_proto::{Auth, ChampionKind, ClientMsg, QueueMode, ServerMsg};
 use sim_core::arena::{ArenaCommand, ArenaResult};
 use sim_core::presets::preset_actions;
 use sim_core::{Action, World};
@@ -15,13 +15,9 @@ fn server(data: Option<PathBuf>) -> SocketAddr {
 }
 
 fn server_paced(data: Option<PathBuf>, tick_interval: Duration) -> SocketAddr {
-    start(Config {
-        bind: "127.0.0.1:0".into(),
-        data_dir: data,
-        tick_interval,
-    })
-    .unwrap()
-    .addr
+    start(Config::local("127.0.0.1:0", data, tick_interval))
+        .unwrap()
+        .addr
 }
 
 fn world(seed: u64) -> World {
@@ -33,10 +29,25 @@ fn world(seed: u64) -> World {
     w
 }
 
+fn login(addr: SocketAddr, name: &str) -> Login {
+    Login::new("127.0.0.1", addr.port(), name)
+}
+
 fn connect(addr: SocketAddr, name: &str) -> Client {
-    let (c, welcome) = Client::connect(addr, name).unwrap();
-    assert!(matches!(welcome, ServerMsg::Welcome { .. }), "{welcome:?}");
-    c
+    connect_secret(addr, name).0
+}
+
+/// Signs in for the first time; returns the issued account secret.
+fn connect_secret(addr: SocketAddr, name: &str) -> (Client, String) {
+    let (c, welcome) = Client::connect(&login(addr, name)).unwrap();
+    let ServerMsg::Welcome {
+        secret: Some(secret),
+        ..
+    } = welcome
+    else {
+        panic!("{welcome:?}")
+    };
+    (c, secret)
 }
 
 fn individuals(w: &World, n: usize) -> Vec<u32> {
@@ -70,7 +81,7 @@ fn ranked_match_verifies_plays_in_lockstep_and_kills_forever() {
     let addr = server(Some(dir.clone()));
     let mut wa = world(1);
     let wb = world(2);
-    let mut a = connect(addr, "alice");
+    let (mut a, alice_secret) = connect_secret(addr, "alice");
     let mut b = connect(addr, "bob");
 
     let mut ta = Vec::new();
@@ -134,7 +145,11 @@ fn ranked_match_verifies_plays_in_lockstep_and_kills_forever() {
     drop(b);
     std::thread::sleep(Duration::from_millis(200));
     let addr2 = server(Some(dir.clone()));
-    let (_c, welcome) = Client::connect(addr2, "alice").unwrap();
+    let mut alice = login(addr2, "alice");
+    alice.auth = Auth::Account {
+        secret: Some(alice_secret),
+    };
+    let (_c, welcome) = Client::connect(&alice).unwrap();
     let ServerMsg::Welcome {
         rating: r2,
         champions,
@@ -206,7 +221,41 @@ fn forged_and_invalid_requests_are_refused() {
     }
 
     // One sign-in per account.
-    let (_dup, reply) = Client::connect(addr, "carol").unwrap();
+    let (_dup, reply) = Client::connect(&login(addr, "carol")).unwrap();
+    assert!(matches!(reply, ServerMsg::Rejected { .. }));
+}
+
+#[test]
+fn names_are_claimed_with_a_secret() {
+    let addr = server(None);
+    let (first, secret) = connect_secret(addr, "frank");
+    drop(first);
+    std::thread::sleep(Duration::from_millis(100));
+    // Without the secret, or with a wrong one, the name is taken.
+    for wrong in [None, Some("deadbeef".to_string())] {
+        let mut l = login(addr, "frank");
+        l.auth = Auth::Account { secret: wrong };
+        let (_c, reply) = Client::connect(&l).unwrap();
+        let ServerMsg::Rejected { reason, .. } = reply else {
+            panic!("{reply:?}")
+        };
+        assert!(reason.contains("taken"), "{reason}");
+    }
+    // With it, welcome back (and no new secret).
+    let mut l = login(addr, "frank");
+    l.auth = Auth::Account {
+        secret: Some(secret),
+    };
+    let (c, reply) = Client::connect(&l).unwrap();
+    assert!(matches!(reply, ServerMsg::Welcome { secret: None, .. }), "{reply:?}");
+    // The connection is encrypted, with a certificate fingerprint to pin.
+    assert!(c.fingerprint().is_some_and(|f| f.len() == 95));
+    // Steam sign-in is refused when the server has no Steam key.
+    let mut l = login(addr, "anyone");
+    l.auth = Auth::Steam {
+        ticket: "abcd".into(),
+    };
+    let (_c, reply) = Client::connect(&l).unwrap();
     assert!(matches!(reply, ServerMsg::Rejected { .. }));
 }
 

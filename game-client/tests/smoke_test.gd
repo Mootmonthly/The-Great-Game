@@ -129,6 +129,8 @@ func _initialize() -> void:
 		var data_dir := OS.get_user_data_dir() + "/smoke-server-%d" % int(Time.get_unix_time_from_system())
 		var pid := OS.create_process(server_bin, ["serve", "--port", "7979", "--data", data_dir, "--speed", "0"])
 		await create_timer(1.5).timeout
+		# A fresh server has a fresh certificate: forget pins from earlier runs.
+		DirAccess.remove_absolute(ProjectSettings.globalize_path("user://online.cfg"))
 		main.open_arena()
 		arena = main.arena
 		arena.my_counts = arena._auto_pick(arena.my_roster)
@@ -136,7 +138,7 @@ func _initialize() -> void:
 		arena.name_edit.text = "smoke_a"
 		arena.find_online_match()
 		var foe = ClassDB.instantiate("NetClient")
-		foe.connect_to("127.0.0.1", 7979, "smoke_b")
+		foe.connect_to("127.0.0.1", 7979, "smoke_b", "", "")
 		var foe_species := -1
 		for sp in JSON.parse_string(sim.species_json(500)):
 			if int(sp["cost"]) <= arena.cap and foe_species < 0:
@@ -152,6 +154,9 @@ func _initialize() -> void:
 		check(arena.online and arena.units.size() >= 2, "online: the server verifies both teams and starts a match")
 		check(not arena.match_end.is_empty() and arena.finished, "online: the match reaches a result in lockstep")
 		check(not arena.match_end.get("desynced", true), "online: client and server arenas stay identical")
+		var saved := ConfigFile.new()
+		saved.load("user://online.cfg")
+		check(saved.get_value("127.0.0.1:7979", "pin", "") != "" and saved.get_value("127.0.0.1:7979", "secret_smoke_a", "") != "", "online: the connection is encrypted; certificate and account secret are saved")
 		foe.close_connection()
 		arena.close()
 		await process_frame

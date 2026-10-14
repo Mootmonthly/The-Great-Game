@@ -9,6 +9,7 @@
 //! and every client steps the same deterministic arena.
 
 pub mod client;
+pub mod tls;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sim_core::arena::{ArenaCommand, ArenaResult};
@@ -17,7 +18,7 @@ use sim_core::ActionLog;
 use std::io::{self, BufRead, Read, Write};
 
 /// Bumped whenever messages or simulation rules change incompatibly.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 /// Default TCP port of the arena server.
 pub const DEFAULT_PORT: u16 = 7878;
 /// Longest accepted message line (world logs can be large).
@@ -96,12 +97,26 @@ pub struct RatingView {
     pub deviation: f64,
 }
 
+/// How a client proves who it is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Auth {
+    /// A server account: the first sign-in claims the name and the server
+    /// issues a secret; later sign-ins must present it.
+    Account { secret: Option<String> },
+    /// A Steam session ticket (GetAuthTicketForWebApi), checked by the
+    /// server with Steam.
+    Steam { ticket: String },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
     Hello {
+        /// Account name, or display name for Steam sign-ins.
         name: String,
         version: u32,
+        auth: Auth,
     },
     /// Verify a champion from this world log.
     Bind {
@@ -133,6 +148,8 @@ pub enum ClientMsg {
 pub enum ServerMsg {
     Welcome {
         account: String,
+        /// A newly issued account secret: keep it to sign in again.
+        secret: Option<String>,
         rating: RatingView,
         champions: Vec<ChampionToken>,
     },
@@ -221,6 +238,7 @@ mod tests {
             ClientMsg::Hello {
                 name: "a".into(),
                 version: PROTOCOL_VERSION,
+                auth: Auth::Account { secret: None },
             },
             ClientMsg::Command {
                 command: ArenaCommand::Steer {

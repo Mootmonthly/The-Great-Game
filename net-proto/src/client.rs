@@ -2,16 +2,19 @@
 //! Godot extension. It mirrors each match locally: the server sends every
 //! tick's commands, and `LockstepMatch` steps an identical arena.
 
-use crate::{read_msg, write_msg, Appearance, ChampionKind, PartLook, ChampionToken, ClientMsg, QueueMode, ServerMsg};
+use crate::{read_msg, write_msg, Appearance, Auth, ChampionKind, PartLook, ChampionToken, ClientMsg, QueueMode, ServerMsg};
 use sim_core::arena::{Arena, ArenaEvent};
 use sim_core::sheet::{individual_sheet, species_sheet, CharacterSheet};
 use sim_core::World;
+use crate::tls::{self, TlsReader, TlsWriter};
 use std::io::{self, BufReader};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::{Arc, Mutex};
 
 pub struct Client {
-    reader: BufReader<TcpStream>,
-    writer: TcpStream,
+    reader: BufReader<TlsReader>,
+    writer: TlsWriter,
+    fingerprint: Arc<Mutex<Option<String>>>,
 }
 
 fn closed() -> io::Error {
@@ -52,26 +55,57 @@ pub fn appearance(world: &World, kind: ChampionKind, id: u32) -> Option<Appearan
     })
 }
 
+/// Where and how to sign in.
+#[derive(Clone, Debug)]
+pub struct Login {
+    pub host: String,
+    pub port: u16,
+    pub name: String,
+    pub auth: Auth,
+    /// Pinned certificate fingerprint for this server, if known.
+    pub pin: Option<String>,
+}
+
+impl Login {
+    /// A server account on `host:port`, first sign-in (no secret yet).
+    pub fn new(host: &str, port: u16, name: &str) -> Login {
+        Login {
+            host: host.into(),
+            port,
+            name: name.into(),
+            auth: Auth::Account { secret: None },
+            pin: None,
+        }
+    }
+}
+
 impl Client {
-    /// Connects and signs in. Returns the client and the server's welcome.
-    pub fn connect<A: ToSocketAddrs>(addr: A, name: &str) -> io::Result<(Client, ServerMsg)> {
-        let stream = TcpStream::connect(addr)?;
-        stream.set_nodelay(true)?;
+    /// Connects over TLS and signs in. Returns the client and the server's
+    /// welcome (or refusal).
+    pub fn connect(login: &Login) -> io::Result<(Client, ServerMsg)> {
+        let addr = (login.host.as_str(), login.port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown host"))?;
+        let tcp = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(10))?;
+        let tls = tls::connect(tcp, &login.host, login.pin.clone())?;
         let mut c = Client {
-            reader: BufReader::new(stream.try_clone()?),
-            writer: stream,
+            reader: BufReader::new(tls.reader),
+            writer: tls.writer,
+            fingerprint: tls.seen,
         };
         c.send(&ClientMsg::Hello {
-            name: name.to_string(),
+            name: login.name.clone(),
             version: crate::PROTOCOL_VERSION,
+            auth: login.auth.clone(),
         })?;
         let welcome = c.recv()?;
         Ok((c, welcome))
     }
 
-    /// Splits off the raw stream, e.g. to read on another thread.
-    pub fn into_parts(self) -> (BufReader<TcpStream>, TcpStream) {
-        (self.reader, self.writer)
+    /// The server certificate fingerprint seen during the handshake.
+    pub fn fingerprint(&self) -> Option<String> {
+        self.fingerprint.lock().unwrap().clone()
     }
 
     pub fn send(&mut self, msg: &ClientMsg) -> io::Result<()> {

@@ -21,6 +21,8 @@ const MAX_UNITS_PER_SIDE := 40
 const SIZE_SCALE := {"Tiny": 0.8, "Small": 1.1, "Medium": 1.5, "Large": 2.2, "Huge": 3.2, "Gargantuan": 4.5}
 const RIVAL_PRESETS := ["earthlike", "frozen_moon", "sulfur_world"]
 const DEFAULT_PORT := 7878
+## Account secrets and pinned server certificates, per server.
+const ONLINE_CFG := "user://online.cfg"
 
 
 ## What the scene shows for one arena unit; the simulation owns the rules.
@@ -74,6 +76,7 @@ var mode_select: OptionButton
 var online_button: Button
 var online_label: Label
 var match_end: Dictionary = {}
+var server_key := ""
 
 var setup_panel: Control
 var roster_label: RichTextLabel
@@ -263,6 +266,15 @@ func _build_setup() -> void:
 	online_button.text = "Find online match"
 	online_button.pressed.connect(find_online_match)
 	online_row.add_child(online_button)
+	var forget := Button.new()
+	forget.text = "Forget server certificate"
+	forget.tooltip_text = "Use if the server was reinstalled and its certificate changed on purpose."
+	forget.pressed.connect(func():
+		var cfg := _online_cfg()
+		cfg.set_value(_server_key(), "pin", "")
+		cfg.save(ONLINE_CFG)
+		online_label.text = "Forgot the saved certificate for %s." % _server_key())
+	online_row.add_child(forget)
 	online_label = _label("")
 	v.add_child(online_label)
 
@@ -678,8 +690,12 @@ func find_online_match() -> void:
 		port = int(host.get_slice(":", 1))
 		host = host.get_slice(":", 0)
 	my_name = name_edit.text.strip_edges()
+	server_key = "%s:%d" % [host, port]
+	var cfg := _online_cfg()
+	var secret: String = cfg.get_value(server_key, "secret_" + my_name, "")
+	var pin: String = cfg.get_value(server_key, "pin", "")
 	net = ClassDB.instantiate("NetClient")
-	net.connect_to(host, port, my_name)
+	net.connect_to(host, port, my_name, secret, pin)
 	online_button.disabled = true
 	online_label.text = "Connecting to %s:%d…" % [host, port]
 
@@ -687,7 +703,17 @@ func find_online_match() -> void:
 func _poll_net() -> void:
 	for msg in JSON.parse_string(net.poll()):
 		match str(msg["type"]):
+			"certificate":
+				# Pin the server's certificate on first contact (like SSH).
+				var cfg := _online_cfg()
+				if cfg.get_value(server_key, "pin", "") == "":
+					cfg.set_value(server_key, "pin", msg["fingerprint"])
+					cfg.save(ONLINE_CFG)
 			"welcome":
+				if msg["secret"] != null:
+					var cfg := _online_cfg()
+					cfg.set_value(server_key, "secret_" + str(msg["account"]), msg["secret"])
+					cfg.save(ONLINE_CFG)
 				online_label.text = "Signed in as %s (rating %.0f). The server is replaying your world to verify your champions…" % [msg["account"], msg["rating"]["rating"]]
 				pending_binds.clear()
 				bound_tokens.clear()
@@ -776,4 +802,15 @@ func _online_end(msg: Dictionary) -> void:
 		_log("[color=#dd7777]Warning: this client fell out of step with the server.[/color]")
 	net.close_connection()
 	net = null
+
+
+func _online_cfg() -> ConfigFile:
+	var cfg := ConfigFile.new()
+	cfg.load(ONLINE_CFG)
+	return cfg
+
+
+func _server_key() -> String:
+	var host := host_edit.text.strip_edges()
+	return host if host.contains(":") else "%s:%d" % [host, DEFAULT_PORT]
 

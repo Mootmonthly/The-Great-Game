@@ -9,6 +9,9 @@ use std::path::Path;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Account {
+    /// SHA-256 of the account secret (server accounts only).
+    #[serde(default)]
+    pub secret_hash: Option<String>,
     pub rating: Rating,
     pub wins: u32,
     pub losses: u32,

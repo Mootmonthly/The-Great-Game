@@ -3,8 +3,9 @@
 //! the arena AI fight, which is handy for testing a server.
 
 use arena_server::server::{start, Config};
-use net_proto::client::{local_sheet, Client};
-use net_proto::{ChampionKind, QueueMode, ServerMsg, DEFAULT_PORT};
+use arena_server::steam::SteamConfig;
+use net_proto::client::{local_sheet, Client, Login};
+use net_proto::{Auth, ChampionKind, QueueMode, ServerMsg, DEFAULT_PORT};
 use sim_core::presets::preset_actions;
 use sim_core::{Action, World};
 use std::path::PathBuf;
@@ -24,6 +25,9 @@ fn usage() -> ! {
     eprintln!(
         "usage:
   arena-server serve [--port {DEFAULT_PORT}] [--data server-data] [--speed 1]
+                     [--cert fullchain.pem --key privkey.pem]
+                     [--steam-app ID --steam-key KEY [--steam-identity great-game]]
+                     [--steam-only]
   arena-server bot [--host 127.0.0.1] [--port {DEFAULT_PORT}] --name NAME
                    [--preset frozen_moon] [--seed 1] [--years 300] [--cap 300]
                    [--mode ranked|practice]"
@@ -49,16 +53,38 @@ fn serve(args: &[String]) {
     } else {
         Duration::ZERO
     };
+    let tls_pem = match (arg(args, "--cert"), arg(args, "--key")) {
+        (Some(c), Some(k)) => Some((PathBuf::from(c), PathBuf::from(k))),
+        (None, None) => None,
+        _ => usage(),
+    };
+    let steam = match (arg(args, "--steam-app"), arg(args, "--steam-key")) {
+        (Some(app), Some(key)) => Some(SteamConfig {
+            app_id: app.parse().unwrap_or_else(|_| usage()),
+            web_api_key: key,
+            identity: arg(args, "--steam-identity").unwrap_or_else(|| "great-game".into()),
+        }),
+        (None, None) => None,
+        _ => usage(),
+    };
+    let steam_only = args.iter().any(|a| a == "--steam-only");
+    if steam_only && steam.is_none() {
+        usage();
+    }
     let handle = start(Config {
         bind: format!("0.0.0.0:{port}"),
         data_dir: Some(PathBuf::from(&data)),
         tick_interval: tick,
+        allow_accounts: !steam_only,
+        steam,
+        tls_pem,
     })
     .unwrap_or_else(|e| {
         eprintln!("could not start the server: {e}");
         std::process::exit(1)
     });
     println!("arena server listening on {} (state in {data}/)", handle.addr);
+    println!("certificate fingerprint: {}", handle.fingerprint);
     loop {
         std::thread::park();
     }
@@ -84,15 +110,34 @@ fn bot(args: &[String]) {
     }
     world.apply(Action::Tick { ticks: years * 4 });
 
-    let (mut client, welcome) = Client::connect((host.as_str(), port), &name).unwrap_or_else(|e| {
+    // The account secret is kept next to the bot, one file per name.
+    let secret_file = PathBuf::from(format!(".arena-bot-{name}.secret"));
+    let mut login = Login::new(&host, port, &name);
+    login.auth = Auth::Account {
+        secret: arg(args, "--secret").or_else(|| std::fs::read_to_string(&secret_file).ok()),
+    };
+    let (mut client, welcome) = Client::connect(&login).unwrap_or_else(|e| {
         eprintln!("could not connect: {e}");
         std::process::exit(1)
     });
-    if let ServerMsg::Rejected { reason, .. } = &welcome {
-        eprintln!("server refused: {reason}");
-        std::process::exit(1)
+    match &welcome {
+        ServerMsg::Rejected { reason, .. } => {
+            eprintln!("server refused: {reason}");
+            std::process::exit(1)
+        }
+        ServerMsg::Welcome {
+            secret: Some(secret),
+            ..
+        } => {
+            let _ = std::fs::write(&secret_file, secret);
+            println!("claimed the name {name}; secret saved in {}", secret_file.display());
+        }
+        _ => {}
     }
-    println!("signed in as {name}");
+    println!(
+        "signed in as {name} (server certificate {})",
+        client.fingerprint().unwrap_or_default()
+    );
 
     // Strongest affordable champions: named individuals first, then the
     // largest species as rank and file.

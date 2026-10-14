@@ -13,3 +13,4 @@ serde_json = "1"
 hmac = "0.12"
 sha2 = "0.10"
 getrandom = "0.2"
+ureq = { version = "2", features = ["json"] }
