@@ -17,6 +17,7 @@ unsafe impl ExtensionLibrary for GreatGameExtension {}
 #[class(base=RefCounted)]
 pub struct SimWorld {
     world: World,
+    globe: Option<sim_core::globe::GlobeMaps>,
     base: Base<RefCounted>,
 }
 
@@ -25,6 +26,7 @@ impl IRefCounted for SimWorld {
     fn init(base: Base<RefCounted>) -> Self {
         Self {
             world: World::new(1),
+            globe: None,
             base,
         }
     }
@@ -445,6 +447,42 @@ impl SimWorld {
             "relations": relations, "memories": memories,
             "cause_of_death": x.cause_of_death,
             "last_action": x.last_action.map(|a| sim_core::brain::output::NAMES[a]),
+        }))
+    }
+
+    /// Builds the globe maps at `width` × `height` pixels; read them with
+    /// `globe_albedo` and `globe_data`.
+    #[func]
+    fn build_globe(&mut self, width: i64, height: i64) {
+        let (w, h) = (
+            width.clamp(16, 4096) as usize,
+            height.clamp(8, 2048) as usize,
+        );
+        self.globe = Some(self.world.globe_maps(w, h));
+    }
+
+    /// RGBA8: surface colour, alpha = liquid mask.
+    #[func]
+    fn globe_albedo(&self) -> PackedByteArray {
+        self.globe.as_ref().map_or_else(PackedByteArray::new, |g| {
+            PackedByteArray::from(g.albedo.as_slice())
+        })
+    }
+
+    /// RGBA8: R height, G ice, B glow, A liquid depth.
+    #[func]
+    fn globe_data(&self) -> PackedByteArray {
+        self.globe.as_ref().map_or_else(PackedByteArray::new, |g| {
+            PackedByteArray::from(g.data.as_slice())
+        })
+    }
+
+    #[func]
+    fn atmosphere_json(&self) -> GString {
+        let a = self.world.atmosphere_look();
+        to_gstring(json!({
+            "color": a.color, "thickness": a.thickness, "clouds": a.clouds,
+            "cloud_color": a.cloud_color, "sunlight": a.sunlight,
         }))
     }
 

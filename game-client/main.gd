@@ -8,6 +8,7 @@ const SAVE_PATH := "user://world_log.json"
 const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability"]
 const TOOLS := ["Inspect", "Add substance", "Remove substance", "Heat", "Cool"]
 const TreeView := preload("res://tree_view.gd")
+const GlobeView := preload("res://globe_view.gd")
 
 var sim: RefCounted
 var substances: Array = []
@@ -35,6 +36,9 @@ var individuals_list: RichTextLabel
 var individual_detail: RichTextLabel
 var tabs: TabContainer
 var show_individuals: CheckBox
+var globe_view: SubViewportContainer
+var globe_toggle: CheckButton
+var globe_timer := 0.0
 var seed_box: SpinBox
 var preset_select: OptionButton
 var play_button: Button
@@ -89,6 +93,14 @@ func _build_ui() -> void:
 	map_rect.gui_input.connect(_on_map_input)
 	map_rect.draw.connect(_draw_markers)
 	left.add_child(map_rect)
+
+	globe_view = GlobeView.new()
+	globe_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	globe_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	globe_view.size_flags_stretch_ratio = 1.4
+	globe_view.visible = false
+	left.add_child(globe_view)
+	globe_view.setup(sim)
 
 	hover_label = Label.new()
 	hover_label.text = "Hover over the map to see a region. Click to use the selected tool."
@@ -218,6 +230,10 @@ func _build_ui() -> void:
 		overlay_select.add_item("Substance: %s (%s)" % [s["name"], s["formula"]])
 	overlay_select.item_selected.connect(func(_i): _refresh_map())
 	panel.add_child(overlay_select)
+	globe_toggle = CheckButton.new()
+	globe_toggle.text = "3D globe (drag to rotate, scroll to zoom)"
+	globe_toggle.toggled.connect(_set_globe)
+	panel.add_child(globe_toggle)
 	show_individuals = CheckBox.new()
 	show_individuals.text = "Show named individuals on the map"
 	show_individuals.button_pressed = true
@@ -360,6 +376,7 @@ func _new_world() -> void:
 	selected_species = -1
 	selected_individual = -1
 	region_label.text = "Use the Inspect tool and click a region."
+	globe_timer = 0.0
 	_refresh_all()
 
 
@@ -374,12 +391,14 @@ func _update_speed_label() -> void:
 
 func _advance(ticks: int) -> void:
 	sim.tick(ticks)
+	globe_timer = 0.0
 	_refresh_all()
 
 
 func _process(delta: float) -> void:
 	if sim == null:
 		return
+	globe_timer -= delta
 	if running:
 		tick_budget += delta * speed_slider.value
 		var ticks := int(tick_budget)
@@ -482,7 +501,17 @@ func _refresh_all() -> void:
 	_refresh_tabs()
 
 
+func _set_globe(on: bool) -> void:
+	globe_view.visible = on
+	map_rect.visible = not on
+	if on:
+		globe_view.refresh()
+
+
 func _refresh_map() -> void:
+	if globe_view.visible and globe_timer <= 0.0:
+		globe_timer = 1.0
+		globe_view.refresh()
 	var bytes: PackedByteArray = sim.overlay(overlay_select.selected)
 	var img := Image.create_from_data(sim.width(), sim.height(), false, Image.FORMAT_RGBA8, bytes)
 	if map_texture == null or map_texture.get_size() != Vector2(img.get_size()):

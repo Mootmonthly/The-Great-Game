@@ -8,6 +8,7 @@ pub mod action;
 pub mod body;
 pub mod brain;
 pub mod fixed;
+pub mod globe;
 pub mod hash;
 pub mod individual;
 pub mod life;
