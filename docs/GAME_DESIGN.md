@@ -250,7 +250,7 @@ Not all life has to come from the world's own chemistry. Some beings come from o
 - **Day length:** days longer than Earth's add a day–night temperature swing (thick air holds heat overnight). Life must tolerate both the hot day and the cold night, so very slow-turning worlds are harder on life.
 - **Axial tilt:** seasons. Each year one hemisphere warms while the other cools, then they swap; thick atmospheres damp the swing.
 - **Moons:** each has a mass and a distance. Tides heat the planet (like Io's volcanoes) and add energy for life. A moon placed inside the Roche limit (0.3 Earth–Moon distances) is torn apart into rings. A world has one moon slot; more can be bought with Essence (§3).
-- **Moon worlds (decided, building):** every moon is a world of its own, simulated alongside its planet.
+- **Moon worlds (built):** every moon is a world of its own, simulated alongside its planet.
   - It has its own regions, chemistry, atmosphere, life, individuals, civilizations and laws. Every planet control works on it: substances, heat, gravity, radius, axial tilt, laws and the Veil. Its champions can join the player's army.
   - It stays a moon of its planet:
     - It shares the planet's star, distance and year, so the star controls are the planet's.
@@ -261,6 +261,9 @@ Not all life has to come from the world's own chemistry. Some beings come from o
     - A moon cannot have moons of its own.
   - **Orbit:** the moon's distance is set from the planet. In Natural mode it stays between the Roche limit and the stable limit. If the stable limit shrinks, the moon is drawn in rather than lost, so a bought moon is never destroyed by a slider. In Godhand mode any distance is allowed, with strain as for any unstable moon.
   - The whole moon, its actions included, is stored in the planet's action log (as actions aimed at that moon). Replaying the planet replays its moons.
+  - A new moon starts as a bare world (rock with no chemistry); the player gives it its own chemistry. Tidally locked moons have long days and big day–night swings, so living moons need a close orbit or thick air (a Mars-sized moon at half the Moon's distance, with Earth-like chemistry and extra nitrogen, fills with life within a few centuries).
+  - Viewer: a "Viewing" selector switches every map, list and tool between the planet and each moon. Controls owned by the planet (star, mode, moons) grey out on a moon, and a locked day shows its month. The planet's moon list shows each moon's life and temperature, with an orbit control and a View button.
+  - Champions can come from a moon: the arena roster lists them as "(Moon 1)", and the server verifies them by replaying the planet's log and looking in that moon's world.
 - The globe shows the tilt, a spin rate that follows the day length, orbiting moons and rings.
 - **Natural and Godhand modes** (new worlds start in Natural):
   - *Natural:* the planet has a mass and a radius, and gravity = mass / radius². Asking for a gravity changes the planet's mass instead. The star's brightness follows from its type and mass (main-sequence stars: L ∝ M^3.5); asking for a brightness picks the closest mass the star type allows. Year length follows Kepler: √(distance³ / star mass), and long years mean stronger seasons. Moons beyond the stable limit (about 1.95 Earth–Moon distances × distance in AU × ∛(planet mass / star mass)) escape.

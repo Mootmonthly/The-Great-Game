@@ -88,6 +88,32 @@ func _initialize() -> void:
 	check(main.globe_view.moon_nodes.size() == 1 and main.globe_view.rings.visible, "globe shows moons and rings")
 	main.globe_toggle.button_pressed = false
 
+	# Moons are worlds of their own.
+	var moons: Dictionary = JSON.parse_string(sim.moons_json())
+	check(moons["moons"].size() == 1 and int(moons["slots"]) == 1, "one slot holds one moon")
+	sim.add_moon(1.0, 2.0)
+	check(JSON.parse_string(sim.moons_json())["moons"].size() == 1, "a moon is refused when the slots are full")
+	main._refresh_all()
+	check(main.world_select.item_count == 2, "the world selector lists the planet and the moon")
+	check(main.add_moon_button.disabled and main.add_moon_button.tooltip_text.contains("Essence"), "add moon is disabled when the slots are full")
+	# The planet's hash covers its moons, so compare the planet's own region.
+	var planet_region: String = sim.region_json(10, 10)
+	check(sim.focus_moon(0), "a moon can be focused")
+	var on_moon: Dictionary = JSON.parse_string(sim.status_json())
+	check(int(on_moon["focus"]) == 0 and on_moon["host"] != null, "status shows the focused moon and its host")
+	var moon_hash: String = on_moon["hash"]
+	sim.add_substance(10, 10, 3, 0, 5.0)
+	check(JSON.parse_string(sim.status_json())["hash"] != moon_hash, "tools change the focused moon")
+	sim.focus_moon(-1)
+	check(sim.region_json(10, 10) == planet_region, "tools on a moon leave the planet alone")
+	check(not sim.focus_moon(5) and int(sim.focused_moon()) == -1, "focusing a missing moon fails")
+	main.world_select.item_selected.emit(1)
+	check(int(sim.focused_moon()) == 0 and main.planet_sliders["star_mass"]["slider"].editable == false, "the selector focuses the moon and greys out star controls")
+	check(not main.planet_sliders["day_length"]["slider"].editable and main.tidal_lock_label.visible, "a tidally locked moon cannot set its day length")
+	check(main.moon_info_label.visible and main.moon_info_label.text.contains("Eclipses"), "the moon info block is shown")
+	main.world_select.item_selected.emit(0)
+	check(int(sim.focused_moon()) == -1 and main.planet_sliders["star_mass"]["slider"].editable, "the selector returns to the planet")
+
 	# Species tab and detail.
 	main.tabs.current_tab = 0
 	main._refresh_tabs()
@@ -196,7 +222,7 @@ func _initialize() -> void:
 		while Time.get_ticks_msec() - started < 90000 and arena.match_end.is_empty():
 			for m in JSON.parse_string(foe.poll()):
 				if m["type"] == "welcome":
-					foe.bind(sim, "species", foe_species)
+					foe.bind(sim, "species", foe_species, -1)
 				elif m["type"] == "bound":
 					foe.queue("ranked", arena.cap, PackedInt64Array([int(m["champion"]["token"])]))
 			await process_frame
@@ -229,7 +255,7 @@ func _initialize() -> void:
 		while Time.get_ticks_msec() - started < 60000 and not arena.online:
 			for m in JSON.parse_string(foe2.poll()):
 				if m["type"] == "welcome":
-					foe2.bind(sim, "species", foe_species)
+					foe2.bind(sim, "species", foe_species, -1)
 				elif m["type"] == "bound":
 					foe2.queue("ranked", arena.cap, PackedInt64Array([int(m["champion"]["token"])]))
 			await process_frame

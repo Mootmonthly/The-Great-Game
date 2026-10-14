@@ -45,6 +45,14 @@ var globe_view: SubViewportContainer
 var globe_toggle: CheckButton
 var globe_timer := 0.0
 var moons_label: RichTextLabel
+var world_select: OptionButton
+var moon_list_box: VBoxContainer
+var moon_rows: Array = []
+var moon_slots_label: Label
+var moon_info_label: RichTextLabel
+var tidal_lock_label: Label
+var add_moon_button: Button
+var remove_moon_button: Button
 var moon_mass: SpinBox
 var moon_distance: SpinBox
 var seed_box: SpinBox
@@ -294,6 +302,15 @@ func _build_ui() -> void:
 
 	# Planet
 	_section(panel, "Planet")
+	var world_row := HBoxContainer.new()
+	panel.add_child(world_row)
+	world_row.add_child(_label("Viewing"))
+	world_select = OptionButton.new()
+	world_select.add_item("Planet")
+	world_select.tooltip_text = "Each moon is a full world of its own. Everything below, and every list and map, shows the world selected here."
+	world_select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	world_select.item_selected.connect(func(i): _set_focus(i - 1))
+	world_row.add_child(world_select)
 	var mode_row := HBoxContainer.new()
 	panel.add_child(mode_row)
 	mode_row.add_child(_label("Mode"))
@@ -325,6 +342,10 @@ func _build_ui() -> void:
 	_planet_slider(panel, "global_heat", "Global heat (K)", -200.0, 1000.0, 0.0, false, "set_global_heat")
 	_planet_slider(panel, "day_length", "Day length (hours)", 2.0, 5000.0, 24.0, true, "set_day_length")
 	_planet_slider(panel, "axial_tilt", "Axial tilt (degrees)", 0.0, 90.0, 0.0, false, "set_axial_tilt")
+	tidal_lock_label = _label("")
+	tidal_lock_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tidal_lock_label.add_theme_color_override("font_color", Color(0.7, 0.8, 0.95))
+	panel.add_child(tidal_lock_label)
 
 	_section(panel, "Laws")
 	_planet_slider(panel, "veil_law", "Veil (% open)", 0.0, 100.0, 0.0, false, "set_veil_law")
@@ -338,8 +359,14 @@ func _build_ui() -> void:
 	panel.add_child(laws_label)
 
 	_section(panel, "Moons")
+	moon_slots_label = _label("")
+	panel.add_child(moon_slots_label)
 	moons_label = _rich(40)
 	panel.add_child(moons_label)
+	moon_list_box = VBoxContainer.new()
+	panel.add_child(moon_list_box)
+	moon_info_label = _rich(40)
+	panel.add_child(moon_info_label)
 	var moon_row := HBoxContainer.new()
 	panel.add_child(moon_row)
 	moon_row.add_child(_label("Mass"))
@@ -356,26 +383,26 @@ func _build_ui() -> void:
 	moon_distance.max_value = 50
 	moon_distance.step = 0.05
 	moon_distance.value = 1.0
-	moon_distance.tooltip_text = "In Earth–Moon distances. Below 0.3 the moon is torn into rings; beyond the stable limit it escapes (Natural) or strains the world (Godhand)."
+	moon_distance.tooltip_text = "In Earth–Moon distances. Below 0.3 the moon is torn into rings; beyond the stable limit it is drawn in (Natural) or strains the world (Godhand)."
 	moon_row.add_child(moon_distance)
 	var moon_buttons := HBoxContainer.new()
 	panel.add_child(moon_buttons)
-	var add_moon := Button.new()
-	add_moon.text = "Add moon"
-	add_moon.pressed.connect(func():
+	add_moon_button = Button.new()
+	add_moon_button.text = "Add moon"
+	add_moon_button.pressed.connect(func():
 		sim.add_moon(moon_mass.value, moon_distance.value)
 		globe_timer = 0.0
 		_refresh_all())
-	moon_buttons.add_child(add_moon)
-	var remove_moon := Button.new()
-	remove_moon.text = "Remove outermost"
-	remove_moon.pressed.connect(func():
+	moon_buttons.add_child(add_moon_button)
+	remove_moon_button = Button.new()
+	remove_moon_button.text = "Remove outermost"
+	remove_moon_button.pressed.connect(func():
 		var st: Dictionary = JSON.parse_string(sim.status_json())
 		if st["moons"].size() > 0:
 			sim.remove_moon(st["moons"].size() - 1)
 			globe_timer = 0.0
 			_refresh_all())
-	moon_buttons.add_child(remove_moon)
+	moon_buttons.add_child(remove_moon_button)
 
 	_section(panel, "Arena")
 	var arena_button := Button.new()
@@ -487,6 +514,7 @@ func _new_world() -> void:
 	play_button.text = "Play"
 	var preset: String = preset_select.get_item_text(preset_select.selected)
 	sim.new_world(int(seed_box.value), preset)
+	sim.focus_moon(-1)
 	selected_region = Vector2i(-1, -1)
 	selected_species = -1
 	selected_individual = -1
@@ -549,6 +577,7 @@ func _load() -> void:
 	hover_label.text = "Replaying saved world…"
 	if sim.load_log(json):
 		hover_label.text = "Loaded and replayed %s" % ProjectSettings.globalize_path(SAVE_PATH)
+	sim.focus_moon(-1)
 	_refresh_all()
 
 
@@ -616,6 +645,22 @@ func _refresh_all() -> void:
 	_refresh_tabs()
 
 
+## Points the viewer and the tools at the planet (-1) or a moon (0..).
+func _set_focus(k: int) -> void:
+	sim.focus_moon(k)
+	# Species and individual ids belong to one world.
+	selected_species = -1
+	selected_individual = -1
+	species_detail.text = "Click a species to see its body, temperament and ancestry."
+	individual_detail.text = "Named individuals appear once a species evolves a nervous system. Click one to read its story."
+	creature_preview.visible = false
+	region_label.text = "Use the Inspect tool and click a region."
+	selected_region = Vector2i(-1, -1)
+	visit_button.disabled = true
+	globe_timer = 0.0
+	_refresh_all()
+
+
 func _set_globe(on: bool) -> void:
 	globe_view.visible = on
 	map_rect.visible = not on
@@ -651,15 +696,9 @@ func _refresh_text() -> void:
 	if st["civilizations"] > 0:
 		status_label.text += "\nCivilizations: %d (%d at war)" % [st["civilizations"], st["wars"]]
 
-	var moons := []
-	for m in st["moons"]:
-		moons.append("%.2f lunar masses at %.2f" % [m["mass"], m["distance"]])
-	var moon_text := ("\n".join(moons) if moons.size() > 0 else "No moons.")
-	if st["rings"] > 0.0:
-		moon_text += "\nRings: %.2f lunar masses of debris" % st["rings"]
-	moon_text += "\nTides: %.2f× Earth's · day–night swing: ±%.0f K" % [st["tidal_strength"], st["day_night_swing"]]
-	moon_text += "\nMoons beyond %.2f Earth–Moon distances %s." % [st["moon_limit"], "strain the world" if st["godhand"] else "escape"]
-	moons_label.text = moon_text
+	var moons: Dictionary = JSON.parse_string(sim.moons_json())
+	var focus := int(sim.focused_moon())
+	_refresh_moons(st, moons, focus)
 	mode_select.select(1 if st["godhand"] else 0)
 	star_select.select(int(st["star_type"]))
 	var star_text := "[color=#%s]●[/color] %s · year %.2f Earth years · planet mass %.2f Earths\nSurface radiation %.2f× Earth's (harmful: %.2f)" % [
@@ -689,6 +728,109 @@ func _refresh_text() -> void:
 
 	if selected_region.x >= 0:
 		_refresh_region()
+
+
+## The world selector, the moon list and the controls that only the planet owns.
+func _refresh_moons(st: Dictionary, moons: Dictionary, focus: int) -> void:
+	var list: Array = moons["moons"]
+	var slots := int(moons["slots"])
+	var on_moon := focus >= 0
+	# World selector: rebuilt only when moons come or go.
+	if world_select.item_count != list.size() + 1:
+		world_select.clear()
+		world_select.add_item("Planet")
+		for m in list:
+			world_select.add_item("Moon %d" % (int(m["index"]) + 1))
+	world_select.select(focus + 1)
+
+	# Controls that belong to the planet stay in place but grey out.
+	var planet_only := "Set on the planet"
+	for key in ["star_mass", "star_distance", "star_luminosity"]:
+		var slider: HSlider = planet_sliders[key]["slider"]
+		slider.editable = not on_moon
+		slider.tooltip_text = planet_only if on_moon else ""
+	for c in [mode_select, star_select, moon_mass, moon_distance]:
+		if c is SpinBox:
+			c.editable = not on_moon
+		else:
+			c.disabled = on_moon
+	mode_select.tooltip_text = planet_only if on_moon else "Natural: physics links the settings (gravity from mass and radius, brightness from the star). Godhand: set anything, but impossible settings strain the world."
+	star_select.tooltip_text = planet_only if on_moon else ""
+	moon_mass.tooltip_text = planet_only if on_moon else "In lunar masses"
+	moon_distance.tooltip_text = planet_only if on_moon else "In Earth–Moon distances. Below 0.3 the moon is torn into rings; beyond the stable limit it is drawn in (Natural) or strains the world (Godhand)."
+	var full := list.size() >= slots
+	add_moon_button.disabled = on_moon or full
+	remove_moon_button.disabled = on_moon or list.size() == 0
+	if on_moon:
+		add_moon_button.tooltip_text = planet_only
+		remove_moon_button.tooltip_text = planet_only
+	else:
+		add_moon_button.tooltip_text = "More moon slots can be bought with Essence (10,000 each)" if full else ""
+		remove_moon_button.tooltip_text = ""
+
+	# Day length: a moon in Natural mode spins once per orbit.
+	var day_slider: HSlider = planet_sliders["day_length"]["slider"]
+	var host = st.get("host")
+	var locked: bool = on_moon and host != null and host["tidally_locked"]
+	day_slider.editable = not locked
+	day_slider.tooltip_text = "Set by the moon's orbit in Natural mode" if locked else ""
+	tidal_lock_label.visible = locked
+	if locked:
+		tidal_lock_label.text = "Tidally locked: a day lasts one month (%.1f days)" % (float(list[focus]["month_hours"]) / 24.0)
+
+	moon_slots_label.text = "Moons: %d / %d" % [list.size(), slots]
+	moon_list_box.visible = not on_moon
+	moon_info_label.visible = on_moon
+	if on_moon:
+		var m: Dictionary = list[focus]
+		moons_label.text = "[b]Moon %d[/b] of the planet · %.2f lunar masses" % [focus + 1, m["mass"]]
+		moon_info_label.text = "Orbit: %.2f Earth–Moon distances\nMonth: %.1f days\nEclipses: %.1f%% of the time\nTidal heating: %.2f×\nGravity: %.2f g" % [
+			m["distance"], float(m["month_hours"]) / 24.0, float(m["eclipse"]) * 100.0, m["tidal_strength"], m["gravity"]]
+		return
+	var moon_text := ("%d moon%s" % [list.size(), "" if list.size() == 1 else "s"]) if list.size() > 0 else "No moons."
+	if st["rings"] > 0.0:
+		moon_text += "\nRings: %.2f lunar masses of debris" % st["rings"]
+	moon_text += "\nTides: %.2f× Earth's · day–night swing: ±%.0f K" % [st["tidal_strength"], st["day_night_swing"]]
+	moon_text += "\nMoons beyond %.2f Earth–Moon distances %s." % [st["moon_limit"], "strain the world" if st["godhand"] else "are drawn in to it"]
+	moons_label.text = moon_text
+	_sync_moon_rows(list)
+
+
+## One row per moon: summary, orbit box and a button that views that moon.
+func _sync_moon_rows(list: Array) -> void:
+	if moon_rows.size() != list.size():
+		for r in moon_rows:
+			r["row"].queue_free()
+		moon_rows.clear()
+		for m in list:
+			var idx := int(m["index"])
+			var row := HBoxContainer.new()
+			moon_list_box.add_child(row)
+			var info := _label("")
+			info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			row.add_child(info)
+			var orbit := SpinBox.new()
+			orbit.min_value = 0.3
+			orbit.max_value = 50.0
+			orbit.step = 0.05
+			orbit.suffix = "EM"
+			orbit.tooltip_text = "Orbit distance in Earth–Moon distances. In Natural mode it stays between the Roche limit (0.3) and the stable limit."
+			orbit.value_changed.connect(func(v):
+				sim.set_moon_orbit(idx, v)
+				globe_timer = 0.0
+				_refresh_all())
+			row.add_child(orbit)
+			var view := Button.new()
+			view.text = "View"
+			view.pressed.connect(func(): _set_focus(idx))
+			row.add_child(view)
+			moon_rows.append({"row": row, "info": info, "orbit": orbit})
+	for i in list.size():
+		var m: Dictionary = list[i]
+		var r: Dictionary = moon_rows[i]
+		r["info"].text = "Moon %d: %d species, %.0f K" % [i + 1, m["living_species"], m["mean_temperature"]]
+		r["orbit"].set_value_no_signal(m["distance"])
 
 
 func _refresh_region() -> void:
