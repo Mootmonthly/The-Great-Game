@@ -5,6 +5,16 @@ extends SceneTree
 ## non-zero code on failure.
 
 var failures := 0
+## Servers started by the online checks; always killed before exiting, or
+## they would keep the test's output open and hang CI.
+var children: Array[int] = []
+
+
+func finish() -> void:
+	for pid in children:
+		OS.kill(pid)
+	print("%d failure(s)" % failures)
+	quit(1 if failures > 0 else 0)
 
 
 func check(cond: bool, what: String) -> void:
@@ -16,6 +26,11 @@ func check(cond: bool, what: String) -> void:
 
 
 func _initialize() -> void:
+	# Watchdog: a stuck check fails the test instead of hanging it.
+	create_timer(540.0).timeout.connect(func():
+		printerr("FAIL smoke test timed out")
+		failures += 1
+		finish())
 	check(ClassDB.class_exists("SimWorld"), "SimWorld class is registered by the extension")
 	if failures > 0:
 		quit(1)
@@ -128,6 +143,7 @@ func _initialize() -> void:
 	if FileAccess.file_exists(server_bin):
 		var data_dir := OS.get_user_data_dir() + "/smoke-server-%d" % int(Time.get_unix_time_from_system())
 		var pid := OS.create_process(server_bin, ["serve", "--port", "7979", "--data", data_dir, "--speed", "0"])
+		children.append(pid)
 		await create_timer(1.5).timeout
 		# A fresh server has a fresh certificate: forget pins from earlier runs.
 		DirAccess.remove_absolute(ProjectSettings.globalize_path("user://online.cfg"))
@@ -164,7 +180,8 @@ func _initialize() -> void:
 
 		# Rejoining: a real-time server; drop the connection mid-match and
 		# come back. The arena is rebuilt from the server's history.
-		var pid2 := OS.create_process(server_bin, ["serve", "--port", "7980", "--data", data_dir + "-paced", "--speed", "1"])
+		var pid2 := OS.create_process(server_bin, ["serve", "--port", "7980", "--data", data_dir + "-paced", "--speed", "0.25"])
+		children.append(pid2)
 		await create_timer(1.5).timeout
 		DirAccess.remove_absolute(ProjectSettings.globalize_path("user://online.cfg"))
 		main.open_arena()
@@ -183,15 +200,25 @@ func _initialize() -> void:
 				elif m["type"] == "bound":
 					foe2.queue("ranked", arena.cap, PackedInt64Array([int(m["champion"]["token"])]))
 			await process_frame
-		await create_timer(1.0).timeout
-		arena.net.close_connection()
-		await create_timer(0.5).timeout
-		arena.find_online_match()
-		started = Time.get_ticks_msec()
-		while Time.get_ticks_msec() - started < 20000 and not (arena.resuming and arena.units.size() >= 2 and arena.state.get("time", 0.0) > 1.0):
-			foe2.poll()
-			await process_frame
-		check(arena.resuming and arena.units.size() >= 2, "online: a dropped player rejoins the running match")
+		check(arena.online, "online: a real-time match starts (%s)" % arena.online_label.text)
+		# Drop the connection at once (the server runs at quarter speed, so
+		# the match is still young), then rejoin. The server may need a
+		# moment to notice the drop.
+		if arena.net != null:
+			arena.net.close_connection()
+		for attempt in 3:
+			await create_timer(0.5).timeout
+			if arena.net != null:
+				arena.net.close_connection()
+				arena.net = null
+			arena.find_online_match()
+			started = Time.get_ticks_msec()
+			while Time.get_ticks_msec() - started < 10000 and arena.net != null and not (arena.resuming and arena.units.size() >= 2):
+				foe2.poll()
+				await process_frame
+			if arena.resuming:
+				break
+		check(arena.resuming and arena.units.size() >= 2, "online: a dropped player rejoins the running match (%s)" % arena.online_label.text)
 		foe2.surrender()
 		started = Time.get_ticks_msec()
 		while Time.get_ticks_msec() - started < 20000 and arena.match_end.is_empty():
@@ -274,5 +301,4 @@ func _initialize() -> void:
 	await process_frame
 	check(main.creature_preview.creature != null and main.creature_preview.creature.tentacles.size() > 0, "beings from beyond get a model with tendrils")
 
-	print("%d failure(s)" % failures)
-	quit(1 if failures > 0 else 0)
+	finish()
