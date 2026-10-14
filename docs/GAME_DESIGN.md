@@ -215,7 +215,17 @@ Every individual can produce a sheet in a 5e-compatible format:
 - **Innate abilities:** actions, bonus actions, reactions, legendary actions where earned.
 - **Equipment:** for beings in tool-using civilizations.
 
-**Mapping simulation to sheet:** genome traits map to ability scores through fixed curves. Example: STR from size × muscle density; INT from intelligence trait; CHA from social trait plus soul strength. The same genome always produces the same base sheet. Individuals vary by a small seeded roll plus life history (training, cultivation realm, equipment).
+**Mapping simulation to sheet (implemented, `sim-core/src/sheet.rs`):**
+- **Ability scores:** STR from body size (log scale), limbs and weapons; DEX from speed, reduced by bulk; CON from size and armour; INT from brain size (+4 if sapient); WIS from eyes, caution and age; CHA from sociability, or for named individuals from friendships and renown. A human-sized, unremarkable body scores about 10 in each; an elephant-sized one has STR about 22.
+- **Hit dice:** grow with body mass (about 1 for a person, 9 for an elephant, 22 for an ancient dragon); the die comes from the size category (d4 Tiny … d20 Gargantuan).
+- **Armour class:** 10 + DEX modifier + up to 9 from shell armour.
+- **Attacks from parts:** jaws bite, claws slash (up to two attacks), tentacles strike; a body with no weapons slams. Large, coordinated bodies get an extra attack. A gland gives a breath weapon whose damage type comes from its substance (methane or hydrogen: fire; ammonia: acid; carbon dioxide or water: cold; iron or silicon: lightning; sulfur: poison).
+- **Resistances from biochemistry:** cold-adapted life resists cold and is vulnerable to fire; hot-adapted life is immune to fire and vulnerable to cold; silicon life resists fire and is vulnerable to thunder; sulfur life is immune to poison; heavy armour resists physical damage; mindless life is immune to psychic damage.
+- **Type:** Ooze (single-celled), Humanoid (sapient), Dragon (winged, four or more limbs, breath, large), Elemental (non-carbon life), Plant, Monstrosity or Beast.
+- **Alignment:** sapient beings only, from personality (sociability, curiosity, aggression); others are Unaligned.
+- **Traits:** Sunfed (fronds regenerate in sunlight), Pack Tactics (sociable), Keen Senses, Flyby, Amorphous, Tool User.
+
+Earlier note: genome traits map to ability scores through fixed curves. Example: STR from size × muscle density; INT from intelligence trait; CHA from social trait plus soul strength. The same genome always produces the same base sheet. Individuals vary by a small seeded roll plus life history (training, cultivation realm, equipment).
 
 ### 5.2 Licensing Note
 
@@ -223,25 +233,31 @@ Mechanics from the D&D 5e System Reference Document (SRD 5.1) are released under
 
 ### 5.3 Cost (1–1000)
 
-Cost must be predictable, explainable to players, and resistant to exploits. Proposed formula, modelled on the 5e Challenge Rating approach (offence vs. defence):
+Cost must be predictable, explainable to players, and resistant to exploits.
+
+**Implemented formula (Phase 1):**
 
 ```
-DefensiveRating  = f(effective HP after resistances/immunities, AC, save bonuses)
-OffensiveRating  = f(expected damage per round, attack bonus or save DC, range)
-UtilityRating    = Σ ability utility scores (mobility, healing, control, summons, stealth)
-StatRating       = Σ over 6 ability scores of max(0, score − 10)
+EffectiveHP  = HP / P(hit by +7 vs this AC) × 0.65 × toughness × regeneration
+               toughness: +10% per resistance, +20% per immunity, −10% per vulnerability (0.7–2.0)
+DamagePerRound = Σ attacks: P(hit AC 15) × average damage × attacks per round
+               with a breath weapon: (breath × 0.8 + 2 × attacks) / 3 when the breath is stronger
+Utility      = flight 15%, swimming 5%, burrowing 5%, darkvision/tremorsense 5%, tool use 10%
+Stats        = 1 + Σ max(0, score − 10) / 1000
 
-Power  = 0.40·Defensive + 0.40·Offensive + 0.15·Utility + 0.05·Stat
-         + EquipmentPower
-Cost   = clamp(round(1 + 999 · (Power / PowerCap)^0.7), 1, 1000)
+Power = √(EffectiveHP × DamagePerRound) × (1 + Utility) × Stats
+Cost  = clamp(round(Power × 0.85), 1, 1000)
 ```
 
-- The 0.7 exponent spreads low-power beings across more cost values so cheap champions remain distinct.
-- **PowerCap** is a tuned constant. A reference apex being (for example, a dragon living on a neutron-star-like world) maps to about 1000. A classic ancient dragon lands far lower, roughly 250–350. A commoner-level creature costs 1.
-- Ability scores may exceed the 5e cap of 30 for extreme beings. The cost formula must stay monotonic beyond that range.
-- Equipment adds power by the same offence/defence evaluation and is part of the champion's locked loadout.
-- Each ability has a hand-tuned or simulation-derived utility score stored in data. A balance tool runs automated mock battles to re-tune weights (see §8).
-- The sheet UI shows the cost breakdown so players understand why a being costs what it costs.
+- **Why power is a square root, and cost is linear in power:** in a duel, A beats B when A's effective HP × damage per round exceeds B's. The square root of that product is additive under Lanchester's square law: ten units of power 10 fight about as well together as one unit of power 100. So cost linear in power prices armies of cheap units and single champions fairly against each other at the same total cost. This replaces the earlier proposal (a 0.7 exponent), which would have made large champions systematically cheaper than the armies they face.
+- **Calibration anchors (tested):** a 5e-style commoner costs 1; an ancient-dragon-like being (546 HP, AC 22, fire breath, flight) costs about 310. A reference apex being (for example, a dragon living on a neutron-star-like world) should reach about 1000 once equipment and metaphysical laws add power.
+- **Measured against the auto-battler** (`sim-cli balance`: 3,500+ evolved species from 4 presets × 2 seeds, 155 sampled across the cost range):
+  - Rank correlation between cost and win rate: **0.93** (Phase 1 target: above 0.8).
+  - In pairs with at least a 1.5× cost gap, the more expensive side won **99%** of match-ups.
+  - Armies of n cheap units against one unit costing n× as much: the army wins about **55%** (50% is perfectly fair). Large single-target hitters waste damage on small targets (overkill), which the formula does not yet model. Tune when arena rules exist.
+- Ability scores may exceed the 5e cap of 30 for extreme beings. The cost formula stays monotonic beyond that range.
+- Equipment adds power by the same offence/defence evaluation and is part of the champion's locked loadout (later phase).
+- The sheet UI shows the cost breakdown (effective HP, damage per round, power, utility, abilities) so players understand why a being costs what it costs.
 
 ## 6. Arena
 
@@ -358,7 +374,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 |---|---|---|
 | 0. Prototype: Petri Dish | Godot 4 + Rust sim-core. 2D top-down. 10 substances, temperature, gravity, star distance; life triad; species populations evolve. Determinism test across Windows and Linux | Two seeds with different chemistry produce visibly different life; identical replay hashes on both platforms; measured sim cost per world-hour |
 | 0.5 Prototype: Bodies & Minds | Body-part genomes, evolutionary milestones, brain genomes and temperament, named individuals with relationships, family tree view | Lineages progress from microbes to limbed, winged creatures; individuals form friendships and feuds; replay stays deterministic |
-| 1. Prototype: Sheet & Cost | Genome → 5e sheet → cost. Headless auto-battler between two generated beings | Cost correlates with mock-battle win rate (target r > 0.8) |
+| 1. Prototype: Sheet & Cost (done) | Genome → 5e sheet → cost. Headless auto-battler between two generated beings | Cost correlates with mock-battle win rate (target r > 0.8) |
 | 2. Vertical Slice | 3D planet view, full planetary controls (rotation, orbit, moons, atmosphere), body plan synthesis, possession, local 1v1 arena with small armies | Playable start-to-arena loop offline |
 | 3. Online Alpha | Dedicated server, replay verification, matchmaking, permadeath, Essence economy, large-army arena (500 units per side) | Closed test with external players |
 | 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
@@ -387,6 +403,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Surrender | Allowed; fallen champions are looted, survivors return home |
 | — | Evolution model | Body-part genomes gated by evolutionary milestones, with neural-network brains used as far as cost allows (§4.4, §4.8) |
 | — | Sapience on Earth-like worlds | Almost always, given time; "never sapient" worlds come from unusual player choices (§4.4) |
+| — | Cost formula | Power = √(effective HP × damage per round), cost linear in power; commoner 1, ancient dragon about 310 (§5.3) |
 | — | Extradimensional beings | Included as a possibility, arriving through a thin Veil; extreme physics alone can let them in (§4.4a) |
 
 ## 11. Open Questions

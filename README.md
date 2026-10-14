@@ -59,6 +59,7 @@ If the viewer says "The simulation extension is not loaded", step 6 did not fini
 - **Species tab:** the largest living species. Click one to see its body parts, milestones, traits, temperament and ancestry.
 - **Family tree tab:** one line per species from its first year to extinction (or now), joined to its parent. Click a line to select it.
 - **Individuals tab:** named individuals, most renowned first. Click one for its personality, relationships and life story.
+- **Character sheets:** species and individual details end with a 5e-style stat block (ability scores, AC, HP, speeds, senses, resistances, traits, attacks, breath weapons) and the being's arena cost from 1 to 1000, with a breakdown of how the cost was reached.
 - **God tools:** pick a tool, then click or drag on the map. **Add substance** and **Remove substance** use the selected substance, amount and radius. **Heat** and **Cool** change local temperature by 10 K per unit of amount. **Inspect** shows a region's chemistry, its best life triad, and the species living there.
 - **Planet:** drag the sliders to change star distance, star luminosity, gravity and global temperature. The change applies when you release the slider.
 - **Save / Load:** saves the world's action log to your Godot user folder and replays it on load. The state hash under the status panel should be identical after loading.
@@ -78,6 +79,8 @@ cargo run -p sim-cli --release -- run --preset frozen_moon --years 300
 cargo run -p sim-cli --release -- run --preset earthlike --png out   # also write map images
 cargo run -p sim-cli --release -- verify                          # save, replay, compare hashes
 cargo run -p sim-cli --release -- bench                           # simulation cost per year
+cargo run -p sim-cli --release -- sheets --preset earthlike --years 800   # character sheets and costs
+cargo run -p sim-cli --release -- balance                         # check cost against the auto-battler (takes a few minutes)
 ```
 
 The `golden_hash` test checks that the simulation gives bit-identical results to a stored value. CI runs it on Windows, macOS and Linux. If it passes on your machine, your computer simulates worlds exactly like the server will.

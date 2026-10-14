@@ -5,6 +5,7 @@
 //! docs/GAME_DESIGN.md §7.
 
 pub mod action;
+pub mod battle;
 pub mod body;
 pub mod brain;
 pub mod fixed;
@@ -15,6 +16,7 @@ pub mod life;
 pub mod presets;
 pub mod render;
 pub mod rng;
+pub mod sheet;
 pub mod substance;
 pub mod world;
 

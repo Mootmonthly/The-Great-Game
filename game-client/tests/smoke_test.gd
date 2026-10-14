@@ -73,6 +73,9 @@ func _initialize() -> void:
 	var top: Array = JSON.parse_string(sim.species_json(1))
 	main._on_meta("s:%d" % int(top[0]["id"]))
 	check(main.species_detail.text.contains("Temperament"), "species detail shows temperament")
+	check(main.species_detail.text.contains("Character sheet"), "species detail shows a character sheet")
+	var sheet = JSON.parse_string(sim.sheet_json("species", int(top[0]["id"])))
+	check(sheet != null and sheet["cost"] >= 1 and sheet["cost"] <= 1000, "species sheet has a cost from 1 to 1000")
 
 	# Family tree.
 	main.tabs.current_tab = 1
@@ -90,6 +93,7 @@ func _initialize() -> void:
 	if people.size() > 0:
 		main._on_meta("i:%d" % int(people[0]["id"]))
 		check(main.individual_detail.text.contains("Life story"), "individual detail shows life story")
+		check(main.individual_detail.text.contains("Character sheet"), "individual detail shows a character sheet")
 	check(main.individual_markers.size() > 0, "individual markers are drawn on the map")
 
 	main.preset_select.select(4)

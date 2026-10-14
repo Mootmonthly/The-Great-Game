@@ -54,6 +54,33 @@ fn species_summary(w: &World, s: &sim_core::life::Species) -> Value {
         "milestones": sim_core::body::milestone_names(g.milestones),
         "temperament": s.temperament.describe(),
         "parent": s.parent, "born_year": s.born_tick / sim_core::world::TICKS_PER_YEAR,
+        "cost": sim_core::sheet::species_sheet(w, s).cost.cost,
+    })
+}
+
+fn sheet_to_json(sh: &sim_core::sheet::CharacterSheet) -> Value {
+    use sim_core::sheet::{modifier, ABILITY_NAMES};
+    let names = |v: &[sim_core::sheet::DamageType]| v.iter().map(|d| d.name()).collect::<Vec<_>>();
+    let abilities: Vec<Value> = ABILITY_NAMES
+        .iter()
+        .zip(sh.abilities)
+        .map(|(n, v)| json!({"name": n, "score": v, "modifier": modifier(v)}))
+        .collect();
+    let c = &sh.cost;
+    json!({
+        "name": sh.name, "type": sh.creature_type, "size": sh.size.name(), "alignment": sh.alignment,
+        "armor_class": sh.armor_class, "hit_points": sh.hit_points, "hit_dice": sh.hit_dice, "hit_die": sh.size.hit_die(),
+        "speed": {"walk": sh.speed_walk, "swim": sh.speed_swim, "fly": sh.speed_fly, "burrow": sh.speed_burrow},
+        "proficiency": sh.proficiency, "abilities": abilities,
+        "senses": sh.senses, "languages": sh.languages,
+        "resistances": names(&sh.resistances), "immunities": names(&sh.immunities), "vulnerabilities": names(&sh.vulnerabilities),
+        "traits": sh.traits.iter().map(|t| json!({"name": t.name, "text": t.text})).collect::<Vec<_>>(),
+        "actions": sh.attacks.iter().map(|a| a.describe()).chain(sh.breath.iter().map(|b| b.describe())).collect::<Vec<_>>(),
+        "cost": c.cost,
+        "cost_breakdown": {
+            "effective_hp": c.effective_hp.to_f64(), "damage_per_round": c.damage_per_round.to_f64(),
+            "utility": c.utility.to_f64(), "stats": c.stats.to_f64(), "power": c.power.to_f64(),
+        },
     })
 }
 
@@ -396,6 +423,7 @@ impl SimWorld {
                     "friends": x.friends(), "enemies": x.enemies(),
                     "personality": x.personality.describe(),
                     "last_action": x.last_action.map(|a| sim_core::brain::output::NAMES[a]),
+                    "cost": sim_core::sheet::individual_sheet(w, x).map(|sh| sh.cost.cost),
                 })
             })
             .collect();
@@ -484,6 +512,26 @@ impl SimWorld {
             "color": a.color, "thickness": a.thickness, "clouds": a.clouds,
             "cloud_color": a.cloud_color, "sunlight": a.sunlight,
         }))
+    }
+
+    /// Character sheet (§5) of a species ("species") or a named individual
+    /// ("individual"). Returns "null" if no record exists.
+    #[func]
+    fn sheet_json(&self, kind: GString, id: i64) -> GString {
+        let w = &self.world;
+        let sheet = match kind.to_string().as_str() {
+            "species" => w
+                .species_by_id(id as u32)
+                .map(|s| sim_core::sheet::species_sheet(w, s)),
+            "individual" => w
+                .individual_by_id(id as u32)
+                .and_then(|x| sim_core::sheet::individual_sheet(w, x)),
+            _ => None,
+        };
+        match sheet {
+            Some(sh) => to_gstring(sheet_to_json(&sh)),
+            None => GString::from("null"),
+        }
     }
 
     /// The action log as JSON: everything needed to rebuild this world.
