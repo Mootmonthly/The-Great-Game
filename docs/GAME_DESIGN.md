@@ -413,12 +413,12 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
 - Death makes every match high stakes. A 1000-cost apex being can be lost in one defeat. This is intended tension, but needs supporting rules:
   - **Decided:** surrender ends a match early. Champions that already fell stay lost and are looted; survivors return home.
   - Clear pre-match preview of the opponent's total cost, but not their exact roster (proposed).
-  - Unranked practice queue against AI or friends with no permadeath (proposed; a practice queue against other players exists in the prototype).
+  - **Decided:** an unranked practice queue with no permadeath and no rating change. Practice against AI or friends specifically is still open.
 - **Implemented (prototype):**
   - In ranked matches, every champion whose unit falls is removed from its owner's account.
   - Fallen named individuals go into a **ledger of the dead**, keyed by a fingerprint of the being: world seed, id, species, birth tick and name. No account can bind them again, from the same save or from any branch of their world replayed with different later actions. Reloading an old save does not bring a champion back.
   - The client logs the death in its world (`Action::ChampionFell`), so the world replays without them.
-  - Species champions are rank-and-file members of a species. A fallen unit is lost, but the species lives on and can supply more units (proposed rule).
+  - **Decided:** species champions are rank-and-file members of a species. A fallen unit is lost, but the species lives on and can supply more units.
   - Looting (bodies, gear) is not built yet; it waits for the Essence economy and equipment (§5.4).
 
 ### 6.3 Networking
@@ -441,7 +441,7 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
   - Each tick the server applies the commands, steps the authoritative arena and broadcasts that tick's commands. Clients step an identical arena.
   - Every 50 ticks the server sends a state hash, and clients flag any desync.
   - The match result and the fallen are decided by the server and signed.
-- **Surrender and disconnects:** surrender ends the match at once; the other side wins, the fallen stay fallen and survivors go home. Disconnecting during a match counts as surrender (proposed rule).
+- **Surrender and disconnects:** surrender ends the match at once; the other side wins, the fallen stay fallen and survivors go home. **Decided:** disconnecting during a match counts as surrender.
 - **Test tools:** `arena-server bot` is a headless player that evolves a world, binds champions, queues and lets the arena AI fight.
 - **Not yet:** Steam identity (names are taken on trust), TLS, reconnecting to a running match, client-side prediction of the possessed unit (commands take one round trip), cloud hosting, and the Essence economy.
 
@@ -537,7 +537,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Sapience on Earth-like worlds | Almost always, given time; "never sapient" worlds come from unusual player choices (§4.4) |
 | — | Cost formula | Power = √(effective HP × damage per round), cost linear in power; commoner 1, ancient dragon about 310 (§5.3) |
 | — | Natural/Godhand and star types | Built as in §4.6: Natural is the default; Godhand strain thins the air and heats the world; eight star types with light quality, radiation and flares (numbers open to tuning) |
-| — | Online server (prototype rules) | Species champions are rank and file and can be bound again; named individuals die forever via a ledger of the dead; disconnecting mid-match counts as surrender; a practice queue exists (§6.2–6.3). Open to change |
+| — | Online server rules | Species champions are rank and file and can be bound again; named individuals die forever via a ledger of the dead; disconnecting mid-match counts as surrender; an unranked practice queue with no permadeath (§6.2–6.3) |
 | — | Equipment | Gear attaches by body part, not body type; looted gear is refitted to other body plans at a cost; built in the content phase (§5.4) |
 | — | The Veil | Built as in §4.4a: a Veil law slider (0–100% open), reality strain and many moons thin it; beings from beyond feed on native minds and fade when the Veil is sealed (numbers open to tuning) |
 | — | Extradimensional beings | Included as a possibility, arriving through a thin Veil; extreme physics alone can let them in (§4.4a) |

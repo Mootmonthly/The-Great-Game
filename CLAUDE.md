@@ -16,6 +16,7 @@ These rules come from the project owner and apply to every session.
 ## Checks before pushing
 
 - `cargo test -p sim-core --release`
+- `cargo test -p net-proto -p arena-server --release`
 - `cargo clippy --workspace --release` (no warnings)
 - If the simulation rules change on purpose, update the golden hashes in `sim-core/tests/determinism.rs`.
 - If `game-client/` changes: import the project with `godot --headless --path game-client --editor --quit-after 300`, then run `godot --headless --path game-client -s res://tests/smoke_test.gd`.
