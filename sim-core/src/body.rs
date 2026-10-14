@@ -249,6 +249,69 @@ impl Body {
         }
     }
 
+    /// Moves a part's count one step towards `target` (`step` copies at a
+    /// time), removing the part at zero. Returns whether anything changed.
+    pub fn step_toward(&mut self, kind: PartKind, target: u8, step: u8) -> bool {
+        let Some(i) = self.parts.iter().position(|p| p.kind == kind) else {
+            if target > 0 {
+                self.grow(kind, step.min(target), Fx::ONE, None);
+                return true;
+            }
+            return false;
+        };
+        let count = self.parts[i].count;
+        if count > target {
+            let n = count.saturating_sub(step).max(target);
+            if n == 0 {
+                self.parts.remove(i);
+            } else {
+                self.parts[i].count = n;
+            }
+            true
+        } else if count < target {
+            self.parts[i].count = (count + step).min(target);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// One step of the pull sapience exerts towards a humanoid plan: two
+    /// legs and two arms, a head with two eyes, a torso; fins go, tentacles
+    /// and wings fade. Each part moves with chance `chance`.
+    pub fn humanize(&mut self, rng: &mut Rng, milestones: u16, chance: Fx) {
+        if milestones & LIMBS != 0 && rng.chance(chance) {
+            self.step_toward(PartKind::Limb, 4, 2);
+        }
+        if rng.chance(chance) {
+            self.step_toward(PartKind::Eye, 2, 2);
+        }
+        if rng.chance(chance) {
+            self.step_toward(PartKind::Segment, 2, 1);
+        }
+        if rng.chance(chance) {
+            self.step_toward(PartKind::Fin, 0, 2);
+        }
+        if self.count(PartKind::Limb) >= 4 && rng.chance(chance * Fx::HALF) {
+            self.step_toward(PartKind::Tentacle, 0, 2);
+        }
+        if rng.chance(chance * Fx::ratio(3, 10)) {
+            self.step_toward(PartKind::Wing, 0, 2);
+        }
+        if rng.chance(chance * Fx::HALF) {
+            self.step_toward(PartKind::Leaf, 0, 1);
+        }
+    }
+
+    /// Whether the body has the humanoid plan: four limbs, at most two
+    /// segments, no fins or tentacles.
+    pub fn is_humanoid(&self) -> bool {
+        self.count(PartKind::Limb) == 4
+            && self.count(PartKind::Segment) <= 2
+            && self.count(PartKind::Fin) == 0
+            && self.count(PartKind::Tentacle) == 0
+    }
+
     /// Makes an existing part bigger (up to the size limit).
     pub fn enlarge(&mut self, kind: PartKind, factor: Fx) {
         if let Some(p) = self.parts.iter_mut().find(|p| p.kind == kind) {

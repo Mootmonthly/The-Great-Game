@@ -95,6 +95,25 @@ Each triad combination produces a **Biochemistry Profile**. The profile constrai
   | Sapience | Nervous system | High intelligence, manipulators (limbs or tentacles), sociable temperament | Named civilisations (later phases) |
 
 - Each sim-season: fitness is scored against region conditions and competing species; populations grow or shrink; species compete within size niches and hunt much smaller species; genomes mutate; populations speciate.
+- **Food chain (decided):** life is split into producers and animals.
+  - **Producers** are species without a nervous system: plants and microbes. They live directly on light, heat or chemistry, and compete only with other producers.
+  - **Animals** have a nervous system and get little energy directly: one tenth of a producer's share, plus a bit more for each light-catching frond. They compete only with other animals of similar size. They live by eating:
+    - **Grazing:** animals of every size share one pasture in each region. The food on offer is the producers' standing crop, or a share of what the producers there could grow, whichever is larger. The second option means heat- and chemistry-fed worlds can feed animals too. Each animal species gets a slice of the pasture in proportion to how much it grazes (hunters graze little) and how well it lives there. Grazing removes at most a quarter of a region's plants each season.
+    - **Hunting:** predators eat much smaller animals, as before.
+  - Names follow the role: a mindless multicellular light-feeder is a *Plant* (a *Bloom* if it has leaves); an animal that does not hunt is a *Grazer*.
+  - Measured in the prototype at year 1,000 on Earth-like worlds (8 seeds):
+    - Standing plant biomass is about equal to animal biomass. Before this change it was about 1:20.
+    - Every seed still reaches sapience, between years 200 and 600.
+    - On the frozen moon, animals now live on chemistry-fed producers, and seed 1 still founds a civilisation by year 800.
+- **Humanoid bias (decided):** sapience pulls bodies toward a humanoid plan: four limbs (two legs, two arms), two eyes, at most two body segments, and no fins or tentacles.
+  - Each step happens with some chance:
+    - when a species becomes sapient
+    - in each offspring of a sapient lineage
+    - as a slow drift of living sapient peoples, about one step a decade
+  - Wings and leaves are lost more slowly, so winged or leafy peoples remain possible.
+  - Lineages without the Limbs milestone (for example tentacled peoples) keep their own plan.
+  - In the prototype, most sapient species (37 of 41 in one measurement) are humanoid by year 1,000.
+  - The viewer builds humanoids upright, and builds plants as rooted, swaying stems, trunks or kelp that cannot be possessed.
 - **Sapience rule (decided):** an unmodified, stable Earth-like world should produce sapient life almost every time, given enough time. Worlds that never reach sapience should be the result of unusual player choices (exotic chemistry, broken orbital dynamics, harsh laws), not the basic Earth template.
 - How the simulation achieves this:
   - **Feedback loop:** as with hands, social life and brains on Earth, lineages with manipulators (limbs or tentacles) and a sociable temperament grow brains faster, and clever, social tool-users compete better.

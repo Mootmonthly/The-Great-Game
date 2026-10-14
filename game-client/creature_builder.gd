@@ -4,8 +4,10 @@ extends RefCounted
 ##
 ## Layout: the body runs along +Z (head in front), Y is up. Segments become a
 ## chain of rounded blobs; limbs, fins, wings, tentacles, eyes, jaws, shells,
-## fronds and glands attach to them. Beings from beyond the Veil float, with
-## tendrils, phase membranes and voids. CreatureAnim animates the result.
+## fronds and glands attach to them. Sapient four-limbed species stand upright
+## as humanoids; mindless multicellular life becomes plants (stems and
+## leaves, or kelp). Beings from beyond the Veil float, with tendrils, phase
+## membranes and voids. CreatureAnim animates the result.
 
 const SHADER := preload("res://shaders/creature.gdshader")
 const CreatureAnim := preload("res://creature_anim.gd")
@@ -69,12 +71,29 @@ static func _k(size: float) -> float:
 	return clampf(sqrt(size), 0.5, 1.7)
 
 
+## Multicellular life with no nervous system, from this world: a plant.
+static func is_plant(detail: Dictionary) -> bool:
+	var ms: Array = detail.get("milestones", [])
+	return ms.has("Multicellularity") and not ms.has("Nervous system") and not detail.get("otherworldly", false)
+
+
+static func _is_humanoid(detail: Dictionary, parts: Dictionary) -> bool:
+	if not (detail.get("milestones", []) as Array).has("Sapience") or not parts.has("limb") or parts.has("tentacle"):
+		return false
+	var segs: int = int(parts["body segment"]["count"]) if parts.has("body segment") else 1
+	return int(parts["limb"]["count"]) == 4 and segs <= 2
+
+
 static func build(detail: Dictionary) -> Node3D:
 	var root := Node3D.new()
 	root.set_script(CreatureAnim)
 	var parts := {}
 	for p in detail.get("parts", []):
 		parts[p["part"]] = p
+	if is_plant(detail):
+		return _build_plant(root, detail, parts)
+	if _is_humanoid(detail, parts):
+		return _build_humanoid(root, detail, parts)
 	var color := Color("#" + str(detail.get("color", "999999")))
 	var skin := _material(color)
 	var dark := _material(color.darkened(0.4))
@@ -285,6 +304,208 @@ static func build(detail: Dictionary) -> Node3D:
 		shimmer.cull_mode = BaseMaterial3D.CULL_DISABLED
 		var length: float = absf(head_z - back_z) + head_r * 2.0
 		_mesh(body, _sphere(1.0), shimmer, Vector3(0, 0, (head_z + back_z) * 0.5), Vector3(head_r * 1.6 * mk, head_r * 1.5 * mk, length * 0.65 * mk))
+	return root
+
+
+## Upright two-legged, two-armed plan for sapient species. Legs then arms go
+## into root.legs so the walk cycle swings each arm against its same-side leg.
+static func _build_humanoid(root: Node3D, detail: Dictionary, parts: Dictionary) -> Node3D:
+	var color := Color("#" + str(detail.get("color", "999999")))
+	var skin := _material(color)
+	var dark := _material(color.darkened(0.4))
+	var light := _material(color.lightened(0.35))
+	var white := _material(Color(0.95, 0.95, 0.9))
+	var black := _material(Color(0.05, 0.05, 0.08))
+	var body := Node3D.new()
+	body.name = "Body"
+	root.add_child(body)
+	root.body = body
+
+	var segs: int = int(parts["body segment"]["count"]) if parts.has("body segment") else 1
+	var sk: float = _k(float(parts["body segment"]["size"])) if parts.has("body segment") else 1.0
+	var lk: float = _k(float(parts["limb"]["size"]))
+	var leg_len := 0.5 * lk
+	var arm_len := 0.4 * lk
+	var tr := 0.15 * sk  # Torso radius.
+	var th := 0.5 * sk  # Torso capsule height.
+	var hip_y := leg_len
+	var torso_y := hip_y + th * 0.5
+	var shoulder_y := hip_y + th * 0.88
+	var brain_k := 1.0
+	if parts.has("brain"):
+		brain_k += 0.12 * float(parts["brain"]["count"]) * float(parts["brain"]["size"])
+	var head_r := 0.13 * sk * clampf(brain_k, 1.0, 1.8)
+	var head_y := hip_y + th + head_r * 0.75
+
+	# Torso, an optional second (pelvis) segment, neck and head.
+	_mesh(body, _capsule(tr, th), skin, Vector3(0, torso_y, 0))
+	_mesh(body, _capsule(tr * 0.7, th * 0.8), light, Vector3(0, torso_y - th * 0.02, tr * 0.35), Vector3(1.0, 1.0, 0.7))
+	if segs >= 2:
+		_mesh(body, _sphere(tr * 1.05), dark, Vector3(0, hip_y + tr * 0.15, 0), Vector3(1.0, 0.8, 0.9))
+	_mesh(body, _capsule(head_r * 0.35, head_r * 1.2), skin, Vector3(0, hip_y + th + head_r * 0.1, 0))
+	_mesh(body, _sphere(head_r), skin, Vector3(0, head_y, 0), Vector3(0.95, 1.0, 1.0))
+
+	# Eyes on the front of the head.
+	if parts.has("eye"):
+		var n := int(parts["eye"]["count"])
+		var er := head_r * 0.22 * _k(float(parts["eye"]["size"]))
+		for e in n:
+			var row := e / 2
+			var side := -1.0 if e % 2 == 0 else 1.0
+			var x := side * head_r * (0.38 + 0.12 * row) if (n % 2 == 0 or e < n - 1) else 0.0
+			var pos := Vector3(x, head_y + head_r * (0.2 - 0.2 * row), head_r * 0.85)
+			_mesh(body, _sphere(er), white, pos)
+			_mesh(body, _sphere(er * 0.55), black, pos + Vector3(0, 0, er * 0.6))
+
+	# Jaw: a short snout on the face.
+	if parts.has("jaw"):
+		var jk := _k(float(parts["jaw"]["size"]))
+		var jaw := Node3D.new()
+		jaw.position = Vector3(0, head_y - head_r * 0.35, head_r * 0.7)
+		body.add_child(jaw)
+		_mesh(jaw, _cone(head_r * 0.4 * jk, head_r * 0.8 * jk), dark, Vector3(0, 0, head_r * 0.35 * jk), Vector3.ONE, Vector3(PI / 2, 0, 0))
+		root.jaw = jaw
+
+	# Gland: a glowing throat sac.
+	if parts.has("gland"):
+		var gc := Color("#" + str(parts["gland"].get("substance_color", "ff8030")))
+		_mesh(body, _sphere(head_r * 0.35 * _k(float(parts["gland"]["size"]))), _material(gc, gc, 1.2), Vector3(0, head_y - head_r * 0.95, head_r * 0.45))
+
+	# Shell: a chest plate.
+	if parts.has("shell"):
+		var sh := _k(float(parts["shell"]["size"]))
+		_mesh(body, _sphere(0.5), dark, Vector3(0, torso_y + th * 0.12, tr * 0.45), Vector3(tr * 2.3 * sh, th * 0.8, tr * 1.5 * sh))
+
+	# Fronds: a leafy mantle over the shoulders.
+	if parts.has("light-catching frond"):
+		var n := mini(int(parts["light-catching frond"]["count"]), 12)
+		var leaf := _material(color.lerp(Color(0.3, 0.75, 0.3), 0.6))
+		var fk := _k(float(parts["light-catching frond"]["size"]))
+		for f in n:
+			var ang := (float(f) / maxi(n, 1)) * TAU
+			var dir := Vector3(sin(ang), 0, cos(ang))
+			_mesh(body, _sphere(0.5), leaf, Vector3(0, shoulder_y + tr * 0.2, 0) + dir * (tr + 0.05 * fk), Vector3(0.08 * fk, 0.025, 0.2 * fk), Vector3(0.7, ang, 0))
+
+	# Wings on the upper back.
+	if parts.has("wing"):
+		var n := int(parts["wing"]["count"])
+		var wk := _k(float(parts["wing"]["size"]))
+		var membrane := _material(color.lightened(0.15).lerp(Color(0.9, 0.9, 1.0), 0.15))
+		var span := (tr * 3.5 + 0.3) * wk
+		for w in n:
+			var side := -1.0 if w % 2 == 0 else 1.0
+			var pivot := Node3D.new()
+			pivot.position = Vector3(side * tr * 0.4, shoulder_y - (w / 2) * th * 0.25, -tr * 0.8)
+			body.add_child(pivot)
+			_mesh(pivot, _box(Vector3(span, 0.02, span * 0.55)), membrane, Vector3(side * span * 0.5, 0, -span * 0.12), Vector3.ONE, Vector3(0, side * 0.25, 0))
+			_mesh(pivot, _capsule(tr * 0.08, span), dark, Vector3(side * span * 0.5, 0.01, span * 0.12), Vector3.ONE, Vector3(0, 0, PI / 2))
+			pivot.rotation.z = side * 0.55
+			root.wings.append(pivot)
+			root.wing_sides.append(side)
+
+	# Legs under the hips, then arms hanging from the shoulders.
+	var claws := parts.has("claw")
+	for side in [-1.0, 1.0]:
+		var hip := Node3D.new()
+		hip.position = Vector3(side * tr * 0.55, hip_y, 0)
+		body.add_child(hip)
+		_mesh(hip, _capsule(0.07 * sk, leg_len), skin, Vector3(0, -leg_len * 0.5, 0))
+		var fr := 0.08 * sk
+		_mesh(hip, _sphere(fr), dark, Vector3(0, -leg_len + fr * 0.6, fr * 0.7), Vector3(1.0, 0.6, 1.5))
+		root.legs.append(hip)
+	for side in [-1.0, 1.0]:
+		var shoulder := Node3D.new()
+		shoulder.position = Vector3(side * (tr + 0.045 * sk), shoulder_y, 0)
+		body.add_child(shoulder)
+		_mesh(shoulder, _sphere(0.065 * sk), skin, Vector3.ZERO)
+		_mesh(shoulder, _capsule(0.05 * sk, arm_len), skin, Vector3(0, -arm_len * 0.5, 0))
+		_mesh(shoulder, _sphere(0.06 * sk), dark, Vector3(0, -arm_len, 0))
+		if claws:
+			for c in 3:
+				_mesh(shoulder, _cone(0.015 * sk, 0.1 * sk), white, Vector3((c - 1) * 0.035 * sk, -arm_len - 0.07 * sk, 0.02 * sk), Vector3.ONE, Vector3(PI, 0, 0))
+		root.legs.append(shoulder)
+	return root
+
+
+## Stems, leaves and canopies for mindless multicellular life; with fins it
+## becomes kelp. Stem segments are chained into root.tentacles for a gentle sway.
+static func _build_plant(root: Node3D, detail: Dictionary, parts: Dictionary) -> Node3D:
+	var color := Color("#" + str(detail.get("color", "999999")))
+	var green := Color(0.3, 0.75, 0.3)
+	var leaf_mat := _material(color.lerp(green, 0.65))
+	var stem_color := color.lerp(green, 0.4).darkened(0.15)
+	var woody := parts.has("shell")
+	if woody:
+		stem_color = color.lerp(Color(0.4, 0.28, 0.15), 0.6).darkened(0.1)
+	var stem_mat := _material(stem_color)
+	var body := Node3D.new()
+	body.name = "Body"
+	root.add_child(body)
+	root.body = body
+	var segs: int = clampi(int(parts["body segment"]["count"]) if parts.has("body segment") else 1, 1, 8)
+	var sk: float = _k(float(parts["body segment"]["size"])) if parts.has("body segment") else 1.0
+	var n_fronds: int = mini(int(parts["light-catching frond"]["count"]), 14) if parts.has("light-catching frond") else 0
+	var fk: float = _k(float(parts["light-catching frond"]["size"])) if parts.has("light-catching frond") else 1.0
+	root.sway = 0.2
+
+	# Kelp: ribbons of blades rising from a holdfast.
+	if parts.has("fin"):
+		root.sway = 0.6
+		var strands := clampi(maxi(n_fronds, int(parts["fin"]["count"])), 2, 9)
+		var blade_mat := _material(color.lerp(Color(0.25, 0.55, 0.3), 0.5))
+		_mesh(body, _sphere(0.1 * sk), stem_mat, Vector3(0, 0.03, 0), Vector3(1.4, 0.4, 1.4))
+		for i in strands:
+			var ang := float(i) / strands * TAU + 0.5
+			var spread := 0.05 + 0.03 * (i % 3)
+			var blades := 3 + mini(segs, 4)
+			var blade_h := 0.22 * sk * (0.8 + 0.1 * (i % 4))
+			var chain: Array = []
+			var parent: Node3D = body
+			for j in blades:
+				var seg := Node3D.new()
+				seg.position = Vector3(cos(ang) * spread, 0.02, sin(ang) * spread) if j == 0 else Vector3(0, blade_h, 0)
+				seg.rotation.y = ang
+				parent.add_child(seg)
+				var w := 0.12 * fk * (1.0 - j * 0.1)
+				_mesh(seg, _box(Vector3(w, blade_h * 1.05, 0.02)), blade_mat if j % 2 == 0 else leaf_mat, Vector3(0, blade_h * 0.5, 0))
+				chain.append(seg)
+				parent = seg
+			root.tentacles.append(chain)
+		return root
+
+	# Stem: a chain of tapering capsules.
+	var seg_h := 0.3 * sk
+	var base_r := 0.07 * sk * (2.2 if woody else 1.0)
+	var chain: Array = []
+	var nodes: Array[Node3D] = []
+	var parent: Node3D = body
+	for j in segs:
+		var seg := Node3D.new()
+		seg.position = Vector3.ZERO if j == 0 else Vector3(0, seg_h, 0)
+		parent.add_child(seg)
+		var rr := base_r * (1.0 - (0.3 if woody else 0.55) * float(j) / segs)
+		_mesh(seg, _capsule(rr, seg_h * (1.5 if woody else 1.1)), stem_mat, Vector3(0, seg_h * 0.5, 0))
+		chain.append(seg)
+		nodes.append(seg)
+		parent = seg
+	if woody:
+		_mesh(body, _cone(base_r * 1.6, seg_h * 0.5), stem_mat, Vector3(0, seg_h * 0.2, 0))
+	root.tentacles.append(chain)
+
+	# Leaves: a canopy on the top segment, spilling down the stem when many.
+	var top := nodes[segs - 1]
+	var tip_y := seg_h * 1.0
+	if n_fronds == 0:
+		_mesh(top, _sphere(base_r * 0.9), leaf_mat, Vector3(0, tip_y, 0))
+	for f in n_fronds:
+		var tier := f / 4
+		var holder := nodes[maxi(segs - 1 - tier, 0)]
+		var ang := (float(f) / 4.0 + float(f % 4) * 0.23) * TAU
+		var tilt := 0.7 - 0.3 * (f % 3)
+		var length := 0.3 * fk
+		var dir := Vector3(sin(ang) * cos(tilt), sin(tilt), cos(ang) * cos(tilt))
+		var base := Vector3(0, seg_h * (0.95 if holder == top else 0.7), 0)
+		_mesh(holder, _sphere(0.5), leaf_mat, base + dir * length * 0.5, Vector3(0.6 * length, 0.04, length), Vector3(-tilt, ang, 0))
 	return root
 
 

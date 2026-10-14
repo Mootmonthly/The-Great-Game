@@ -261,11 +261,14 @@ impl Species {
         ));
         let role = if t.offense > Fx::ratio(3, 10) {
             "Hunter"
+        } else if self.has(body::NERVOUS) {
+            // Animals eat; those that do not hunt graze.
+            "Grazer"
         } else if self.has(body::MULTICELLULAR) && self.profile.energy == EnergyKind::Light {
             if b.count(PartKind::Leaf) > 0 {
                 "Bloom"
             } else {
-                "Grazer"
+                "Plant"
             }
         } else {
             self.profile.energy.feeder()
@@ -506,6 +509,18 @@ impl World {
             .filter(|s| s.has(body::SAPIENCE))
             .count() as i64;
         for k in 0..self.species.len() {
+            // Living peoples keep drifting towards the humanoid plan,
+            // about one step a decade.
+            if self.species[k].is_alive()
+                && self.species[k].has(body::SAPIENCE)
+                && !self.species[k].genome.body.is_humanoid()
+                && self.rng.chance(Fx::ratio(1, 40))
+            {
+                let s = &mut self.species[k];
+                let milestones = s.genome.milestones;
+                s.genome.body.humanize(&mut self.rng, milestones, Fx::HALF);
+                s.traits = s.genome.body.traits(s.genome.size);
+            }
             let s = &self.species[k];
             if !s.is_alive()
                 || s.has(body::SAPIENCE)
@@ -526,6 +541,8 @@ impl World {
                 let s = &mut self.species[k];
                 s.genome.milestones |= body::SAPIENCE;
                 s.genome.body.grow(PartKind::Brain, 1, Fx::ONE, None);
+                let milestones = s.genome.milestones;
+                s.genome.body.humanize(&mut self.rng, milestones, Fx::HALF);
                 s.traits = s.genome.body.traits(s.genome.size);
             }
         }
@@ -599,6 +616,12 @@ impl World {
                 size: Fx,
                 vulnerability: Fx,
                 hunting: Fx,
+                /// No nervous system: plants and microbes, which live on
+                /// light, heat or chemistry.
+                producer: bool,
+                /// How much of its food an animal finds by grazing producers
+                /// (carnivores graze little).
+                graze: Fx,
             }
             let info: Vec<Info> = pops
                 .iter()
@@ -629,11 +652,25 @@ impl World {
                             magic = magic * bonus;
                         }
                     }
+                    // Animals (nervous systems) barely live on light, heat or
+                    // chemistry directly: they eat. Fronds keep a little.
+                    let producer = !s.has(body::NERVOUS);
+                    let own_energy = if producer {
+                        Fx::ONE
+                    } else {
+                        Fx::ratio(1, 10) + s.traits.photosynthesis * Fx::ratio(3, 10)
+                    };
                     Info {
                         strength: s.strength() * magic,
                         r: s.growth_rate(),
                         death: s.death_rate() + radiation_harm * (Fx::ONE - s.traits.armor * Fx::HALF),
-                        fit: self.life[i].fit(&s.profile) * tf * photo,
+                        fit: self.life[i].fit(&s.profile) * tf * photo * own_energy,
+                        producer,
+                        graze: if producer {
+                            Fx::ZERO
+                        } else {
+                            Fx::ONE - s.traits.offense * Fx::ratio(7, 10)
+                        },
                         habitat: self.life[i].habitat(&s.profile) * tf,
                         size: s.genome.size,
                         vulnerability: s.vulnerability(),
@@ -655,10 +692,19 @@ impl World {
             let sizes: Vec<Fx> = order.iter().map(|&k| info[k].size).collect();
             // prefix[x] = sum over the first x species in size order.
             let mut prey_prefix = vec![Fx::ZERO; n + 1];
-            let mut rival_prefix = vec![Fx::ZERO; n + 1];
+            // Producers compete with producers and animals with animals.
+            let mut rival_prefix = [vec![Fx::ZERO; n + 1], vec![Fx::ZERO; n + 1]];
             for (x, &k) in order.iter().enumerate() {
                 prey_prefix[x + 1] = prey_prefix[x] + pops[k].biomass * info[k].vulnerability;
-                rival_prefix[x + 1] = rival_prefix[x] + pops[k].biomass * info[k].strength;
+                for (role, prefix) in rival_prefix.iter_mut().enumerate() {
+                    let mine = (role == 0) == info[k].producer;
+                    prefix[x + 1] = prefix[x]
+                        + if mine {
+                            pops[k].biomass * info[k].strength
+                        } else {
+                            Fx::ZERO
+                        };
+                }
             }
             // Number of species (in size order) with size * prey_ratio <= limit.
             let count_prey = |limit: Fx| sizes.partition_point(|&sz| sz * prey_ratio <= limit);
@@ -674,7 +720,8 @@ impl World {
                 // Rivals: size within a factor of prey_ratio either way.
                 let lo = sizes.partition_point(|&sz| sz * prey_ratio <= size);
                 let hi = sizes.partition_point(|&sz| sz < size * prey_ratio);
-                load_sum[k] = rival_prefix[hi] - rival_prefix[lo];
+                let role = if info[k].producer { 0 } else { 1 };
+                load_sum[k] = rival_prefix[role][hi] - rival_prefix[role][lo];
                 if info[k].habitat <= Fx::ZERO || prey_count == 0 {
                     continue;
                 }
@@ -698,11 +745,46 @@ impl World {
                 eaten[j] = pressure * pops[j].biomass * info[j].vulnerability;
             }
 
+            // Grazing: animals eat producers of any size (a grazer crops a
+            // tree as readily as a moss). The plants' loss is shared by
+            // how exposed each is.
+            let pasture = (0..n)
+                .filter(|&j| info[j].producer)
+                .fold(Fx::ZERO, |a, j| a + pops[j].biomass * info[j].vulnerability);
+            // What the producers here could grow: grazers live off this
+            // yield as well as the standing crop, so heat- and chemistry-fed
+            // worlds feed animals too.
+            let forage = (0..n)
+                .filter(|&j| info[j].producer)
+                .fold(Fx::ZERO, |a, j| a + Fx::from_int(50) * info[j].fit);
+            if pasture > Fx::ZERO {
+                let grazed = (0..n).fold(Fx::ZERO, |a, k| {
+                    a + pops[k].biomass * Fx::ratio(12, 100) * info[k].graze * pasture
+                        / (pasture + Fx::from_int(5))
+                });
+                let share = (grazed / pasture).min(Fx::ratio(25, 100));
+                for j in (0..n).filter(|&j| info[j].producer) {
+                    eaten[j] += share * pops[j].biomass * info[j].vulnerability;
+                }
+            }
+
+            // Grazers of every size share one pasture: what the producers
+            // here offer (standing crop or yield, whichever is more) is
+            // split by how much each grazes and how well it lives here.
+            let food = pasture.max(forage * Fx::ratio(6, 10));
+            let appetite = (0..n).fold(Fx::ZERO, |a, k| a + info[k].graze * info[k].habitat);
+
             let mut next = Vec::with_capacity(n);
             for k in 0..n {
                 let me = &info[k];
                 let b = pops[k].biomass;
-                let capacity = Fx::from_int(50) * me.fit + prey_food[k] * Fx::HALF * me.habitat;
+                let capacity = Fx::from_int(50) * me.fit
+                    + prey_food[k] * Fx::ratio(3, 10) * me.habitat
+                    + if appetite > Fx::ZERO {
+                        food * me.graze * me.habitat / appetite
+                    } else {
+                        Fx::ZERO
+                    };
                 let new_b = if capacity <= Fx::ZERO {
                     b - b * Fx::ratio(3, 10)
                 } else {
@@ -906,6 +988,10 @@ impl World {
         }
         if self.rng.chance(Fx::HALF) {
             body.mutate(&mut self.rng, milestones, gland);
+        }
+        // Sapience pulls the body towards a humanoid plan.
+        if milestones & body::SAPIENCE != 0 {
+            body.humanize(&mut self.rng, milestones, Fx::HALF);
         }
         // Brains are costly but pay off in competition. As with hands, social
         // life and brains on Earth, manipulators and sociability feed back

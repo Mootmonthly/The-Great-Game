@@ -276,7 +276,12 @@ func _initialize() -> void:
 	var lv = main.local_view
 	check(lv.wanderers.size() > 0, "region visit spawns creatures from its populations")
 	var before: String = JSON.parse_string(sim.status_json())["hash"]
-	lv.possess(lv.wanderers[0])
+	var pick = lv.wanderers[0]
+	for cand in lv.wanderers:
+		if not cand.plant:
+			pick = cand
+			break
+	lv.possess(pick)
 	for i in 10:
 		lv._process(0.1)
 	check(lv.possessed != null and lv.hud.text.begins_with("Possessing"), "a creature can be possessed in first person")
@@ -333,5 +338,23 @@ func _initialize() -> void:
 	main._on_meta("s:%d" % horror_id)
 	await process_frame
 	check(main.creature_preview.creature != null and main.creature_preview.creature.tentacles.size() > 0, "beings from beyond get a model with tendrils")
+
+	# Humanoid and plant models.
+	var CB := preload("res://creature_builder.gd")
+	var human := CB.build({"parts": [{"part": "body segment", "count": 2, "size": 1.0}, {"part": "limb", "count": 4, "size": 1.0},
+		{"part": "eye", "count": 2, "size": 1.0}, {"part": "brain", "count": 3, "size": 1.0}],
+		"milestones": ["Multicellularity", "Nervous system", "Limbs", "Sapience"], "color": "aa8866"})
+	var hbox := CB.bounds(human)
+	check(human.legs.size() == 4 and hbox.size.y > hbox.size.x and absf(hbox.position.y) < 0.05, "a sapient four-limbed species is built as an upright humanoid")
+	var plant_detail := {"parts": [{"part": "body segment", "count": 3, "size": 1.0}, {"part": "light-catching frond", "count": 5, "size": 1.0}],
+		"milestones": ["Multicellularity"], "color": "88aa66"}
+	var plant := CB.build(plant_detail)
+	check(CB.is_plant(plant_detail) and plant.legs.is_empty() and plant.tentacles.size() > 0, "multicellular life without a nervous system is built as a swaying plant")
+	check(not CB.is_plant({"parts": [], "milestones": []}) and not CB.is_plant({"milestones": ["Multicellularity", "Nervous system"]}), "microbes and animals are not plants")
+	var kelp := CB.build({"parts": [{"part": "body segment", "count": 2, "size": 1.0}, {"part": "fin", "count": 2, "size": 1.0}, {"part": "light-catching frond", "count": 4, "size": 1.0}],
+		"milestones": ["Multicellularity"], "color": "558866"})
+	check(kelp.legs.is_empty() and kelp.tentacles.size() >= 2, "plants with fins become swaying kelp")
+	for m in [human, plant, kelp]:
+		m.free()
 
 	finish()
