@@ -14,6 +14,7 @@ pub mod globe;
 pub mod hash;
 pub mod individual;
 pub mod life;
+pub mod loot;
 pub mod presets;
 pub mod render;
 pub mod rng;

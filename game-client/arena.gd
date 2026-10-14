@@ -738,7 +738,7 @@ func _poll_net() -> void:
 				if resuming:
 					online_label.text = "Rejoining your match…"
 				else:
-					online_label.text = "Signed in as %s (rating %.0f). The server is replaying your world to verify your champions…" % [msg["account"], msg["rating"]["rating"]]
+					online_label.text = "Signed in as %s (rating %.0f, %d Essence). The server is replaying your world to verify your champions…" % [msg["account"], msg["rating"]["rating"], int(msg["essence"])]
 					pending_binds.clear()
 					bound_tokens.clear()
 					for c in my_roster:
@@ -833,6 +833,13 @@ func _online_end(msg: Dictionary) -> void:
 			_log("%s lost a %s." % [f["account"], f["name"]])
 	if msg["rating"] != null:
 		_log("Your rating is now %.0f ± %.0f." % [msg["rating"]["rating"], msg["rating"]["deviation"]])
+	if int(msg["essence_gained"]) > 0:
+		_log("[color=#e0c060]You earn %d Essence[/color] (now %d)." % [int(msg["essence_gained"]), int(msg["essence"])])
+	# The bodies of the fallen are the winner's: their kind comes home.
+	for g in msg["loot"]:
+		var kind: String = sim.apply_loot(JSON.stringify(g))
+		if kind != "":
+			_log("You carry home the remains of %s: %s now lives in your world." % [g["from"], kind])
 	if msg.get("desynced", false):
 		_log("[color=#dd7777]Warning: this client fell out of step with the server.[/color]")
 	net.close_connection()

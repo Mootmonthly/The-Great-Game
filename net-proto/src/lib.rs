@@ -13,6 +13,7 @@ pub mod tls;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sim_core::arena::{ArenaCommand, ArenaResult};
+use sim_core::loot::LootGrant;
 use sim_core::sheet::CharacterSheet;
 use sim_core::ActionLog;
 use std::io::{self, BufRead, Read, Write};
@@ -154,6 +155,8 @@ pub enum ServerMsg {
         /// (a match start and a catch-up follow).
         resuming: bool,
         rating: RatingView,
+        /// Essence balance (earned by defeating players).
+        essence: u64,
         champions: Vec<ChampionToken>,
     },
     Bound {
@@ -206,6 +209,12 @@ pub enum ServerMsg {
         /// Champions lost forever (ranked only).
         fallen: Vec<Fallen>,
         rating: Option<RatingView>,
+        /// Essence earned in this match, and the new balance.
+        essence_gained: u64,
+        essence: u64,
+        /// Remains of the opponent's fallen champions, for the winner to
+        /// bring home (`Action::Loot`).
+        loot: Vec<LootGrant>,
         /// Server signature over the match record.
         signature: String,
     },

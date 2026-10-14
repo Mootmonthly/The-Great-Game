@@ -6,6 +6,7 @@
 //! as fixed-point raw bits, never as a float.
 
 use crate::fixed::Fx;
+use crate::loot::LootGrant;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +60,12 @@ pub enum Action {
     /// A named individual died in the arena (§6.2a). The server reports
     /// the death; the client logs it so the world replays without them.
     ChampionFell { individual: u32 },
+    /// Remains looted from a ranked match arrive at region (x, y).
+    Loot {
+        grant: Box<LootGrant>,
+        x: u16,
+        y: u16,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

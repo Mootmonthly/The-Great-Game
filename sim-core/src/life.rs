@@ -66,7 +66,7 @@ pub struct Profile {
 }
 
 /// Heritable traits of a species.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Genome {
     /// Relative body mass; 1.0 is roughly human-sized.
     pub size: Fx,

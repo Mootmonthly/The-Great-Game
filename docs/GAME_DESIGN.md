@@ -422,7 +422,12 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
   - Fallen named individuals go into a **ledger of the dead**, keyed by a fingerprint of the being: world seed, id, species, birth tick and name. No account can bind them again, from the same save or from any branch of their world replayed with different later actions. Reloading an old save does not bring a champion back.
   - The client logs the death in its world (`Action::ChampionFell`), so the world replays without them.
   - **Decided:** species champions are rank-and-file members of a species. A fallen unit is lost, but the species lives on and can supply more units.
-  - Looting (bodies, gear) is not built yet; it waits for the Essence economy and equipment (§5.4).
+  - **Looting bodies (implemented):** when a ranked match is won, the winner receives one server-signed loot grant per fallen enemy champion.
+    - A grant carries the remains of the champion's kind: its biochemistry and genome. Brought home, it arrives as a small population of that kind in the region that suits it best, with traces of its medium and backbone substance. It may take root and seed new life, or die out.
+    - The server checks every grant in a world log on replay: signed by the server, granted to this player, used once in the log, and brought into only one world.
+    - Proposed numbers: the population's biomass is 1 + cost / 20.
+  - **Essence (implemented):** the winner earns Essence for each enemy champion that fell, equal to its cost (proposed rate). The loser earns nothing. The balance shows on sign-in and after each match.
+  - Not yet: spending Essence (which resources are gated and their prices, §11), and looting gear (with equipment, §5.4).
 
 ### 6.3 Networking
 
@@ -455,7 +460,7 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
   - A hosted server can use a real certificate (for example from Let's Encrypt). Otherwise it creates a self-signed one on first run and prints its fingerprint.
   - Clients accept a certificate a public authority vouches for. Otherwise they pin the fingerprint on first contact and refuse a different certificate later, like SSH.
 - **Responsiveness:** commands still take one round trip to the server. The possessed unit is drawn slightly ahead in the direction you steer, so it reacts at once; the lead fades as the server's position catches up. This is display only.
-- **Not yet:** the Steamworks SDK in the game client (needed to get Steam tickets), and the Essence economy. Hosting: a Dockerfile, compose file, systemd unit and guide (docs/HOSTING.md); no server is deployed yet.
+- **Not yet:** the Steamworks SDK in the game client (needed to get Steam tickets), and spending Essence. Hosting: a Dockerfile, compose file, systemd unit and guide (docs/HOSTING.md); no server is deployed yet.
 
 ### 6.4 Balance Risk
 
@@ -560,3 +565,4 @@ Deferred until the world simulation is complete:
 
 1. Arena match structure: map types, match length, and victory conditions (§6.1). The owner finds the current arena bare-bones; it will be revisited after the online server.
 2. Practice queue details (§6.2a).
+3. **Essence unlocks:** which resources are free and which cost Essence (rare elements, unusual molecules, more moons, unusual star types, Veil-thinning resources), and their prices. Essence is already earned and stored (§6.2a).
