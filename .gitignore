@@ -1,0 +1,6 @@
+/target
+*.ppm
+/out
+# Godot
+game-client/.godot/
+game-client/*.import

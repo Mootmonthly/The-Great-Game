@@ -1,0 +1,10 @@
+[package]
+name = "sim-cli"
+description = "Headless runner for the world simulation: run presets, verify determinism, benchmark"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sim-core = { path = "../sim-core" }
+png = "0.17"

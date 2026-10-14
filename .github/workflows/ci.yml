@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The golden-hash test must pass on every platform: that is the
+        # cross-platform determinism check replay verification relies on.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test simulation core
+        run: cargo test -p sim-core --release
+      - name: Verify replay
+        run: cargo run -p sim-cli --release -- verify
+      - name: Build Godot extension
+        run: cargo build -p great_game_ext --release
+
+  viewer:
+    name: Godot viewer smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Godot extension
+        run: cargo build -p great_game_ext --release
+      - name: Download Godot
+        run: |
+          curl -sSL -o godot.zip https://github.com/godotengine/godot/releases/download/4.6.2-stable/Godot_v4.6.2-stable_linux.x86_64.zip
+          unzip -q godot.zip
+      # Opens the editor once so it imports the project, then quits.
+      # `--import` is avoided: Godot 4.6.2 crashes on exit after a first
+      # import when a GDExtension is loaded, even though the import succeeds.
+      - name: Import project
+        run: ./Godot_v4.6.2-stable_linux.x86_64 --headless --path game-client --editor --quit-after 300
+      - name: Run smoke test
+        run: ./Godot_v4.6.2-stable_linux.x86_64 --headless --path game-client -s res://tests/smoke_test.gd

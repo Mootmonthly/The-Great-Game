@@ -1,0 +1,20 @@
+; Engine configuration file.
+; The Great Game — Phase 0 world viewer.
+
+config_version=5
+
+[application]
+
+config/name="The Great Game - World Viewer"
+config/description="Phase 0 prototype: seed a planet, tune it, and watch life evolve."
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.6")
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+
+[rendering]
+
+textures/canvas_textures/default_texture_filter=0

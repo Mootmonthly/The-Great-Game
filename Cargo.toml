@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["sim-core", "sim-cli", "godot-ext"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "UNLICENSED"
+
+# The simulation is heavy even in debug builds; optimise dependencies and our
+# own code a little so `cargo test` stays fast.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
