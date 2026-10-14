@@ -460,7 +460,9 @@ fn the_winner_loots_the_fallen_and_earns_essence() {
         panic!()
     };
     assert!(!loot.is_empty(), "the loser's fallen are looted");
-    assert!(essence_gained > 0 && essence == essence_gained);
+    assert_eq!(essence_gained, sim_core::shop::WIN_ESSENCE, "a win pays 500 Essence");
+    assert_eq!(essence, essence_gained);
+    assert!(loot.iter().all(|g| g.value > 0), "spoils carry a pseudo-cost");
     let ServerMsg::MatchEnd {
         loot: loser_loot,
         essence_gained: loser_gain,
@@ -529,4 +531,88 @@ fn the_winner_loots_the_fallen_and_earns_essence() {
     let s3 = biggest_species(&stolen);
     let r = winner.bind(&stolen, ChampionKind::Species, s3).unwrap();
     assert!(r.unwrap_err().contains("another world"));
+
+    // Spoils already brought home cannot be sold.
+    let ServerMsg::Rejected { reason, .. } = winner.sell_loot(loot[0].id).unwrap() else {
+        panic!()
+    };
+    assert!(reason.contains("already in a world"), "{reason}");
+    // Others sell 1:1 for their value, and are deleted.
+    if let Some(spoil) = loot.get(1) {
+        let ServerMsg::Sold { essence_gained, essence: balance, .. } = winner.sell_loot(spoil.id).unwrap() else {
+            panic!()
+        };
+        assert_eq!(essence_gained, spoil.value);
+        assert_eq!(balance, essence + spoil.value);
+        assert!(matches!(winner.sell_loot(spoil.id).unwrap(), ServerMsg::Rejected { .. }));
+        let sold = worlds[w].clone_log_with_loot(spoil);
+        let s4 = biggest_species(&sold);
+        let r = winner.bind(&sold, ChampionKind::Species, s4).unwrap();
+        assert!(r.unwrap_err().contains("sold"));
+    }
+}
+
+#[test]
+fn the_shop_sells_moons_planets_and_elements() {
+    use arena_server::store::Store;
+    use sim_core::shop::{ShopItem, MOON_PRICE, PLANET_PRICE};
+    let dir = std::env::temp_dir().join(format!("tgg-shop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut store = Store::default();
+    store.account("rich").essence = 2 * PLANET_PRICE;
+    store.save(&dir.join("state.json")).unwrap();
+    let addr = server(Some(dir.clone()));
+    let (mut c, secret) = connect_secret(addr, "rich");
+
+    let grant = |m: ServerMsg| match m {
+        ServerMsg::Purchased { grant, essence, planet_slots, .. } => (grant, essence, planet_slots),
+        other => panic!("{other:?}"),
+    };
+    let (moon, essence, _) = grant(c.buy(ShopItem::MoonSlot).unwrap());
+    assert_eq!(essence, 2 * PLANET_PRICE - MOON_PRICE);
+    let gold = ShopItem::Deposit { substance: "gold".into() };
+    let (gold_grant, _, _) = grant(c.buy(gold).unwrap());
+    let (none, essence, slots) = grant(c.buy(ShopItem::PlanetSlot).unwrap());
+    assert!(none.is_none());
+    assert_eq!(slots, 2);
+    let ServerMsg::Rejected { reason, .. } = c.buy(ShopItem::PlanetSlot).unwrap() else { panic!() };
+    assert!(reason.contains(&essence.to_string()), "{reason}");
+    let water = ShopItem::Deposit { substance: "water".into() };
+    assert!(matches!(c.buy(water).unwrap(), ServerMsg::Rejected { .. }));
+
+    // Unused purchases come back at sign-in, so none is lost in transit.
+    drop(c);
+    std::thread::sleep(Duration::from_millis(200));
+    let mut l = login(addr, "rich");
+    l.auth = Auth::Account { secret: Some(secret) };
+    let (mut c, welcome) = Client::connect(&l).unwrap();
+    let ServerMsg::Welcome { purchases, planet_slots, .. } = welcome else { panic!("{welcome:?}") };
+    assert_eq!(purchases.len(), 2);
+    assert_eq!(planet_slots, 2);
+
+    // Bought items enter a world as signed grants, which verify.
+    let mut home = world_seeded(21);
+    for g in [moon.unwrap(), gold_grant.unwrap()] {
+        home.apply(Action::Purchase { grant: Box::new(g), x: 10, y: 16 });
+    }
+    for d in [1, 2] {
+        home.apply(Action::AddMoon { mass: sim_core::Fx::ONE, distance: sim_core::Fx::from_int(d) });
+    }
+    assert_eq!(home.moon_worlds.len(), 2);
+    let s = biggest_species(&home);
+    assert!(c.bind(&home, ChampionKind::Species, s).unwrap().is_ok());
+    // A purchase the server never made is refused.
+    let mut forged = world_seeded(22);
+    let fake = sim_core::shop::ShopGrant { id: 999, account: "rich".into(), item: ShopItem::MoonSlot, signature: "00".into() };
+    forged.apply(Action::Purchase { grant: Box::new(fake), x: 0, y: 0 });
+    let s = biggest_species(&forged);
+    assert!(c.bind(&forged, ChampionKind::Species, s).unwrap().unwrap_err().contains("never made"));
+
+    // Two planet slots: a second home world is fine, a third is not.
+    let second = world_seeded(23);
+    assert!(c.bind(&second, ChampionKind::Species, biggest_species(&second)).unwrap().is_ok());
+    let third = world_seeded(24);
+    let r = c.bind(&third, ChampionKind::Species, biggest_species(&third)).unwrap();
+    assert!(r.unwrap_err().contains("buy another planet"));
+    let _ = std::fs::remove_dir_all(dir);
 }

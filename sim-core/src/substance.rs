@@ -24,6 +24,8 @@ struct RawSubstance {
     oxidizer: i64,
     greenhouse: i64,
     color: String,
+    #[serde(default)]
+    shop: String,
 }
 
 #[derive(Deserialize)]
@@ -52,6 +54,36 @@ pub struct Substance {
     /// 0..1: warming strength as an atmospheric gas.
     pub greenhouse: Fx,
     pub color: [u8; 3],
+    /// Elements bought with Essence (§3); the free tools cannot add them.
+    pub shop: Option<ShopClass>,
+}
+
+/// The shop's element classes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShopClass {
+    HeavyMetal,
+    RareEarth,
+    Radioactive,
+}
+
+impl ShopClass {
+    fn parse(s: &str) -> Result<Option<ShopClass>, String> {
+        Ok(match s {
+            "" => None,
+            "heavy_metal" => Some(ShopClass::HeavyMetal),
+            "rare_earth" => Some(ShopClass::RareEarth),
+            "radioactive" => Some(ShopClass::Radioactive),
+            other => return Err(format!("unknown shop class {other}")),
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ShopClass::HeavyMetal => "Heavy metal",
+            ShopClass::RareEarth => "Rare earth",
+            ShopClass::Radioactive => "Radioactive element",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +131,7 @@ pub fn load_substances(json: &str) -> Result<Vec<Substance>, String> {
         .map(|r| {
             let color = u32::from_str_radix(&r.color, 16)
                 .map_err(|e| format!("substance {}: bad color: {e}", r.key))?;
+            let shop = ShopClass::parse(&r.shop).map_err(|e| format!("substance {}: {e}", r.key))?;
             Ok(Substance {
                 key: r.key,
                 name: r.name,
@@ -115,6 +148,7 @@ pub fn load_substances(json: &str) -> Result<Vec<Substance>, String> {
                 oxidizer: Fx::ratio(r.oxidizer, 100),
                 greenhouse: Fx::ratio(r.greenhouse, 100),
                 color: [(color >> 16) as u8, (color >> 8) as u8, color as u8],
+                shop,
             })
         })
         .collect()

@@ -280,8 +280,18 @@ func _build_ui() -> void:
 		tool_select.add_item(t)
 	panel.add_child(tool_select)
 	substance_select = OptionButton.new()
+	var first_free := -1
 	for s in substances:
-		substance_select.add_item("%s (%s)" % [s["name"], s["formula"]])
+		# Shop elements cannot be conjured for free: they are bought with Essence.
+		if s.get("shop") != null:
+			substance_select.add_item("%s (buy with Essence)" % s["name"])
+			substance_select.set_item_disabled(substance_select.item_count - 1, true)
+		else:
+			substance_select.add_item("%s (%s)" % [s["name"], s["formula"]])
+			if first_free < 0:
+				first_free = substance_select.item_count - 1
+	if first_free >= 0:
+		substance_select.select(first_free)
 	panel.add_child(substance_select)
 	row = HBoxContainer.new()
 	panel.add_child(row)

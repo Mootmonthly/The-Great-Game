@@ -7,6 +7,7 @@
 
 use crate::fixed::Fx;
 use crate::loot::LootGrant;
+use crate::shop::ShopGrant;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +73,12 @@ pub enum Action {
     /// Remains looted from a ranked match arrive at region (x, y).
     Loot {
         grant: Box<LootGrant>,
+        x: u16,
+        y: u16,
+    },
+    /// A purchase from the Essence shop (§3); deposits land around (x, y).
+    Purchase {
+        grant: Box<ShopGrant>,
         x: u16,
         y: u16,
     },

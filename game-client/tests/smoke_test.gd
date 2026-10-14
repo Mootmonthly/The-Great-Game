@@ -181,6 +181,7 @@ func _initialize() -> void:
 	# Arena: a mirror match against this world's own roster, stepped to the end.
 	main.open_arena()
 	var arena = main.arena
+	check(arena.shop_buttons.size() == 7 and arena.shop_items.size() == 7, "the arena's shop panel lists the 7 shop items")
 	check(arena.my_roster.size() > 0, "arena lists champions from this world")
 	arena.use_rival_roster(arena.roster_of(sim))
 	arena._start_battle()
@@ -382,5 +383,40 @@ func _initialize() -> void:
 	check(kelp.legs.is_empty() and kelp.tentacles.size() >= 2, "plants with fins become swaying kelp")
 	for m in [human, plant, kelp]:
 		m.free()
+
+	# The Essence shop: elements are bought, not conjured.
+	var catalogue: Array = JSON.parse_string(sim.shop_catalogue_json())
+	var shop_kinds := {}
+	for entry in catalogue:
+		shop_kinds[entry["item"]["kind"]] = int(entry["price"])
+	check(catalogue.size() == 7 and shop_kinds.get("moon_slot") == 10000 and shop_kinds.get("planet_slot") == 50000, "the shop sells 5 elements, a moon slot and a planet slot")
+	var gold := -1
+	var uranium := -1
+	var subs: Array = JSON.parse_string(sim.substances_json())
+	for k in subs.size():
+		if subs[k]["name"].to_lower() == "gold":
+			gold = k
+		elif subs[k]["name"].to_lower() == "uranium":
+			uranium = k
+	check(gold >= 0 and subs[gold]["shop"] != null, "gold is marked as a shop element")
+	check(not main.substance_select.is_item_disabled(main.substance_select.selected) and main.substance_select.is_item_disabled(gold), "the free tool disables shop elements")
+	var gold_before := func() -> Variant:
+		for s in JSON.parse_string(sim.region_json(20, 20))["substances"]:
+			if s["name"].to_lower() == "gold":
+				return s["amount"]
+		return 0.0
+	var gold_amount: Variant = gold_before.call()
+	sim.add_substance(20, 20, 2, gold, 5.0)
+	check(gold_before.call() == gold_amount, "the free tool cannot add gold")
+	var shop_deposit := '{"id":2,"account":"me","item":{"kind":"deposit","substance":"uranium"},"signature":""}'
+	check(sim.apply_purchase(shop_deposit, 20, 20), "a deposit purchase is accepted")
+	var found := 0.0
+	for s in JSON.parse_string(sim.region_json(20, 20))["substances"]:
+		if s["name"].to_lower() == "uranium":
+			found = s["amount"]
+	check(uranium >= 0 and found > 0.0, "a bought deposit adds its element to the region")
+	var slots_before := int(JSON.parse_string(sim.moons_json())["slots"])
+	check(sim.apply_purchase('{"id":1,"account":"me","item":{"kind":"moon_slot"},"signature":""}', 0, 0), "a moon slot purchase is accepted")
+	check(int(JSON.parse_string(sim.moons_json())["slots"]) == slots_before + 1, "a bought moon slot adds a moon slot")
 
 	finish()

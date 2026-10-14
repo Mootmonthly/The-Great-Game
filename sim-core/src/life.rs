@@ -386,7 +386,9 @@ impl World {
                 oxidizer += sub.oxidizer * available;
             }
             let light = saturate(flux * World::insolation(y), Fx::ratio(3, 10)) * light_quality;
-            let geothermal = (r.geothermal * Fx::ratio(7, 10) + tidal_energy).min(Fx::ONE);
+            // Radioactive decay is heat that thermotrophs can live on.
+            let decay = self.radioactivity(i) * Fx::ratio(5, 100);
+            let geothermal = (r.geothermal * Fx::ratio(7, 10) + tidal_energy + decay).min(Fx::ONE);
             let chemical = fuel.min(oxidizer).min(Fx::ONE);
             let energy = [light, geothermal, chemical];
             let kinetics = (t / Fx::from_int(250)).clamp(Fx::ratio(1, 10), Fx::ONE);
@@ -598,6 +600,8 @@ impl World {
             let temp = self.regions[i].temperature;
             // Arcane Magic: spellcasters are stronger where mana runs high.
             let mana = self.mana(i);
+            // Radioactive deposits irradiate the life around them.
+            let radiation_harm = (radiation_harm + self.radioactivity(i) * Fx::ratio(3, 100)).min(Fx::HALF);
             // A civilization's people are stronger where it has settled.
             let home = settled.get(i).copied().flatten();
             // Beings from beyond follow their own rules (`entity_dynamics`).
@@ -887,6 +891,8 @@ impl World {
                 } else {
                     Fx::ratio(3, 1000)
                 };
+                // Radioactive deposits mutate the life around them.
+                let mutagen = mutagen + self.radioactivity(i) * Fx::ratio(2, 10);
                 if !self.rng.chance(rate * crowding * mutagen) {
                     continue;
                 }

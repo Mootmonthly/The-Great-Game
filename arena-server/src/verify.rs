@@ -32,6 +32,8 @@ pub struct Verified {
     pub remains: Remains,
     /// Loot grants used in this world's history.
     pub loot: Vec<u64>,
+    /// Shop grants used in this world's history.
+    pub purchases: Vec<u64>,
 }
 
 /// Checks every loot grant in the log: signed by this server, granted to
@@ -53,6 +55,31 @@ pub fn check_loot(signer: &Signer, account: &str, log: &ActionLog) -> Result<Vec
             }
             if ids.contains(&grant.id) {
                 return Err("the world uses the same loot twice".into());
+            }
+            ids.push(grant.id);
+        }
+    }
+    Ok(ids)
+}
+
+/// Checks every shop grant in the log the same way: signed by this
+/// server, bought by this account, and used once.
+pub fn check_purchases(signer: &Signer, account: &str, log: &ActionLog) -> Result<Vec<u64>, String> {
+    let mut ids = Vec::new();
+    let all = log.actions.iter().map(|a| match a {
+        Action::OnMoon { action, .. } => action.as_ref(),
+        a => a,
+    });
+    for a in all {
+        if let Action::Purchase { grant, .. } = a {
+            if !signer.verify(&grant.payload(), &grant.signature) {
+                return Err("the world contains a purchase this server never made".into());
+            }
+            if grant.account != account {
+                return Err("the world contains another player's purchase".into());
+            }
+            if ids.contains(&grant.id) {
+                return Err("the world uses the same purchase twice".into());
             }
             ids.push(grant.id);
         }
@@ -189,6 +216,7 @@ pub fn verify_with(
         return Err(format!("world history too long (over {} years)", MAX_TICKS / 4));
     }
     let loot = check_loot(signer, account, log)?;
+    let purchases = check_purchases(signer, account, log)?;
     let (world, resumed_from) = match checkpoints.and_then(|c| c.resume(account, log)) {
         Some((mut world, n)) => {
             for a in &log.actions[n..] {
@@ -249,6 +277,7 @@ pub fn verify_with(
         resumed_from,
         remains,
         loot,
+        purchases,
     })
 }
 

@@ -85,7 +85,9 @@ impl Item {
 pub fn material(world: &World, civ: &Civilization, species: &Species) -> (&'static str, i64) {
     let era = world.era(civ);
     let element = world.elements[species.profile.element as usize].as_str();
-    if era >= FORGING && world.civ_has(civ, "iron") {
+    if era >= FORGING && world.civ_has(civ, "tungsten") {
+        ("tungsten", 4)
+    } else if era >= FORGING && world.civ_has(civ, "iron") {
         ("iron", 3)
     } else if era >= 2 && element == "Silicon" {
         ("crystal", 2)
@@ -116,7 +118,10 @@ pub fn loadout(world: &World, species: &Species) -> Vec<Item> {
     }
     let (mat, grade) = material(world, civ, species);
     let arcana = world.arcana_level(civ) as i64;
-    let enchanted = arcana >= 3;
+    // Gold carries enchantments well: magic traditions with gold enchant
+    // their gear a level sooner and make better spell foci.
+    let gold = world.civ_has(civ, "gold") as i64;
+    let enchanted = arcana + gold >= 3;
     let prefix = if enchanted { "enchanted " } else { "" };
     let b = &species.genome.body;
     let culture = civ.culture;
@@ -177,8 +182,9 @@ pub fn loadout(world: &World, species: &Species) -> Vec<Item> {
         items.push(g);
     }
     if arcana >= 2 && species.has(body::SAPIENCE) {
-        let mut m = Item::new(capitalise(&format!("{mat} spell focus")), Slot::Mind);
-        m.spell_to_hit = 1 + arcana / 2;
+        let focus_mat = if gold > 0 { "gold" } else { mat };
+        let mut m = Item::new(capitalise(&format!("{focus_mat} spell focus")), Slot::Mind);
+        m.spell_to_hit = 1 + arcana / 2 + gold;
         items.push(m);
     }
     items

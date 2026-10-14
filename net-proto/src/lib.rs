@@ -14,6 +14,7 @@ pub mod tls;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sim_core::arena::{ArenaCommand, ArenaResult};
 use sim_core::loot::LootGrant;
+use sim_core::shop::{ShopGrant, ShopItem};
 use sim_core::sheet::CharacterSheet;
 use sim_core::ActionLog;
 use std::io::{self, BufRead, Read, Write};
@@ -135,6 +136,11 @@ pub enum ClientMsg {
         /// The cost the client computed; must match the server's.
         cost: i64,
     },
+    /// Spend Essence in the shop (§3).
+    Buy { item: ShopItem },
+    /// Sell a spoil of war (a loot grant not yet brought home) back to the
+    /// server for its value in Essence. The grant is deleted.
+    SellLoot { grant: u64 },
     /// Join a queue with these bound champions under a cost cap.
     Queue {
         mode: QueueMode,
@@ -166,6 +172,30 @@ pub enum ServerMsg {
         /// Essence balance (earned by defeating players).
         essence: u64,
         champions: Vec<ChampionToken>,
+        /// How many home worlds this account may bind champions from.
+        #[serde(default)]
+        planet_slots: u8,
+        /// Spoils of war not yet brought home or sold.
+        #[serde(default)]
+        spoils: Vec<LootGrant>,
+        /// Shop grants bought but not yet seen in a bound world. A client
+        /// skips those its world already holds.
+        #[serde(default)]
+        purchases: Vec<ShopGrant>,
+    },
+    /// A shop purchase went through. World items come as a signed grant to
+    /// log in the world (`Action::Purchase`); a planet slot has none.
+    Purchased {
+        item: ShopItem,
+        grant: Option<ShopGrant>,
+        essence: u64,
+        planet_slots: u8,
+    },
+    /// A spoil was sold back to the server.
+    Sold {
+        grant: u64,
+        essence_gained: u64,
+        essence: u64,
     },
     Bound {
         champion: ChampionToken,

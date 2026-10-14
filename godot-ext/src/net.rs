@@ -280,6 +280,24 @@ impl NetClient {
         })
     }
 
+    /// Buys from the Essence shop. `item_json` is a shop item as JSON, e.g.
+    /// {"kind":"moon_slot"} or {"kind":"deposit","substance":"gold"}. The
+    /// reply ("purchased" or "rejected") arrives through `poll`.
+    #[func]
+    fn buy(&mut self, item_json: GString) -> bool {
+        match serde_json::from_str::<sim_core::shop::ShopItem>(&item_json.to_string()) {
+            Ok(item) => self.send(ClientMsg::Buy { item }),
+            Err(_) => false,
+        }
+    }
+
+    /// Sells a spoil of war (loot grant id) back to the server for Essence.
+    /// The reply ("sold" or "rejected") arrives through `poll`.
+    #[func]
+    fn sell_loot(&mut self, grant: i64) -> bool {
+        self.send(ClientMsg::SellLoot { grant: grant as u64 })
+    }
+
     #[func]
     fn leave_queue(&mut self) {
         self.send(ClientMsg::LeaveQueue);
