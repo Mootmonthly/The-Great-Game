@@ -157,7 +157,8 @@ Not all life has to come from the world's own chemistry. Some beings come from o
     - Maddening Presence: in the arena, enemies within 30 ft. must pass a Wisdom save each round or attack with disadvantage.
     - Higher Intelligence and Charisma than native creatures. They float, with walk and fly speeds.
   - *Viewer:* Veil overlay, Veil law slider, Veil readout, violet sky tint on the globe, and floating models with tendrils, voids and a shimmering membrane.
-  - *Not yet:* mass deaths (Soul Power), mana convergence (Arcane Magic), cultivation breakthroughs, worship (religions, §4.8 level 6), cults, and Essence-unlocked Veil resources. These thinning sources arrive with their systems.
+  - *Also thinning (with the metaphysical laws, §4.6):* ley-line convergence (Arcane Magic), mass deaths releasing souls (Soul Power) and cultivation breakthroughs (Daoist Cultivation).
+  - *Not yet:* worship (religions, §4.8 level 6), cults, and Essence-unlocked Veil resources.
 
 ### 4.5 Sapience and Civilization
 
@@ -223,6 +224,26 @@ Extra and exotic resources (rare elements, unusual molecules, more moons, unusua
 | Altered Physics | Change speed of sound, heat flow, entropy rate beyond the launch controls | Multipliers within safe bounds |
 
 Laws can stack. Their interactions are the main source of emergent variety.
+
+**Implemented (launch laws, `sim-core/src/laws.rs`):** each law is a strength from 0 to 100% set in the Laws tab. With all three at 0 the world runs exactly as before (tested). The numbers below are proposed and open to tuning.
+
+- **Arcane Magic** (parameter: mana density):
+  - Mana lies along seeded ley lines, a smooth field that gathers in a few places.
+  - Lineages with nervous systems can evolve a new milestone, **Spellcasting**, where mana is at least 0.2. Spellcasters are up to 1.5× stronger rivals and hunters where mana is high.
+  - Their sheets gain Innate Spellcasting and a force-damage Mana Bolt.
+  - Where ley lines converge (mana above 0.6) the Veil thins, by up to 0.32 at full strength: it thins but does not open on its own.
+- **Soul Power** (parameter: soul persistence):
+  - Named individuals' souls grow each season with the law and their renown, up to 10.
+  - At death a soul persists with chance 0.8 × the law, and waits (up to 64 at once).
+  - The next named individual born receives it with three quarters of its strength, a "born remembering a past life" memory and an Old Soul trait.
+  - A strong soul adds hit points (Soul Ward), and resistance to necrotic damage from strength 3.
+  - Mass deaths (5+ biomass lost in a region in a season) release souls and tear the Veil there.
+- **Daoist Cultivation** (parameters: qi density, tribulation risk):
+  - Qi is a seeded field, richest in high places.
+  - Named individuals absorb it each season, faster when calm and bright; beasts barely can.
+  - Reaching 2^realm qi triggers a breakthrough with a heavenly tribulation. The death chance is risk × (0.1 + 0.05 × realm), and risk defaults to 30%.
+  - Nine realms, from Qi Condensation to Tribulation Transcendence. Each success adds a quarter to lifespan, renown, +2 STR/DEX/CON/WIS, more hit points, +½ AC per realm and a force-damage Qi Strike.
+  - Every breakthrough strains the Veil where it happens.
 
 ### 4.7 Player Interaction (God Mode)
 
@@ -342,6 +363,30 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 - **Unique gear by chemistry:** items carry the substance, damage type and laws of the world that made them. For example, silicon life forges heat-proof crystal blades, and beings from beyond make relics no native can craft.
 - **Refitting looted gear (decided):** looted gear can be refitted to a different body plan at a cost (cost unit to be set: resources, Essence or time). Until refitted, it fits only bodies with the parts it was made for.
 - **Timing (decided):** built in the content phase (roadmap phase 4).
+
+### 5.5 Classes (decided: earned by named individuals)
+
+**Decided:**
+- Only named individuals have classes. Species sheets stay monster stat blocks, as in the 5e rules.
+- A class is earned from the individual's life story and its world's laws, never assigned.
+
+**Implemented (proposed rules):** the first class that fits, in this order:
+
+| Class | Earned by | Features (hit die) |
+|---|---|---|
+| Cultivator | Reaching a cultivation realm (Daoist Cultivation) | Realm bonuses, Qi Strike (d8) |
+| Sorcerer | Arcane Magic, a Spellcasting species, CHA 12+ | Chaos Bolt cantrip; Fireball at level 5 (d6) |
+| Wizard | Arcane Magic, sapient, INT 13+, curious | Arcane Bolt cantrip; Fireball at level 5 (d6) |
+| Warlock | Witnessed a being from beyond, with Arcane Magic or Soul Power | Eldritch Blast, more beams with level (d8) |
+| Shaman | Soul Power, soul strength 1+, mourned a friend | Spirit Lash (necrotic), resists necrotic (d8) |
+| Fighter | 3+ victories or kills | +2 to hit; Extra Attack at level 5 (d10) |
+| Rogue | Fled danger twice and survived | Sneak Attack, (level+1)/2 d6 (d8) |
+| Bard | Sapient, 3+ friends, CHA 14+ | Inspiration: allies +2 to hit (d8) |
+
+- **Level:** 1 + 4 × renown + age / 10 years, from 1 to 20.
+- **Class hit points:** each level adds the class hit die average plus CON.
+- **Cantrips:** damage dice grow at levels 5, 11 and 17.
+- **Cost:** classes change the sheet, so its cost follows (§5.3).
 
 ## 6. Arena
 
@@ -522,12 +567,14 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | 1. Prototype: Sheet & Cost (done) | Genome → 5e sheet → cost. Headless auto-battler between two generated beings | Cost correlates with mock-battle win rate (target r > 0.8) |
 | 2. Vertical Slice (in progress) | 3D planet view, full planetary controls (rotation, orbit, moons, atmosphere), body plan synthesis, possession, local 1v1 arena with small armies | Playable start-to-arena loop offline |
 | 3. Online Alpha (in progress) | Dedicated server, replay verification, matchmaking, permadeath, Essence economy, large-army arena (500 units per side) | Closed test with external players |
-| 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
+| 4. Content & Depth (started) | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
 
 **Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules now run in the deterministic Rust core with replayable command logs. Natural/Godhand modes and star types are done. A prototype of the Veil and extradimensional beings (§4.4a, planned for phase 4) was pulled forward. Remaining: final art and the network layer.
 
 **Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, permadeath with a ledger of the dead, and online play from the arena screen. Remaining: Steam identity, cloud hosting, reconnects, client-side prediction, the Essence economy and looting, and large-army arena work (500 units per side).
+
+**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), and the Veil with beings from beyond (§4.4a). Remaining: civilizations, archetypes, equipment (§5.4), and gear looting.
 
 ## 9. Business Model
 
@@ -555,6 +602,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Cost formula | Power = √(effective HP × damage per round), cost linear in power; commoner 1, ancient dragon about 310 (§5.3) |
 | — | Natural/Godhand and star types | Built as in §4.6: Natural is the default; Godhand strain thins the air and heats the world; eight star types with light quality, radiation and flares (numbers open to tuning) |
 | — | Online server rules | Species champions are rank and file and can be bound again; named individuals die forever via a ledger of the dead; disconnecting mid-match counts as surrender unless the player rejoins within 30 s (owner asked for reconnecting); an unranked practice queue with no permadeath (§6.2–6.3) |
+| — | Metaphysical laws (rules) | Built as in §4.6: Arcane Magic (ley-line mana, Spellcasting milestone), Soul Power (souls and rebirth), Daoist Cultivation (nine realms, tribulations); all thin the Veil in their own way. Numbers open to tuning |
 | — | Classes | Named individuals only, earned from their life story and their world's laws (fighter from victories, wizard needs Arcane Magic, cultivator needs Daoist Cultivation…); not assigned. Built together with the metaphysical laws, before the arena revisit |
 | — | Equipment | Gear attaches by body part, not body type; looted gear is refitted to other body plans at a cost; built in the content phase (§5.4) |
 | — | The Veil | Built as in §4.4a: a Veil law slider (0–100% open), reality strain and many moons thin it; beings from beyond feed on native minds and fade when the Veil is sealed (numbers open to tuning) |
