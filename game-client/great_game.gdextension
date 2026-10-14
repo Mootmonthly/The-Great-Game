@@ -1,0 +1,21 @@
+; Loads the Rust simulation (godot-ext crate). Build it first with:
+;   cargo build --release
+; from the repository root. Both editor ("debug") and exported ("release")
+; runs use the optimised build.
+
+[configuration]
+
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.6
+reloadable = true
+
+[libraries]
+
+linux.debug.x86_64 = "res://../target/release/libgreat_game_ext.so"
+linux.release.x86_64 = "res://../target/release/libgreat_game_ext.so"
+linux.debug.arm64 = "res://../target/release/libgreat_game_ext.so"
+linux.release.arm64 = "res://../target/release/libgreat_game_ext.so"
+windows.debug.x86_64 = "res://../target/release/great_game_ext.dll"
+windows.release.x86_64 = "res://../target/release/great_game_ext.dll"
+macos.debug = "res://../target/release/libgreat_game_ext.dylib"
+macos.release = "res://../target/release/libgreat_game_ext.dylib"
