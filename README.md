@@ -48,7 +48,7 @@ A 2D prototype of the world simulation. Seed a planet with substances, tune its 
 7. **Open the project in Godot:** start the Godot `.exe`. In the Project Manager, click **Import**, browse to the `The-Great-Game\game-client` folder, select `project.godot`, and click **Import & Edit**. If Godot asks to upgrade or re-import the project, accept.
 8. **Run it:** press **F5**, or click the play button (▶) at the top right of the editor.
 
-The same steps work on Linux and macOS. Install Rust with the command shown on https://rustup.rs and use the Godot download for your system.
+The same steps work on Linux (macOS is paused for now). Install Rust with the command shown on https://rustup.rs and use the Godot download for your system.
 
 If the viewer says "The simulation extension is not loaded", step 6 did not finish. Run `cargo build --release` again, read any error, then restart Godot.
 
@@ -124,7 +124,7 @@ cargo test -p net-proto -p arena-server --release                # server tests:
 cargo run -p arena-server --release -- serve --speed 0            # server that runs matches as fast as possible (testing)
 ```
 
-The `golden_hash` test checks that the simulation gives bit-identical results to a stored value. CI runs it on Windows, macOS and Linux. If it passes on your machine, your computer simulates worlds exactly like the server will.
+The `golden_hash` test checks that the simulation gives bit-identical results to a stored value. CI runs it on Windows and Linux. If it passes on your machine, your computer simulates worlds exactly like the server will.
 
 ### Headless viewer test
 

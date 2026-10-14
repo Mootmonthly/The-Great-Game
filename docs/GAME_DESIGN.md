@@ -5,7 +5,7 @@
 ## 1. Product Summary
 
 - **Genre:** God-game / evolution sandbox + competitive arena battler.
-- **Platform:** Standalone downloadable PC game (Windows first, then Linux/Steam Deck, macOS). Distributed on Steam and similar storefronts. Not a browser game.
+- **Platform:** Standalone downloadable PC game (Windows first, then Linux/Steam Deck, macOS). **Decided:** macOS development and testing are paused for now; CI covers Windows and Linux. Distributed on Steam and similar storefronts. Not a browser game.
 - **Art style:** stylised, in the spirit of World of Warcraft: exaggerated proportions, bold silhouettes, hand-painted textures, saturated colour. This suits procedural creatures of unknown anatomy, keeps large battles cheap to render, and fits Godot's renderer.
 - **Fantasy:** You are the architect of a world. You seed it with matter, tune its physics and metaphysics, and watch life emerge in whatever form your rules allow. Then you take the best of what your world produced and send it to fight the creations of other gods.
 
@@ -603,6 +603,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Natural/Godhand and star types | Built as in §4.6: Natural is the default; Godhand strain thins the air and heats the world; eight star types with light quality, radiation and flares (numbers open to tuning) |
 | — | Online server rules | Species champions are rank and file and can be bound again; named individuals die forever via a ledger of the dead; disconnecting mid-match counts as surrender unless the player rejoins within 30 s (owner asked for reconnecting); an unranked practice queue with no permadeath (§6.2–6.3) |
 | — | Metaphysical laws (rules) | Built as in §4.6: Arcane Magic (ley-line mana, Spellcasting milestone), Soul Power (souls and rebirth), Daoist Cultivation (nine realms, tribulations); all thin the Veil in their own way. Numbers open to tuning |
+| — | macOS | Development and CI on macOS paused for now; Windows and Linux only |
 | — | Classes | Named individuals only, earned from their life story and their world's laws (fighter from victories, wizard needs Arcane Magic, cultivator needs Daoist Cultivation…); not assigned. Built together with the metaphysical laws, before the arena revisit |
 | — | Equipment | Gear attaches by body part, not body type; looted gear is refitted to other body plans at a cost; built in the content phase (§5.4) |
 | — | The Veil | Built as in §4.4a: a Veil law slider (0–100% open), reality strain and many moons thin it; beings from beyond feed on native minds and fade when the Veil is sealed (numbers open to tuning) |
