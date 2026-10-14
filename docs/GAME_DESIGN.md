@@ -254,7 +254,7 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 - **Measured against the auto-battler** (`sim-cli balance`: 3,500+ evolved species from 4 presets × 2 seeds, 155 sampled across the cost range):
   - Rank correlation between cost and win rate: **0.93** (Phase 1 target: above 0.8).
   - In pairs with at least a 1.5× cost gap, the more expensive side won **99%** of match-ups.
-  - Armies of n cheap units against one unit costing n× as much: the army wins about **60%**. Large single-target hitters waste damage on small targets (overkill), which the formula does not yet model. Tune when arena rules exist.
+  - Armies of n cheap units against one unit costing n× as much: the army wins about **55%** (50% is perfectly fair). Large single-target hitters waste damage on small targets (overkill), which the formula does not yet model. Tune when arena rules exist.
 - Ability scores may exceed the 5e cap of 30 for extreme beings. The cost formula stays monotonic beyond that range.
 - Equipment adds power by the same offence/defence evaluation and is part of the champion's locked loadout (later phase).
 - The sheet UI shows the cost breakdown (effective HP, damage per round, power, utility, abilities) so players understand why a being costs what it costs.
