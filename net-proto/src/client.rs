@@ -2,7 +2,7 @@
 //! Godot extension. It mirrors each match locally: the server sends every
 //! tick's commands, and `LockstepMatch` steps an identical arena.
 
-use crate::{read_msg, write_msg, ChampionKind, ChampionToken, ClientMsg, QueueMode, ServerMsg};
+use crate::{read_msg, write_msg, Appearance, ChampionKind, PartLook, ChampionToken, ClientMsg, QueueMode, ServerMsg};
 use sim_core::arena::{Arena, ArenaEvent};
 use sim_core::sheet::{individual_sheet, species_sheet, CharacterSheet};
 use sim_core::World;
@@ -26,6 +26,30 @@ pub fn local_sheet(world: &World, kind: ChampionKind, id: u32) -> Option<Charact
             .individual_by_id(id)
             .and_then(|i| individual_sheet(world, i)),
     }
+}
+
+/// What a being looks like, from its species' body.
+pub fn appearance(world: &World, kind: ChampionKind, id: u32) -> Option<Appearance> {
+    let species = match kind {
+        ChampionKind::Species => world.species_by_id(id)?,
+        ChampionKind::Individual => world.species_by_id(world.individual_by_id(id)?.species)?,
+    };
+    let c = species.color;
+    Some(Appearance {
+        color: format!("{:02x}{:02x}{:02x}", c[0], c[1], c[2]),
+        parts: species
+            .genome
+            .body
+            .parts
+            .iter()
+            .map(|p| PartLook {
+                part: p.kind.name().to_string(),
+                count: p.count,
+                size_milli: (p.size * sim_core::Fx::from_int(1000)).round(),
+            })
+            .collect(),
+        otherworldly: species.has(sim_core::body::OTHERWORLDLY),
+    })
 }
 
 impl Client {

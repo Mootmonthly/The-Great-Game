@@ -340,6 +340,7 @@ fn bind(
         name: v.name,
         cost,
         sheet: v.sheet,
+        appearance: v.appearance,
         signature: String::new(),
     };
     token.signature = shared.signer.sign(&token_payload(&token));
@@ -458,6 +459,14 @@ fn start_match(shared: &Arc<Shared>, state: &mut State, a: Waiting, b: Waiting) 
             .collect()
     };
     let rosters = [roster(state, &a), roster(state, &b)];
+    let look = |state: &mut State, w: &Waiting| -> Vec<_> {
+        let acc = state.store.account(&w.account);
+        w.tokens
+            .iter()
+            .map(|t| acc.champions[t].token.appearance.clone())
+            .collect()
+    };
+    let looks = [look(state, &a), look(state, &b)];
     let ctl = Arc::new(MatchCtl::default());
     state.playing.insert(a.account.clone(), (ctl.clone(), 0));
     state.playing.insert(b.account.clone(), (ctl.clone(), 1));
@@ -475,6 +484,7 @@ fn start_match(shared: &Arc<Shared>, state: &mut State, a: Waiting, b: Waiting) 
                 team,
                 players: players.clone(),
                 rosters: rosters.clone(),
+                looks: looks.clone(),
                 tokens: tokens.clone(),
             },
         );

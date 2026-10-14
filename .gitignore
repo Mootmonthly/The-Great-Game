@@ -4,3 +4,4 @@
 # Godot
 game-client/.godot/
 game-client/*.import
+/server-data

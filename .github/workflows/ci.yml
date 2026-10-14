@@ -24,6 +24,8 @@ jobs:
         run: cargo test -p sim-core --release
       - name: Verify replay
         run: cargo run -p sim-cli --release -- verify
+      - name: Test arena server and protocol
+        run: cargo test -p net-proto -p arena-server --release
       - name: Build Godot extension
         run: cargo build -p great_game_ext --release
 
@@ -36,8 +38,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Build Godot extension
-        run: cargo build -p great_game_ext --release
+      - name: Build Godot extension and arena server
+        run: cargo build -p great_game_ext -p arena-server --release
       - name: Download Godot
         run: |
           curl -sSL -o godot.zip https://github.com/godotengine/godot/releases/download/4.6.2-stable/Godot_v4.6.2-stable_linux.x86_64.zip

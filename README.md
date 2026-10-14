@@ -11,7 +11,9 @@ A 2D prototype of the world simulation. Seed a planet with substances, tune its 
 |---|---|
 | `sim-core/` | The simulation, in Rust. Deterministic and engine-independent. |
 | `sim-cli/` | Headless command-line runner: run presets, verify replays, benchmark. |
-| `godot-ext/` | GDExtension that exposes the simulation to Godot as the `SimWorld` class. |
+| `godot-ext/` | GDExtension that exposes the simulation to Godot (`SimWorld`, `ArenaSim`, `NetClient`). |
+| `net-proto/` | Client–server protocol for online play. |
+| `arena-server/` | Dedicated arena server: champion verification, matchmaking, lockstep matches, permadeath. |
 | `game-client/` | Godot 4 project: the world viewer. |
 | `data/substances.json` | The substance table. Edit it to add or change elements and molecules. |
 
@@ -78,6 +80,26 @@ Things to try:
 - Switch to Godhand, pick a neutron star, and set luminosity back to 1: the world stays warm but radiation kills unarmoured life unless you thicken the air.
 - Run the `frozen_moon` preset for a few hundred years: nervous systems evolve quickly there, so named individuals show up early.
 
+### Play online
+
+The arena server verifies champions by replaying your world's history, matches players by cost cap and rating, and runs matches in lockstep.
+
+1. **Start a server** (in a terminal, from the project folder):
+   ```
+   cargo run -p arena-server --release -- serve
+   ```
+   It listens on port 7878 and keeps its state in `server-data/`. To let friends on other machines connect, open port 7878 on your router or firewall and give them your IP address.
+2. **Play:** in the viewer, open the arena and pick your team.
+   - Under "Online", enter the server address (`127.0.0.1:7878` for your own machine), a player name, and Ranked or Practice.
+   - Click **Find online match**. The server checks your champions, then waits for another player with the same cost cap.
+   - To test alone, run a second copy of the viewer, or start a bot opponent:
+     ```
+     cargo run -p arena-server --release -- bot --name rival --cap 100
+     ```
+3. **Ranked is permadeath.** Named individuals who fall are gone forever: the server will never accept them again, and their death is written into your world's history. Species units that fall are lost, but the species can field more. Practice matches cost nothing.
+
+During an online match, possession works as offline (WASD, Space, Q, Esc). Speed is fixed by the server, and **Surrender** ends the match at once.
+
 ### Command-line tools
 
 ```
@@ -89,6 +111,8 @@ cargo run -p sim-cli --release -- verify                          # save, replay
 cargo run -p sim-cli --release -- bench                           # simulation cost per year
 cargo run -p sim-cli --release -- sheets --preset earthlike --years 800   # character sheets and costs
 cargo run -p sim-cli --release -- balance                         # check cost against the auto-battler (takes a few minutes)
+cargo test -p net-proto -p arena-server --release                # server tests: verification, matches, permadeath
+cargo run -p arena-server --release -- serve --speed 0            # server that runs matches as fast as possible (testing)
 ```
 
 The `golden_hash` test checks that the simulation gives bit-identical results to a stored value. CI runs it on Windows, macOS and Linux. If it passes on your machine, your computer simulates worlds exactly like the server will.

@@ -4,7 +4,8 @@
 //! it headless and rebuilds the champion's character sheet itself, so a
 //! client cannot invent or edit a champion.
 
-use net_proto::ChampionKind;
+use net_proto::client::appearance;
+use net_proto::{Appearance, ChampionKind};
 use sim_core::sheet::{individual_sheet, species_sheet, CharacterSheet};
 use sim_core::{Action, ActionLog, World};
 
@@ -17,6 +18,7 @@ pub const MAX_TICKS: u64 = 40_000;
 pub struct Verified {
     pub name: String,
     pub sheet: CharacterSheet,
+    pub appearance: Appearance,
     /// Individuals only: identity for the ledger of the dead.
     pub fingerprint: Option<u64>,
 }
@@ -60,9 +62,11 @@ pub fn verify(log: &ActionLog, kind: ChampionKind, id: u32, cost: i64) -> Result
             sheet.cost.cost
         ));
     }
+    let appearance = appearance(&world, kind, id).ok_or("being has no species")?;
     Ok(Verified {
         name,
         sheet,
+        appearance,
         fingerprint,
     })
 }

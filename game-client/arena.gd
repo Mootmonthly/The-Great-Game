@@ -7,6 +7,10 @@ extends Control
 ## player commands (docs/GAME_DESIGN.md §6.3). This script only renders it
 ## and forwards input. Click a friendly unit to possess it: WASD moves it,
 ## Space attacks, Q breathes, Esc releases it.
+##
+## Online, `NetClient` takes ArenaSim's place: the arena server verifies
+## the champions, finds an opponent and runs the match; the client steps an
+## identical copy in lockstep and renders it the same way.
 
 signal closed
 
@@ -16,6 +20,7 @@ const CAPS := [25, 50, 100, 250, 1000]
 const MAX_UNITS_PER_SIDE := 40
 const SIZE_SCALE := {"Tiny": 0.8, "Small": 1.1, "Medium": 1.5, "Large": 2.2, "Huge": 3.2, "Gargantuan": 4.5}
 const RIVAL_PRESETS := ["earthlike", "frozen_moon", "sulfur_world"]
+const DEFAULT_PORT := 7878
 
 
 ## What the scene shows for one arena unit; the simulation owns the rules.
@@ -56,6 +61,20 @@ var state: Dictionary = {}
 var log_lines: Array = []
 var rng := RandomNumberGenerator.new()
 
+# Online play.
+var net: RefCounted
+var online := false
+var my_team := 0
+var my_name := ""
+var pending_binds: Array = []
+var bound_tokens: Array = []
+var host_edit: LineEdit
+var name_edit: LineEdit
+var mode_select: OptionButton
+var online_button: Button
+var online_label: Label
+var match_end: Dictionary = {}
+
 var setup_panel: Control
 var roster_label: RichTextLabel
 var rival_label: RichTextLabel
@@ -83,6 +102,8 @@ func open(world_sim: RefCounted) -> void:
 
 
 func close() -> void:
+	if net:
+		net.close_connection()
 	closed.emit()
 	queue_free()
 
@@ -219,6 +240,31 @@ func _build_setup() -> void:
 	back.text = "Back to world"
 	back.pressed.connect(close)
 	buttons.add_child(back)
+
+	# Online: the server verifies your champions and finds an opponent.
+	var online_row := HBoxContainer.new()
+	v.add_child(online_row)
+	online_row.add_child(_label("Online — server"))
+	host_edit = LineEdit.new()
+	host_edit.text = "127.0.0.1:%d" % DEFAULT_PORT
+	host_edit.custom_minimum_size = Vector2(170, 0)
+	online_row.add_child(host_edit)
+	online_row.add_child(_label("Name"))
+	name_edit = LineEdit.new()
+	rng.randomize()
+	name_edit.text = "player%d" % (rng.randi() % 10000)
+	name_edit.custom_minimum_size = Vector2(120, 0)
+	online_row.add_child(name_edit)
+	mode_select = OptionButton.new()
+	mode_select.add_item("Ranked (permadeath)")
+	mode_select.add_item("Practice")
+	online_row.add_child(mode_select)
+	online_button = Button.new()
+	online_button.text = "Find online match"
+	online_button.pressed.connect(find_online_match)
+	online_row.add_child(online_button)
+	online_label = _label("")
+	v.add_child(online_label)
 
 
 func _label(text: String) -> Label:
@@ -359,6 +405,8 @@ func _process(delta: float) -> void:
 			rival_roster = roster_of(rival)
 			rival_ready = true
 			_refresh_setup()
+	if net:
+		_poll_net()
 	if running and not finished:
 		step(delta * speed)
 	_update_camera(delta)
@@ -399,7 +447,7 @@ func _spawn(entry: Dictionary, team: int) -> void:
 	ring.mesh = torus
 	var ring_mat := StandardMaterial3D.new()
 	ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	ring_mat.albedo_color = Color(0.35, 0.7, 1.0) if team == 0 else Color(1.0, 0.4, 0.35)
+	ring_mat.albedo_color = Color(0.35, 0.7, 1.0) if team == my_team else Color(1.0, 0.4, 0.35)
 	ring.material_override = ring_mat
 	ring.position.y = 0.05
 	holder.add_child(ring)
@@ -410,7 +458,7 @@ func _spawn(entry: Dictionary, team: int) -> void:
 	u.label.font_size = 28
 	u.label.pixel_size = 0.02
 	u.label.outline_size = 6
-	u.label.modulate = Color(0.6, 0.85, 1.0) if team == 0 else Color(1.0, 0.6, 0.55)
+	u.label.modulate = Color(0.6, 0.85, 1.0) if team == my_team else Color(1.0, 0.6, 0.55)
 	u.label.position = Vector3(0, SIZE_SCALE.get(size, 1.0) + 0.4, 0)
 	holder.add_child(u.label)
 	units.append(u)
@@ -443,11 +491,18 @@ func _build_battle_ui() -> void:
 	battle_ui.add_child(status_label)
 	var row := HBoxContainer.new()
 	battle_ui.add_child(row)
-	for sp in [1.0, 2.0, 4.0]:
-		var b := Button.new()
-		b.text = "×%d" % int(sp)
-		b.pressed.connect(func(): speed = sp)
-		row.add_child(b)
+	if online:
+		# The server sets the pace online.
+		var give_up := Button.new()
+		give_up.text = "Surrender"
+		give_up.pressed.connect(func(): net.surrender())
+		row.add_child(give_up)
+	else:
+		for sp in [1.0, 2.0, 4.0]:
+			var b := Button.new()
+			b.text = "×%d" % int(sp)
+			b.pressed.connect(func(): speed = sp)
+			row.add_child(b)
 	var back := Button.new()
 	back.text = "Back to world"
 	back.pressed.connect(close)
@@ -490,18 +545,22 @@ func _sync() -> void:
 		possessed = -1
 	for line in JSON.parse_string(arena_sim.events_json()):
 		_log(line)
-	var a := units.filter(func(u): return u.alive and u.team == 0).size()
-	var b := units.filter(func(u): return u.alive and u.team == 1).size()
+	var a := units.filter(func(u): return u.alive and u.team == my_team).size()
+	var b := units.filter(func(u): return u.alive and u.team != my_team).size()
 	if status_label:
 		status_label.text = "Your team: %d standing   ·   Rival: %d standing" % [a, b]
 	var result = state["result"]
 	if result != null and not finished:
 		finished = true
-		var fallen := units.filter(func(u): return not u.alive and u.team == 0).size()
-		var text := "[b][color=#77dd77]Victory![/color][/b]" if result == "a" else ("[b][color=#dd7777]Defeat.[/color][/b]" if result == "b" else "[b]Draw.[/b]")
-		_log("%s %d of your champions fell. (In the full game they would be lost forever and looted by the winner.)" % [text, fallen])
+		var won: bool = result == ("a" if my_team == 0 else "b")
+		var text := "[b][color=#77dd77]Victory![/color][/b]" if won else ("[b]Draw.[/b]" if result == "draw" else "[b][color=#dd7777]Defeat.[/color][/b]")
+		if online:
+			_log(text)
+		else:
+			var fallen := units.filter(func(u): return not u.alive and u.team == my_team).size()
+			_log("%s %d of your champions fell. (Online, in ranked matches, they would be lost forever.)" % [text, fallen])
 		if status_label:
-			status_label.text = "Victory!" if result == "a" else ("Defeat." if result == "b" else "Draw.")
+			status_label.text = "Victory!" if won else ("Draw." if result == "draw" else "Defeat.")
 
 
 ## Advances the battle by `dt` seconds of arena time.
@@ -510,6 +569,9 @@ func step(dt: float) -> void:
 		return
 	if possessed >= 0:
 		_steer_possessed()
+	if online:
+		_sync()
+		return
 	tick_budget += dt
 	var ticks := int(tick_budget / 0.1)
 	if ticks > 0:
@@ -578,7 +640,7 @@ func _pick_unit(pos: Vector2) -> void:
 	var best_d := 1.5
 	for i in units.size():
 		var u: Unit = units[i]
-		if not u.alive or u.team != 0:
+		if not u.alive or u.team != my_team:
 			continue
 		var c: Vector3 = u.node.position + Vector3(0, 0.8, 0)
 		var t := (c - from).dot(dir)
@@ -601,3 +663,117 @@ func _update_camera(delta: float) -> void:
 		camera.look_at(target + Vector3(0, 0.8, 0), Vector3.UP)
 	else:
 		_overview_camera()
+
+
+# --- Online -----------------------------------------------------------------
+
+## Connects to the arena server, binds the picked team and queues.
+func find_online_match() -> void:
+	if _team_cost(my_roster, my_counts) == 0:
+		online_label.text = "Pick at least one champion first."
+		return
+	var host := host_edit.text.strip_edges()
+	var port := DEFAULT_PORT
+	if host.contains(":"):
+		port = int(host.get_slice(":", 1))
+		host = host.get_slice(":", 0)
+	my_name = name_edit.text.strip_edges()
+	net = ClassDB.instantiate("NetClient")
+	net.connect_to(host, port, my_name)
+	online_button.disabled = true
+	online_label.text = "Connecting to %s:%d…" % [host, port]
+
+
+func _poll_net() -> void:
+	for msg in JSON.parse_string(net.poll()):
+		match str(msg["type"]):
+			"welcome":
+				online_label.text = "Signed in as %s (rating %.0f). The server is replaying your world to verify your champions…" % [msg["account"], msg["rating"]["rating"]]
+				pending_binds.clear()
+				bound_tokens.clear()
+				for c in my_roster:
+					for k in my_counts.get(c["key"], 0):
+						if net.bind(c["world"], c["kind"], c["id"]):
+							pending_binds.append(c)
+			"bound":
+				pending_binds.pop_front()
+				bound_tokens.append(int(msg["champion"]["token"]))
+				_queue_when_bound()
+			"rejected":
+				_log("Server: %s" % msg["reason"])
+				online_label.text = "Server: %s" % msg["reason"]
+				if msg["request"] == "bind":
+					pending_binds.pop_front()
+					_queue_when_bound()
+				else:
+					online_button.disabled = false
+			"queued":
+				online_label.text = "Waiting for an opponent (team cost %d, cap %d)…" % [msg["cost"], msg["cap"]]
+			"match_start":
+				_start_online_battle(msg)
+			"match_end":
+				_online_end(msg)
+			"disconnected":
+				online_label.text = "Disconnected: %s" % msg["reason"]
+				online_button.disabled = false
+				if running and not finished:
+					_log("[color=#dd7777]Disconnected: %s[/color]" % msg["reason"])
+				net = null
+				return
+
+
+func _queue_when_bound() -> void:
+	if not pending_binds.is_empty():
+		return
+	if bound_tokens.is_empty():
+		online_label.text = "None of your champions could be verified."
+		online_button.disabled = false
+		return
+	var mode := "practice" if mode_select.selected == 1 else "ranked"
+	net.queue(mode, cap, PackedInt64Array(bound_tokens))
+
+
+## Builds the scene from the server's rosters; the opponent's champions
+## arrive with their sheets and appearance.
+func _start_online_battle(msg: Dictionary) -> void:
+	online = true
+	my_team = int(msg["team"])
+	setup_panel.visible = false
+	arena_sim = net
+	for team in 2:
+		var sheets: Array = msg["rosters"][team]
+		var looks: Array = msg["looks"][team]
+		for i in sheets.size():
+			var look: Dictionary = looks[i]
+			var parts := []
+			for p in look["parts"]:
+				parts.append({"part": p["part"], "count": p["count"], "size": float(p["size_milli"]) / 1000.0})
+			var detail := {"parts": parts, "color": look["color"], "otherworldly": look["otherworldly"]}
+			_spawn({"name": sheets[i]["name"], "sheet": {"size": sheets[i]["size"]}, "detail": detail}, team)
+	_build_battle_ui()
+	running = true
+	_sync()
+	var foe: String = msg["players"][1 - my_team]
+	_log("[b]Online %s match against %s begins![/b]" % ["practice" if msg["mode"] == "practice" else "ranked", foe])
+
+
+func _online_end(msg: Dictionary) -> void:
+	match_end = msg
+	_sync()
+	if msg["surrendered"] != null:
+		_log("%s surrendered." % ("You" if int(msg["surrendered"]) == my_team else "Your opponent"))
+	for f in msg["fallen"]:
+		if f["kind"] == "individual":
+			_log("[color=#cc6666]%s fell forever[/color] (%s)." % [f["name"], f["account"]])
+			# Log the death at home, so the world replays without them.
+			if f["account"] == my_name and int(f["world_seed"]) == sim.seed():
+				sim.champion_fell(int(f["id"]))
+		else:
+			_log("%s lost a %s." % [f["account"], f["name"]])
+	if msg["rating"] != null:
+		_log("Your rating is now %.0f ± %.0f." % [msg["rating"]["rating"], msg["rating"]["deviation"]])
+	if msg.get("desynced", false):
+		_log("[color=#dd7777]Warning: this client fell out of step with the server.[/color]")
+	net.close_connection()
+	net = null
+

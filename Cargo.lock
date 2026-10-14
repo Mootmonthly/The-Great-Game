@@ -213,6 +213,7 @@ name = "great_game_ext"
 version = "0.1.0"
 dependencies = [
  "godot",
+ "net-proto",
  "serde_json",
  "sim-core",
 ]

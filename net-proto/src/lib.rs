@@ -43,6 +43,24 @@ pub enum QueueMode {
     Practice,
 }
 
+/// How a champion looks: enough for a client to build its 3D model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Appearance {
+    /// Species colour, hex RGB.
+    pub color: String,
+    pub parts: Vec<PartLook>,
+    pub otherworldly: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartLook {
+    /// Part name, e.g. "limb" or "tendril".
+    pub part: String,
+    pub count: u8,
+    /// Relative size, in thousandths.
+    pub size_milli: i64,
+}
+
 /// A verified champion. The server keeps the authoritative copy; clients
 /// refer to it by `token`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +74,7 @@ pub struct ChampionToken {
     pub name: String,
     pub cost: i64,
     pub sheet: CharacterSheet,
+    pub appearance: Appearance,
     /// Server signature (HMAC-SHA256, hex) over the token's contents.
     pub signature: String,
 }
@@ -141,6 +160,7 @@ pub enum ServerMsg {
         players: [String; 2],
         /// Both rosters, in unit order; tokens map units to champions.
         rosters: [Vec<CharacterSheet>; 2],
+        looks: [Vec<Appearance>; 2],
         tokens: [Vec<u64>; 2],
     },
     /// Apply these commands, then step the arena once.

@@ -396,6 +396,12 @@ A local, offline prototype (`game-client/arena.gd`), reached from the viewer's *
 
 At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is no recurring revenue. Option B keeps server costs a small fraction of that.
 
+**Implemented (Phase 3 prototype, `arena-server/`):**
+- The client uploads its world's seed and action log when it binds a champion. The server replays the log headless and rebuilds the sheet itself. It rejects a cost mismatch, a missing or dead being, or any edited log (an edit changes the world, so the claimed champion no longer matches).
+- Limits per verification: 200,000 actions and 10,000 simulated years, so one request cannot use unbounded CPU. Replays share half the server's cores.
+- A verified champion becomes a server-signed token (HMAC-SHA256). The server keeps the authoritative sheet and appearance; clients refer to champions only by token, so a client cannot alter them afterwards.
+- Not yet: signed checkpoints, so a re-bind replays only the new part of the log. Today every bind replays the whole history (about 25 ms per simulated year).
+
 ### 6.2a Permadeath
 
 - **Decided:** a champion that dies in the arena is dead forever.
@@ -407,7 +413,13 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
 - Death makes every match high stakes. A 1000-cost apex being can be lost in one defeat. This is intended tension, but needs supporting rules:
   - **Decided:** surrender ends a match early. Champions that already fell stay lost and are looted; survivors return home.
   - Clear pre-match preview of the opponent's total cost, but not their exact roster (proposed).
-  - Unranked practice queue against AI or friends with no permadeath (proposed).
+  - Unranked practice queue against AI or friends with no permadeath (proposed; a practice queue against other players exists in the prototype).
+- **Implemented (prototype):**
+  - In ranked matches, every champion whose unit falls is removed from its owner's account.
+  - Fallen named individuals go into a **ledger of the dead**, keyed by a fingerprint of the being: world seed, id, species, birth tick and name. No account can bind them again, from the same save or from any branch of their world replayed with different later actions. Reloading an old save does not bring a champion back.
+  - The client logs the death in its world (`Action::ChampionFell`), so the world replays without them.
+  - Species champions are rank-and-file members of a species. A fallen unit is lost, but the species lives on and can supply more units (proposed rule).
+  - Looting (bodies, gear) is not built yet; it waits for the Essence economy and equipment (§5.4).
 
 ### 6.3 Networking
 
@@ -415,6 +427,23 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
 - With up to 2000 units, replicating every unit's state is expensive. Recommended model: clients send inputs only; the server and clients all run the same deterministic arena simulation (lockstep with server validation, as in many RTS games). Client-side prediction smooths the possessed champion.
 - Matchmaking by rating (Glicko-2) per queue.
 - Steamworks for identity, friends, invites, and lobbies; dedicated servers on a cloud host for ranked play.
+
+**Implemented (Phase 3 prototype):**
+- **Server** (`arena-server serve`): a plain TCP server speaking newline-delimited JSON (`net-proto/`).
+  - One thread per connection.
+  - Each match runs on its own thread at 10 arena ticks per second.
+  - State is kept in a JSON file: accounts, ratings, champion tokens and the ledger of the dead.
+- **Matchmaking:** two queues, ranked and practice. Players are matched by queue and identical cost cap, against the closest Glicko-2 rating waiting.
+  - Teams are checked server-side: 1–500 champions, all owned, none already queued or fighting, total cost within the cap.
+  - The first ranked match moves a new rating by about ±160.
+- **Lockstep:**
+  - Clients send only commands for their own units. The server rewrites or drops commands for the other side.
+  - Each tick the server applies the commands, steps the authoritative arena and broadcasts that tick's commands. Clients step an identical arena.
+  - Every 50 ticks the server sends a state hash, and clients flag any desync.
+  - The match result and the fallen are decided by the server and signed.
+- **Surrender and disconnects:** surrender ends the match at once; the other side wins, the fallen stay fallen and survivors go home. Disconnecting during a match counts as surrender (proposed rule).
+- **Test tools:** `arena-server bot` is a headless player that evolves a world, binds champions, queues and lets the arena AI fight.
+- **Not yet:** Steam identity (names are taken on trust), TLS, reconnecting to a running match, client-side prediction of the possessed unit (commands take one round trip), cloud hosting, and the Essence economy.
 
 ### 6.4 Balance Risk
 
@@ -446,7 +475,8 @@ Procedurally generated champions plus player-written laws can produce degenerate
   laws/          Law modules and parameter validation
   rules/         Character sheet generation, cost calculation, combat resolution
 /game-client     Engine project: rendering, UI, god-mode tools, possession, arena client
-/arena-server    Headless dedicated server (uses sim-core/rules)
+/arena-server    Headless dedicated server (uses sim-core/rules) — implemented
+/net-proto       Client–server protocol and lockstep match mirror — implemented
 /backend         Accounts (Steam), matchmaking, champion snapshot storage, ratings
 /tools           Balance farm, data editors, world inspection tools
 /data            Substances, traits, archetypes, abilities, laws (JSON/TOML)
@@ -474,11 +504,13 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | 0.5 Prototype: Bodies & Minds | Body-part genomes, evolutionary milestones, brain genomes and temperament, named individuals with relationships, family tree view | Lineages progress from microbes to limbed, winged creatures; individuals form friendships and feuds; replay stays deterministic |
 | 1. Prototype: Sheet & Cost (done) | Genome → 5e sheet → cost. Headless auto-battler between two generated beings | Cost correlates with mock-battle win rate (target r > 0.8) |
 | 2. Vertical Slice (in progress) | 3D planet view, full planetary controls (rotation, orbit, moons, atmosphere), body plan synthesis, possession, local 1v1 arena with small armies | Playable start-to-arena loop offline |
-| 3. Online Alpha | Dedicated server, replay verification, matchmaking, permadeath, Essence economy, large-army arena (500 units per side) | Closed test with external players |
+| 3. Online Alpha (in progress) | Dedicated server, replay verification, matchmaking, permadeath, Essence economy, large-army arena (500 units per side) | Closed test with external players |
 | 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
 
 **Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules now run in the deterministic Rust core with replayable command logs. Natural/Godhand modes and star types are done. A prototype of the Veil and extradimensional beings (§4.4a, planned for phase 4) was pulled forward. Remaining: final art and the network layer.
+
+**Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, permadeath with a ledger of the dead, and online play from the arena screen. Remaining: Steam identity, cloud hosting, reconnects, client-side prediction, the Essence economy and looting, and large-army arena work (500 units per side).
 
 ## 9. Business Model
 
@@ -505,6 +537,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Sapience on Earth-like worlds | Almost always, given time; "never sapient" worlds come from unusual player choices (§4.4) |
 | — | Cost formula | Power = √(effective HP × damage per round), cost linear in power; commoner 1, ancient dragon about 310 (§5.3) |
 | — | Natural/Godhand and star types | Built as in §4.6: Natural is the default; Godhand strain thins the air and heats the world; eight star types with light quality, radiation and flares (numbers open to tuning) |
+| — | Online server (prototype rules) | Species champions are rank and file and can be bound again; named individuals die forever via a ledger of the dead; disconnecting mid-match counts as surrender; a practice queue exists (§6.2–6.3). Open to change |
 | — | Equipment | Gear attaches by body part, not body type; looted gear is refitted to other body plans at a cost; built in the content phase (§5.4) |
 | — | The Veil | Built as in §4.4a: a Veil law slider (0–100% open), reality strain and many moons thin it; beings from beyond feed on native minds and fade when the Veil is sealed (numbers open to tuning) |
 | — | Extradimensional beings | Included as a possibility, arriving through a thin Veil; extreme physics alone can let them in (§4.4a) |
