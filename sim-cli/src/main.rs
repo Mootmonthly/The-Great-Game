@@ -95,8 +95,12 @@ fn summary_line(w: &World) -> String {
         .max()
         .unwrap_or(Fx::ZERO);
     format!(
-        "year {:5}  T̄ {:7.1} K  P {:6.2} bar  species {:4} alive / {:5} ever  biomass {:9.1}  max size {:6.2}  max int {:4.2}",
+        "year {:5}  sapient {:3}  T̄ {:7.1} K  P {:6.2} bar  species {:4} alive / {:5} ever  biomass {:9.1}  max size {:6.2}  max int {:4.2}",
         w.year(),
+        living
+            .iter()
+            .filter(|s| s.has(sim_core::body::SAPIENCE))
+            .count(),
         w.mean_temperature.to_f64(),
         w.pressure.to_f64(),
         living.len(),

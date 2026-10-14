@@ -72,7 +72,7 @@ fn golden_hash() {
     );
 }
 
-const GOLDEN_EARTHLIKE_SEED1_200: &str = "d41814247221386f";
+const GOLDEN_EARTHLIKE_SEED1_200: &str = "092a1223cbdc2739";
 
 /// Same check on a world with named individuals, brains and relationships.
 #[test]
@@ -85,7 +85,7 @@ fn golden_hash_with_individuals() {
     );
 }
 
-const GOLDEN_FROZEN_MOON_SEED1_600: &str = "be6b421f307a876d";
+const GOLDEN_FROZEN_MOON_SEED1_600: &str = "a77c3d477d890906";
 
 #[test]
 fn different_chemistry_gives_different_life() {
@@ -174,5 +174,32 @@ fn named_individuals_form_relationships() {
     for x in &living {
         assert!((1..=30).contains(&x.charisma()));
         assert!(w.species_by_id(x.species).is_some());
+    }
+}
+
+/// Design rule (docs/GAME_DESIGN.md §4.4): an unmodified Earth-like world
+/// should almost always produce sapient life given time.
+#[test]
+fn earthlike_worlds_reach_sapience() {
+    use sim_core::body::SAPIENCE;
+    let handles: Vec<_> = (1..=3u64)
+        .map(|seed| {
+            std::thread::spawn(move || {
+                let w = run_preset("earthlike", seed, 4000);
+                (
+                    seed,
+                    w.living_species()
+                        .filter(|s| s.genome.milestones & SAPIENCE != 0)
+                        .count(),
+                )
+            })
+        })
+        .collect();
+    for h in handles {
+        let (seed, sapient) = h.join().unwrap();
+        assert!(
+            sapient > 0,
+            "earthlike seed {seed} has no sapient species after 1000 years"
+        );
     }
 }

@@ -121,6 +121,12 @@ impl Species {
         }
     }
 
+    /// Limbs or tentacles that can handle objects.
+    pub fn has_manipulators(&self) -> bool {
+        let b = &self.genome.body;
+        b.count(PartKind::Limb) + b.count(PartKind::Tentacle) >= 2
+    }
+
     /// Competitive strength when sharing a region with other species.
     /// Social species cooperate, which makes them stronger as a group.
     pub fn strength(&self) -> Fx {
@@ -132,7 +138,14 @@ impl Species {
             + t.intelligence * Fx::from_int(2)
             + t.offense * Fx::HALF
             + size / (size + Fx::from_int(5));
+        // Clever, social species with manipulators use tools and cooperate.
+        let tools = if self.has_manipulators() {
+            t.intelligence * self.temperament.sociability * Fx::from_int(2)
+        } else {
+            Fx::ZERO
+        };
         solo * (Fx::ONE + self.temperament.sociability * self.behaviour_weight() * Fx::ratio(4, 10))
+            + tools
     }
 
     /// Ability to catch prey: weapons, speed and aggression.
@@ -458,6 +471,43 @@ impl World {
         self.migration();
         self.speciation();
         self.census();
+        self.awakening();
+    }
+
+    /// Sapience can also arise within an existing species: a clever, social
+    /// species with manipulators may awaken in any season, not only when a
+    /// new species splits off. This makes sapience nearly certain on a
+    /// stable, Earth-like world given enough time.
+    fn awakening(&mut self) {
+        // Each sapient species already alive makes another awakening less
+        // likely: the first peoples crowd out would-be rivals.
+        let mut sapient = self
+            .living_species()
+            .filter(|s| s.has(body::SAPIENCE))
+            .count() as i64;
+        for k in 0..self.species.len() {
+            let s = &self.species[k];
+            if !s.is_alive()
+                || s.has(body::SAPIENCE)
+                || !s.has(body::NERVOUS)
+                || s.biomass < Fx::from_int(5)
+                || s.traits.intelligence < Fx::ratio(35, 100)
+                || !s.has_manipulators()
+                || s.temperament.sociability < Fx::ratio(4, 10)
+            {
+                continue;
+            }
+            if self
+                .rng
+                .chance(Fx::ratio(3, 1000) / Fx::from_int((1 + sapient) * (1 + sapient)))
+            {
+                sapient += 1;
+                let s = &mut self.species[k];
+                s.genome.milestones |= body::SAPIENCE;
+                s.genome.body.grow(PartKind::Brain, 1, Fx::ONE, None);
+                s.traits = s.genome.body.traits(s.genome.size);
+            }
+        }
     }
 
     /// Life arises spontaneously in empty, viable regions.
@@ -673,7 +723,7 @@ impl World {
             while k < self.regions[i].populations.len() {
                 let p = self.regions[i].populations[k].clone();
                 k += 1;
-                if p.biomass < Fx::from_int(2) || living >= MAX_LIVING_SPECIES + 100 {
+                if p.biomass < Fx::from_int(2) {
                     continue;
                 }
                 // Speciation slows as the planet fills with species.
@@ -681,7 +731,16 @@ impl World {
                 // species then replace old ones through competition.
                 let crowding = (Fx::ONE - Fx::ratio(living as i64, MAX_LIVING_SPECIES as i64))
                     .max(Fx::ratio(25, 100));
-                if !self.rng.chance(Fx::ratio(3, 1000) * crowding) {
+                // Sapient lineages split into new species far less often:
+                // a handful of peoples, not hundreds.
+                let parent_sapient =
+                    self.species[self.species_index(p.species)].has(body::SAPIENCE);
+                let rate = if parent_sapient {
+                    Fx::ratio(3, 10000)
+                } else {
+                    Fx::ratio(3, 1000)
+                };
+                if !self.rng.chance(rate * crowding) {
                     continue;
                 }
                 let parent = self.species[self.species_index(p.species)].clone();
@@ -736,10 +795,9 @@ impl World {
                 self.planet.gravity <= Fx::from_int(2) && self.pressure >= Fx::ratio(15, 100)
             }
             body::SAPIENCE => {
-                let b = &parent.genome.body;
-                parent.traits.intelligence >= Fx::ratio(4, 10)
-                    && b.count(PartKind::Limb) + b.count(PartKind::Tentacle) >= 2
-                    && parent.temperament.sociability >= Fx::HALF
+                parent.traits.intelligence >= Fx::ratio(35, 100)
+                    && parent.has_manipulators()
+                    && parent.temperament.sociability >= Fx::ratio(4, 10)
             }
             _ => true,
         }
@@ -758,7 +816,7 @@ impl World {
                 continue;
             }
             let chance = if m.flag == body::SAPIENCE {
-                Fx::ratio(2, 100)
+                Fx::ratio(5, 100)
             } else {
                 Fx::ratio(8, 100)
             };
@@ -783,10 +841,20 @@ impl World {
         if self.rng.chance(Fx::HALF) {
             body.mutate(&mut self.rng, milestones, gland);
         }
-        // Brains are costly but pay off in competition; nudge lineages with a
-        // nervous system towards bigger brains so sapience is reachable.
-        if milestones & body::NERVOUS != 0 && self.rng.chance(Fx::ratio(15, 100)) {
-            body.enlarge(PartKind::Brain, Fx::ratio(12, 10));
+        // Brains are costly but pay off in competition. As with hands, social
+        // life and brains on Earth, manipulators and sociability feed back
+        // into bigger brains, so lineages with both converge on sapience.
+        if milestones & body::NERVOUS != 0 {
+            let mut chance = Fx::ratio(15, 100);
+            if parent.has_manipulators() {
+                chance += Fx::ratio(15, 100);
+                if parent.temperament.sociability >= Fx::ratio(45, 100) {
+                    chance += Fx::ratio(2, 10);
+                }
+            }
+            if self.rng.chance(chance) {
+                body.enlarge(PartKind::Brain, Fx::ratio(12, 10));
+            }
         }
 
         // Usually a small change in body size; occasionally a leap into a new
@@ -836,6 +904,29 @@ impl World {
             if s.is_alive() && s.range == 0 {
                 s.extinct_tick = Some(tick);
             }
+        }
+        // Over the hard cap, the rarest species die out. This keeps the
+        // simulation bounded without freezing evolution on a full planet.
+        let mut living = self.living_count();
+        while living > MAX_LIVING_SPECIES + 100 {
+            let Some(k) = self
+                .species
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.is_alive())
+                .min_by_key(|(_, s)| (s.biomass, s.id))
+                .map(|(k, _)| k)
+            else {
+                break;
+            };
+            let id = self.species[k].id;
+            self.species[k].extinct_tick = Some(tick);
+            self.species[k].biomass = Fx::ZERO;
+            self.species[k].range = 0;
+            for r in &mut self.regions {
+                r.populations.retain(|p| p.species != id);
+            }
+            living -= 1;
         }
         while self.species.len() > MAX_SPECIES_RECORDS {
             match self.species.iter().position(|s| !s.is_alive()) {

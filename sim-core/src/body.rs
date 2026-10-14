@@ -251,7 +251,7 @@ impl Body {
         BodyTraits {
             armor: sat(shell * Fx::HALF, Fx::ONE),
             speed,
-            intelligence: sat(brain, Fx::from_int(3)),
+            intelligence: sat(brain, Fx::from_int(2)),
             offense: sat(weapons, Fx::ratio(15, 10)),
             photosynthesis: sat(self.mass(PartKind::Leaf), Fx::from_int(2)),
             perception: sat(self.mass(PartKind::Eye), Fx::from_int(2)),
