@@ -104,6 +104,22 @@ func _initialize() -> void:
 		check(main.individual_detail.text.contains("Character sheet"), "individual detail shows a character sheet")
 	check(main.individual_markers.size() > 0, "individual markers are drawn on the map")
 
+	# Arena: a mirror match against this world's own roster, stepped to the end.
+	main.open_arena()
+	var arena = main.arena
+	check(arena.my_roster.size() > 0, "arena lists champions from this world")
+	arena.use_rival_roster(arena.roster_of(sim))
+	arena._start_battle()
+	check(arena.units.size() >= 2, "arena spawns both teams")
+	var steps := 0
+	while not arena.finished and steps < 4000:
+		arena.step(0.25)
+		steps += 1
+	check(arena.finished, "arena battle reaches a result")
+	arena.close()
+	await process_frame
+	check(main.arena == null, "leaving the arena returns to the world")
+
 	main.preset_select.select(4)
 	main._new_world()
 	main._advance(400)
