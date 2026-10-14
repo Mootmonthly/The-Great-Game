@@ -277,7 +277,7 @@ Every individual can produce a sheet in a 5e-compatible format:
 - Senses (darkvision, tremorsense, blindsight, truesight).
 - Languages (for sapient beings).
 - **Innate abilities:** actions, bonus actions, reactions, legendary actions where earned.
-- **Equipment:** for beings in tool-using civilizations.
+- **Equipment:** for beings in tool-using civilizations. See §5.4.
 
 **Mapping simulation to sheet (implemented, `sim-core/src/sheet.rs`):**
 - **Ability scores:** STR from body size (log scale), limbs and weapons; DEX from speed, reduced by bulk; CON from size and armour; INT from brain size (+4 if sapient); WIS from eyes, caution and age; CHA from sociability, or for named individuals from friendships and renown. A human-sized, unremarkable body scores about 10 in each; an elephant-sized one has STR about 22.
@@ -322,6 +322,26 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 - Ability scores may exceed the 5e cap of 30 for extreme beings. The cost formula stays monotonic beyond that range.
 - Equipment adds power by the same offence/defence evaluation and is part of the champion's locked loadout (later phase).
 - The sheet UI shows the cost breakdown (effective HP, damage per round, power, utility, abilities) so players understand why a being costs what it costs.
+
+### 5.4 Equipment (decided, built in the content phase)
+
+- **Gear fits body parts, not body types (decided).** There is no "humanoid only" rule. Each item attaches to a kind of part, and any being with that part can use it:
+
+  | Part | Gear |
+  |---|---|
+  | Limbs with manipulators | Held weapons, shields, tools |
+  | Tentacles | Held weapons, one per pair |
+  | Jaws | Jaw-held or jaw-mounted weapons (blade bits, iron fangs) |
+  | Body and segments | Armour shaped to the body plan: plates, barding, shell inlays |
+  | Wings | Wing blades, light harness |
+  | Glands | Breath foci that widen or lengthen a breath weapon |
+  | Brain (sapient or telepathic) | Mind foci, charms |
+  | Parts from beyond the Veil | Unique relics: void shards, phase anchors |
+
+- **Making and using (proposed detail):** only sapient, tool-using civilizations make gear. Passive gear (armour, barding, charms) works on any body it fits. Active gear (held weapons, foci) also needs enough Intelligence to use well.
+- **Unique gear by chemistry:** items carry the substance, damage type and laws of the world that made them. For example, silicon life forges heat-proof crystal blades, and beings from beyond make relics no native can craft.
+- **Refitting looted gear (decided):** looted gear can be refitted to a different body plan at a cost (cost unit to be set: resources, Essence or time). Until refitted, it fits only bodies with the parts it was made for.
+- **Timing (decided):** built in the content phase (roadmap phase 4).
 
 ## 6. Arena
 
@@ -485,6 +505,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Sapience on Earth-like worlds | Almost always, given time; "never sapient" worlds come from unusual player choices (§4.4) |
 | — | Cost formula | Power = √(effective HP × damage per round), cost linear in power; commoner 1, ancient dragon about 310 (§5.3) |
 | — | Natural/Godhand and star types | Built as in §4.6: Natural is the default; Godhand strain thins the air and heats the world; eight star types with light quality, radiation and flares (numbers open to tuning) |
+| — | Equipment | Gear attaches by body part, not body type; looted gear is refitted to other body plans at a cost; built in the content phase (§5.4) |
 | — | The Veil | Built as in §4.4a: a Veil law slider (0–100% open), reality strain and many moons thin it; beings from beyond feed on native minds and fade when the Veil is sealed (numbers open to tuning) |
 | — | Extradimensional beings | Included as a possibility, arriving through a thin Veil; extreme physics alone can let them in (§4.4a) |
 
@@ -492,5 +513,5 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 Deferred until the world simulation is complete:
 
-1. Arena match structure: map types, match length, and victory conditions (§6.1).
+1. Arena match structure: map types, match length, and victory conditions (§6.1). The owner finds the current arena bare-bones; it will be revisited after the online server.
 2. Practice queue details (§6.2a).
