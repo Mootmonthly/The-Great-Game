@@ -35,7 +35,7 @@
 
 - **Essence** (working name) is the bridge currency. **Decided:** every world starts with a free set of basic resources. Players earn Essence by defeating other players in the arena and spend it to add extra and new resources beyond the basics.
 - Essence cannot be bought with real money (see §9). Paid Essence would be pay-to-win in a competitive game with permadeath.
-- **Snowball risk:** winners earn more resources, which makes them stronger. Mitigations to test: losers earn a small consolation amount; rating-based matchmaking keeps opponents close in strength; diminishing Essence from repeat wins against much weaker players.
+- **Snowball risk:** winners earn Essence and loot (§6.2a), which makes them stronger. Losers get nothing. Mitigations to test: rating-based matchmaking keeps opponents close in strength; diminishing Essence and loot value from repeat wins against much weaker players.
 
 ## 4. World Simulation
 
@@ -106,11 +106,11 @@ Each triad combination produces a **Biochemistry Profile**. The profile constrai
 **Physics coupling:** in real physics, orbital period follows from distance and star mass, and gravity follows from planet mass and radius. Two modes are proposed:
 
 - **Natural mode:** linked values update together. Unstable configurations (for example, moons too close or too many) degrade over time with visible consequences such as tidal breakup or moons colliding.
-- **Godhand mode:** each value is set independently, which is physically impossible but fun. **[OPEN]** Decide whether Godhand mode is allowed in ranked worlds.
+- **Godhand mode:** each value is set independently, which is physically impossible but fun. **Decided:** allowed in ranked worlds. Godhand worlds are hard to make viable: impossible settings cause harsh side effects (for example, extreme tidal stress, atmosphere loss, or runaway heating), so only skilled players get good results.
 
 Extra and exotic resources (rare elements, unusual molecules, more moons, unusual star types) are unlocked with Essence.
 
-**Post-launch metaphysical laws (assumed, to confirm):** the metaphysical laws below expand the game after launch. They are rule modules that change simulation equations and unlock new traits and abilities. Each law has tunable parameters.
+**Decided launch set: metaphysical laws.** Arcane Magic, Soul Power, and Daoist Cultivation ship at launch alongside the planetary controls. Divine Favour and further Altered Physics are post-launch candidates. Metaphysical laws are rule modules that change simulation equations and unlock new traits and abilities. Each law has tunable parameters.
 
 | Law | Effect on simulation | Example parameters |
 |---|---|---|
@@ -120,7 +120,7 @@ Extra and exotic resources (rare elements, unusual molecules, more moons, unusua
 | Divine Favour | Worship generates energy for the player and grants blessings | Faith decay, miracle cost |
 | Altered Physics | Change speed of sound, heat flow, entropy rate beyond the launch controls | Multipliers within safe bounds |
 
-Laws can stack. Their interactions are the main source of emergent variety. **[OPEN]** Confirm which metaphysical laws, if any, ship at launch.
+Laws can stack. Their interactions are the main source of emergent variety.
 
 ### 4.7 Player Interaction (God Mode)
 
@@ -182,7 +182,8 @@ Cost   = clamp(round(1 + 999 · (Power / PowerCap)^0.7), 1, 1000)
 - **Control scheme (proposed):** armies of any size need two control layers:
   - **Command layer (RTS-style):** select units or groups, issue move/attack/hold orders, set AI stances (aggressive, defensive, follow).
   - **Possession layer (action-style):** take direct third-person control of any one champion at a time and trigger its innate abilities from hotkeys. Switch between champions freely.
-- **Scale target:** up to about 2000 units per match (1000 per side). This requires an ECS-style arena simulation, crowd pathfinding, GPU-instanced rendering, and animation level of detail for distant units. **[OPEN]** Confirm the maximum unit count; a hard cap (for example 500 per side) is much cheaper to build.
+- **Decided: unit cap of 500 per side** (1000 per match) for launch. Reassess once the game is built. Even this scale requires an ECS-style arena simulation, crowd pathfinding, GPU-instanced rendering, and animation level of detail for distant units.
+- With a 1000 cost cap and a 500-unit cap, the cheapest legal army is 500 two-cost units, or a mix such as 400 one-cost units plus higher-cost champions.
 - **Translating 5e to real time:** turns become cooldowns. One "round" = 6 seconds. Actions have a cooldown or charge model; attack rolls happen on hit (accuracy vs. AC) so tabletop stats still matter; saves resolve against ability DCs. Legendary actions become extra charges.
 
 ### 6.2 Champion Binding and Integrity
@@ -214,9 +215,13 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
 ### 6.2a Permadeath
 
 - **Decided:** a champion that dies in the arena is dead forever.
-- The dead individual is removed from its home world. Its species, descendants, and civilization continue. **[OPEN]** Confirm removal from the world, and whether its body, relics, or equipment can return as world items or legends.
+- The dead individual is removed from its home world. Its species, descendants, and civilization continue.
+- **Decided: loot.** The bodies and gear of every fallen champion go to the victorious player. The loser gets nothing.
+  - **Bodies** become resources in the winner's world. Example: a fallen dragon's scales become a rare material, or a goo demon's remains introduce a new substance that may seed new life.
+  - **Gear** goes to the winner's inventory and can be equipped on the winner's own beings. Gear keeps its own properties, even if it comes from laws the winner's world does not use. Equipped loot counts toward the wearer's cost.
+  - **Integrity:** the server issues every loot grant as a signed record. Loot enters the winner's action log, so replay verification (§6.2) accepts it.
 - Death makes every match high stakes. A 1000-cost apex being can be lost in one defeat. This is intended tension, but needs supporting rules:
-  - Surrender/retreat option that ends a match early with a smaller loss (proposed).
+  - Surrender option that ends a match early. Champions that already fell stay lost and are looted; survivors return home (proposed).
   - Clear pre-match preview of the opponent's total cost, but not their exact roster (proposed).
   - Unranked practice queue against AI or friends with no permadeath (proposed).
 
@@ -277,8 +282,8 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | 0. Prototype: Petri Dish | Godot 4 + Rust sim-core. 2D top-down. 10 substances, temperature, gravity, star distance; life triad; species populations evolve. Determinism test across Windows and Linux | Two seeds with different chemistry produce visibly different life; identical replay hashes on both platforms; measured sim cost per world-hour |
 | 1. Prototype: Sheet & Cost | Genome → 5e sheet → cost. Headless auto-battler between two generated beings | Cost correlates with mock-battle win rate (target r > 0.8) |
 | 2. Vertical Slice | 3D planet view, full planetary controls (rotation, orbit, moons, atmosphere), body plan synthesis, possession, local 1v1 arena with small armies | Playable start-to-arena loop offline |
-| 3. Online Alpha | Dedicated server, replay verification, matchmaking, permadeath, Essence economy, large-army arena (target 2000 units) | Closed test with external players |
-| 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Cultivation, Soul), archetypes, equipment | Sapient civs emerge in some fraction of worlds |
+| 3. Online Alpha | Dedicated server, replay verification, matchmaking, permadeath, Essence economy, large-army arena (500 units per side) | Closed test with external players |
+| 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
 
 ## 9. Business Model
@@ -294,18 +299,16 @@ Procedurally generated champions plus player-written laws can produce degenerate
 |---|---|---|
 | 1 | Engine | Godot 4, with a Rust sim-core |
 | 2 | World progression | Gated: free basic resources; Essence earned by defeating players unlocks extra and new resources |
-| 3 | Launch law set | Planetary and physical controls: temperature, planet and atmosphere composition, gravity, rotation, star distance and orbit, moons (count and orbits) |
-| 4 | Arena team size | Variable, limited only by cost cap; cost scale raised to 1–1000 |
+| 3 | Launch law set | Planetary and physical controls (temperature, planet and atmosphere composition, gravity, rotation, star distance and orbit, moons), plus Arcane Magic, Soul Power, and Daoist Cultivation |
+| 4 | Arena team size | Variable, limited by cost cap (1–1000 scale) and 500 units per side |
 | 5 | Anti-cheat | Strict; replay verification recommended (§6.2) |
 | 6 | Art direction | Pending: comparing a World of Warcraft-like stylised look against photorealism |
 | 7 | Business model | Box price on Steam, about $10–20 |
-| — | Champion death | Permanent |
+| — | Champion death | Permanent; winner loots all bodies and gear, loser gets nothing |
+| — | Godhand mode | Allowed in ranked; hard to make viable |
 
 ## 11. Open Questions
 
 1. Art direction: stylised or photorealistic (§10, row 6). Stylised recommended: procedural bodies of unknown anatomy look uncanny in photorealism, 2000-unit battles need cheap rendering, and Godot's renderer suits stylised art better.
 2. Anti-cheat approach: confirm Option B, replay verification (§6.2).
-3. Godhand mode (physically impossible settings) in ranked worlds (§4.6).
-4. Which metaphysical laws, if any, ship at launch (§4.6).
-5. Maximum arena unit count (§6.1).
-6. Permadeath details: removal from home world, relics, surrender rules (§6.2a).
+3. Surrender rules and practice queue details (§6.2a).
