@@ -112,6 +112,7 @@ fn physics_alone_can_thin_the_veil() {
 #[test]
 fn many_moons_thin_the_veil() {
     let mut w = earthlike(6, 0);
+    w.planet.moon_slots = 6; // Bought with Essence.
     for k in 0..6 {
         w.apply(Action::AddMoon {
             mass: Fx::ratio(1, 10),

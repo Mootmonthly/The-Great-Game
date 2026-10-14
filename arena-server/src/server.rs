@@ -403,8 +403,14 @@ fn serve_client(
             ClientMsg::Ping => {
                 let _ = tx.send(ServerMsg::Pong);
             }
-            ClientMsg::Bind { log, kind, id, cost } => {
-                let reply = bind(shared, name, &log, kind, id, cost);
+            ClientMsg::Bind {
+                log,
+                moon,
+                kind,
+                id,
+                cost,
+            } => {
+                let reply = bind(shared, name, &log, moon, kind, id, cost);
                 let _ = tx.send(reply);
             }
             ClientMsg::Queue {
@@ -444,12 +450,13 @@ fn bind(
     shared: &Shared,
     account: &str,
     log: &sim_core::ActionLog,
+    moon: Option<u8>,
     kind: ChampionKind,
     id: u32,
     cost: i64,
 ) -> ServerMsg {
     shared.verifying.acquire();
-    let verified = verify_with(Some(&shared.checkpoints), &shared.signer, account, log, kind, id, cost);
+    let verified = verify_with(Some(&shared.checkpoints), &shared.signer, account, log, moon, kind, id, cost);
     shared.verifying.release();
     let v = match verified {
         Ok(v) => v,
@@ -498,6 +505,7 @@ fn bind(
         account: account.to_string(),
         kind,
         world_seed: log.seed,
+        moon,
         id,
         name: v.name,
         cost,
@@ -793,6 +801,7 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
                     account: account.clone(),
                     kind: c.token.kind,
                     world_seed: c.token.world_seed,
+                    moon: c.token.moon,
                     id: c.token.id,
                     name: c.token.name,
                 });

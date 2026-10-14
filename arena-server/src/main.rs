@@ -206,7 +206,14 @@ fn bot(args: &[String]) {
                 ChampionKind::Species => println!("lost a {} ({})", f.name, f.account),
             }
             if f.account == name && f.kind == ChampionKind::Individual && f.world_seed == seed {
-                world.apply(Action::ChampionFell { individual: f.id });
+                let fell = Action::ChampionFell { individual: f.id };
+                world.apply(match f.moon {
+                    Some(moon) => Action::OnMoon {
+                        moon,
+                        action: Box::new(fell),
+                    },
+                    None => fell,
+                });
             }
         }
         if let Some(r) = rating {

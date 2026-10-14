@@ -211,6 +211,7 @@ fn forged_and_invalid_requests_are_refused() {
     // Lying about the cost.
     a.send(&ClientMsg::Bind {
         log: w.log().clone(),
+        moon: None,
         kind: ChampionKind::Individual,
         id,
         cost: real + 50,
@@ -239,6 +240,7 @@ fn forged_and_invalid_requests_are_refused() {
     );
     a.send(&ClientMsg::Bind {
         log: forged,
+        moon: None,
         kind: ChampionKind::Individual,
         id,
         cost: real,
@@ -498,6 +500,7 @@ fn the_winner_loots_the_fallen_and_earns_essence() {
     winner
         .send(&ClientMsg::Bind {
             log: forged,
+            moon: None,
             kind: ChampionKind::Species,
             id: s,
             cost,

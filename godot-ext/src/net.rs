@@ -239,19 +239,26 @@ impl NetClient {
 
     /// Asks the server to verify a champion from `world` ("species" or
     /// "individual"). The server replays the world's log to check it.
+    /// `moon` is the moon the being lives on, or -1 for the planet.
     #[func]
-    fn bind(&mut self, world: Gd<SimWorld>, kind: GString, id: i64) -> bool {
+    fn bind(&mut self, world: Gd<SimWorld>, kind: GString, id: i64, moon: i64) -> bool {
         let kind = match kind.to_string().as_str() {
             "species" => ChampionKind::Species,
             "individual" => ChampionKind::Individual,
             _ => return false,
         };
         let w = &world.bind().world;
-        let Some(sheet) = local_sheet(w, kind, id as u32) else {
+        let moon = u8::try_from(moon).ok();
+        let home = match moon {
+            Some(k) => w.moon(k as usize),
+            None => Some(w),
+        };
+        let Some(sheet) = home.and_then(|h| local_sheet(h, kind, id as u32)) else {
             return false;
         };
         self.send(ClientMsg::Bind {
             log: w.log().clone(),
+            moon,
             kind,
             id: id as u32,
             cost: sheet.cost.cost,

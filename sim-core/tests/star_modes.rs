@@ -96,7 +96,7 @@ fn godhand_allows_impossible_values_at_a_cost() {
 }
 
 #[test]
-fn distant_moons_escape_in_natural_but_not_godhand() {
+fn distant_moons_are_drawn_in_in_natural_but_not_godhand() {
     let mut natural = earthlike(4);
     let mut god = earthlike(4);
     god.apply(Action::SetGodhand { on: true });
@@ -107,12 +107,13 @@ fn distant_moons_escape_in_natural_but_not_godhand() {
             distance: far,
         });
     }
-    assert!(natural.planet.moons.is_empty());
-    assert_eq!(god.planet.moons.len(), 1);
+    // A moon is a world: Natural keeps it, on the farthest stable orbit.
+    assert_eq!(natural.planet.moons[0].distance, natural.planet.moon_limit());
+    assert_eq!(god.planet.moons[0].distance, far);
     assert!(god.planet.strain() > Fx::ZERO);
-    // Switching back to Natural lets it go.
+    // Switching back to Natural draws it in.
     god.apply(Action::SetGodhand { on: false });
-    assert!(god.planet.moons.is_empty());
+    assert_eq!(god.planet.moons[0].distance, god.planet.moon_limit());
     assert_eq!(god.planet.strain(), Fx::ZERO);
 }
 

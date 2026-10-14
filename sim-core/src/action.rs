@@ -45,8 +45,14 @@ pub enum Action {
     SetAxialTilt { degrees: Fx },
     /// Adds a moon: mass in lunar masses, distance in Earth–Moon distances.
     AddMoon { mass: Fx, distance: Fx },
-    /// Removes the moon at `index` (moons are sorted by distance).
+    /// Removes the moon at `index` (moons are sorted by distance), and the
+    /// world on it.
     RemoveMoon { index: u8 },
+    /// Moves the moon at `moon` to a new orbit, in Earth–Moon distances.
+    SetMoonOrbit { moon: u8, distance: Fx },
+    /// An action on the world of the moon at `moon` (§4.6 moon worlds).
+    /// Star and orbit controls, time and moons belong to the planet.
+    OnMoon { moon: u8, action: Box<Action> },
     /// Natural mode (false) or Godhand mode (true).
     SetGodhand { on: bool },
     /// Star type, by index into `star::STARS`. Resets the star's mass.

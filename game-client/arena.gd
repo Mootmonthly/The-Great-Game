@@ -294,7 +294,24 @@ func _label(text: String) -> Label:
 ## Candidate champions from a world: the strongest species (any number of
 ## copies) and the most renowned named individuals (one each).
 static func roster_of(world_sim: RefCounted) -> Array:
+	var out: Array = _roster_here(world_sim, -1)
+	# Every moon is a world of its own: read each one in turn, then put the
+	# viewer's focus back.
+	var focus: int = world_sim.focused_moon()
+	var moon_count: int = JSON.parse_string(world_sim.moons_json())["moons"].size()
+	for k in moon_count:
+		if world_sim.focus_moon(k):
+			out.append_array(_roster_here(world_sim, k))
+	world_sim.focus_moon(focus)
+	return out
+
+
+## Champions of the world the simulation is focused on. `moon` is -1 for the
+## planet, else the moon's index; it tags entries and keeps their keys unique.
+static func _roster_here(world_sim: RefCounted, moon: int) -> Array:
 	var out: Array = []
+	var prefix := "" if moon < 0 else "m%d:" % moon
+	var suffix := "" if moon < 0 else " (Moon %d)" % (moon + 1)
 	var species: Array = JSON.parse_string(world_sim.species_json(500))
 	species.sort_custom(func(a, b): return a["cost"] > b["cost"])
 	var seen := {}
@@ -306,7 +323,7 @@ static func roster_of(world_sim: RefCounted) -> Array:
 		seen[s["description"]] = true
 		var detail = JSON.parse_string(world_sim.species_detail_json(int(s["id"])))
 		var sheet = JSON.parse_string(world_sim.sheet_json("species", int(s["id"])))
-		out.append({"key": "s%d" % int(s["id"]), "name": s["name"], "hero": false, "detail": detail, "sheet": sheet, "cost": int(sheet["cost"]),
+		out.append({"key": "%ss%d" % [prefix, int(s["id"])], "name": s["name"] + suffix, "moon": moon, "hero": false, "detail": detail, "sheet": sheet, "cost": int(sheet["cost"]),
 			"kind": "species", "id": int(s["id"]), "world": world_sim})
 	var people: Array = JSON.parse_string(world_sim.individuals_json(300))
 	people.sort_custom(func(a, b): return (a["cost"] if a["cost"] != null else 0) > (b["cost"] if b["cost"] != null else 0))
@@ -315,7 +332,7 @@ static func roster_of(world_sim: RefCounted) -> Array:
 		var detail = JSON.parse_string(world_sim.species_detail_json(int(p["species_id"])))
 		if sheet == null or detail == null:
 			continue
-		out.append({"key": "i%d" % int(p["id"]), "name": p["title"], "hero": true, "detail": detail, "sheet": sheet, "cost": int(sheet["cost"]),
+		out.append({"key": "%si%d" % [prefix, int(p["id"])], "name": p["title"] + suffix, "moon": moon, "hero": true, "detail": detail, "sheet": sheet, "cost": int(sheet["cost"]),
 			"kind": "individual", "id": int(p["id"]), "world": world_sim})
 	return out
 
@@ -491,7 +508,7 @@ func _start_battle() -> void:
 	for pair in [[my_roster, my_counts, 0], [rival_roster, rival_counts, 1]]:
 		for c in pair[0]:
 			for k in pair[1].get(c["key"], 0):
-				if arena_sim.add_unit(c["world"], c["kind"], c["id"], pair[2]):
+				if arena_sim.add_unit(c["world"], c["kind"], c["id"], pair[2], c.get("moon", -1)):
 					_spawn(c, pair[2])
 	arena_sim.start(rng.randi())
 	_build_battle_ui()
@@ -743,7 +760,7 @@ func _poll_net() -> void:
 					bound_tokens.clear()
 					for c in my_roster:
 						for k in my_counts.get(c["key"], 0):
-							if net.bind(c["world"], c["kind"], c["id"]):
+							if net.bind(c["world"], c["kind"], c["id"], c.get("moon", -1)):
 								pending_binds.append(c)
 			"bound":
 				pending_binds.pop_front()
@@ -828,7 +845,7 @@ func _online_end(msg: Dictionary) -> void:
 			_log("[color=#cc6666]%s fell forever[/color] (%s)." % [f["name"], f["account"]])
 			# Log the death at home, so the world replays without them.
 			if f["account"] == my_name and int(f["world_seed"]) == sim.seed():
-				sim.champion_fell(int(f["id"]))
+				sim.champion_fell(int(f["id"]), int(f["moon"]) if f.get("moon") != null else -1)
 		else:
 			_log("%s lost a %s." % [f["account"], f["name"]])
 	if msg["rating"] != null:

@@ -124,11 +124,27 @@ impl Client {
         kind: ChampionKind,
         id: u32,
     ) -> io::Result<Result<ChampionToken, String>> {
-        let Some(sheet) = local_sheet(world, kind, id) else {
+        self.bind_from(world, None, kind, id)
+    }
+
+    /// Binds a champion from moon `moon` of `world` (or the planet itself).
+    pub fn bind_from(
+        &mut self,
+        world: &World,
+        moon: Option<u8>,
+        kind: ChampionKind,
+        id: u32,
+    ) -> io::Result<Result<ChampionToken, String>> {
+        let home = match moon {
+            Some(k) => world.moon(k as usize),
+            None => Some(world),
+        };
+        let Some(sheet) = home.and_then(|w| local_sheet(w, kind, id)) else {
             return Ok(Err("no such being".into()));
         };
         self.send(&ClientMsg::Bind {
             log: world.log().clone(),
+            moon,
             kind,
             id,
             cost: sheet.cost.cost,
