@@ -2,18 +2,15 @@ extends Control
 ## Local arena prototype (roadmap Phase 2): champions from your world fight
 ## champions from a rival world under a shared cost cap.
 ##
-## Combat follows the character sheets in real time: one 5e "round" is
-## ROUND_SECONDS of arena time. Units walk to the nearest enemy and attack;
-## breath weapons recharge on 5–6. Click a friendly unit to possess it: WASD
-## moves it, Space attacks, Q breathes, Esc releases it.
-##
-## This is a client-side prototype. The real arena will run the same rules
-## on the server (docs/GAME_DESIGN.md §6.3).
+## The match itself runs in the Rust core (`ArenaSim`, sim-core/src/arena.rs):
+## deterministic, so a server can replay it from the rosters, seed and
+## player commands (docs/GAME_DESIGN.md §6.3). This script only renders it
+## and forwards input. Click a friendly unit to possess it: WASD moves it,
+## Space attacks, Q breathes, Esc releases it.
 
 signal closed
 
 const CreatureBuilder := preload("res://creature_builder.gd")
-const ROUND_SECONDS := 1.5
 const ARENA_RADIUS := 16.0
 const CAPS := [25, 50, 100, 250, 1000]
 const MAX_UNITS_PER_SIDE := 40
@@ -21,22 +18,17 @@ const SIZE_SCALE := {"Tiny": 0.8, "Small": 1.1, "Medium": 1.5, "Large": 2.2, "Hu
 const RIVAL_PRESETS := ["earthlike", "frozen_moon", "sulfur_world"]
 
 
+## What the scene shows for one arena unit; the simulation owns the rules.
 class Unit:
 	extends RefCounted
-	var sheet: Dictionary
-	var detail: Dictionary
-	var team := 0
 	var node: Node3D
 	var label: Label3D
-	var hp := 1
-	var max_hp := 1
-	var ac := 10
-	var move_speed := 2.0
-	var radius := 0.5
-	var breath_ready := true
-	var cooldown := 0.0
+	var team := 0
+	var name := ""
 	var alive := true
-	var facing := Vector3.FORWARD
+	var hp := 0
+	var max_hp := 0
+	var radius := 0.5
 
 
 var sim: RefCounted
@@ -56,7 +48,11 @@ var units: Array = []
 var running := false
 var finished := false
 var speed := 1.0
-var possessed: Unit
+var possessed := -1
+var arena_sim: RefCounted
+var tick_budget := 0.0
+var last_steer := Vector2.ZERO
+var state: Dictionary = {}
 var log_lines: Array = []
 var rng := RandomNumberGenerator.new()
 
@@ -246,7 +242,8 @@ static func roster_of(world_sim: RefCounted) -> Array:
 		seen[s["description"]] = true
 		var detail = JSON.parse_string(world_sim.species_detail_json(int(s["id"])))
 		var sheet = JSON.parse_string(world_sim.sheet_json("species", int(s["id"])))
-		out.append({"key": "s%d" % int(s["id"]), "name": s["name"], "hero": false, "detail": detail, "sheet": sheet, "cost": int(sheet["cost"])})
+		out.append({"key": "s%d" % int(s["id"]), "name": s["name"], "hero": false, "detail": detail, "sheet": sheet, "cost": int(sheet["cost"]),
+			"kind": "species", "id": int(s["id"]), "world": world_sim})
 	var people: Array = JSON.parse_string(world_sim.individuals_json(300))
 	people.sort_custom(func(a, b): return (a["cost"] if a["cost"] != null else 0) > (b["cost"] if b["cost"] != null else 0))
 	for p in people.slice(0, 4):
@@ -254,7 +251,8 @@ static func roster_of(world_sim: RefCounted) -> Array:
 		var detail = JSON.parse_string(world_sim.species_detail_json(int(p["species_id"])))
 		if sheet == null or detail == null:
 			continue
-		out.append({"key": "i%d" % int(p["id"]), "name": p["title"], "hero": true, "detail": detail, "sheet": sheet, "cost": int(sheet["cost"])})
+		out.append({"key": "i%d" % int(p["id"]), "name": p["title"], "hero": true, "detail": detail, "sheet": sheet, "cost": int(sheet["cost"]),
+			"kind": "individual", "id": int(p["id"]), "world": world_sim})
 	return out
 
 
@@ -379,21 +377,15 @@ func use_rival_roster(roster: Array, preset := "test") -> void:
 
 # --- Battle -----------------------------------------------------------------
 
-func _spawn(entry: Dictionary, team: int, index: int, count: int) -> void:
+func _spawn(entry: Dictionary, team: int) -> void:
 	var u := Unit.new()
-	u.sheet = entry["sheet"]
-	u.detail = entry["detail"]
 	u.team = team
-	u.max_hp = int(u.sheet["hit_points"])
-	u.hp = u.max_hp
-	u.ac = int(u.sheet["armor_class"])
-	var sp: Dictionary = u.sheet["speed"]
-	var best_speed: int = max(max(int(sp["walk"]), int(sp["swim"])), max(int(sp["fly"]), 10))
-	u.move_speed = 0.6 + best_speed / 12.0
-	var model := CreatureBuilder.build(u.detail)
+	u.name = entry["name"]
+	var size: String = entry["sheet"]["size"]
+	var model := CreatureBuilder.build(entry["detail"])
 	var box := CreatureBuilder.bounds(model)
 	var extent: float = max(box.size.x, max(box.size.y, box.size.z))
-	var s: float = SIZE_SCALE.get(u.sheet["size"], 1.0) / max(extent, 0.01)
+	var s: float = SIZE_SCALE.get(size, 1.0) / max(extent, 0.01)
 	model.scale = Vector3.ONE * s
 	model.position = Vector3(-box.get_center().x * s, -box.position.y * s, -box.get_center().z * s)
 	var holder := Node3D.new()
@@ -401,7 +393,7 @@ func _spawn(entry: Dictionary, team: int, index: int, count: int) -> void:
 	# Team ring on the ground: blue for you, red for the rival.
 	var ring := MeshInstance3D.new()
 	var torus := TorusMesh.new()
-	var size_r: float = SIZE_SCALE.get(u.sheet["size"], 1.0) * 0.55
+	var size_r: float = SIZE_SCALE.get(size, 1.0) * 0.55
 	torus.inner_radius = size_r
 	torus.outer_radius = size_r + 0.12
 	ring.mesh = torus
@@ -412,12 +404,6 @@ func _spawn(entry: Dictionary, team: int, index: int, count: int) -> void:
 	ring.position.y = 0.05
 	holder.add_child(ring)
 	world.add_child(holder)
-	u.radius = SIZE_SCALE.get(u.sheet["size"], 1.0) * 0.5
-	var row := index / 8
-	var col := index % 8
-	var side := -1.0 if team == 0 else 1.0
-	holder.position = Vector3((col - 3.5) * 2.6, 0, side * (ARENA_RADIUS * 0.55 + row * 2.6))
-	holder.look_at(Vector3(holder.position.x, 0, 0), Vector3.UP, true)
 	u.node = holder
 	u.label = Label3D.new()
 	u.label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -425,26 +411,26 @@ func _spawn(entry: Dictionary, team: int, index: int, count: int) -> void:
 	u.label.pixel_size = 0.02
 	u.label.outline_size = 6
 	u.label.modulate = Color(0.6, 0.85, 1.0) if team == 0 else Color(1.0, 0.6, 0.55)
-	u.label.position = Vector3(0, SIZE_SCALE.get(u.sheet["size"], 1.0) + 0.4, 0)
+	u.label.position = Vector3(0, SIZE_SCALE.get(size, 1.0) + 0.4, 0)
 	holder.add_child(u.label)
-	_update_label(u)
 	units.append(u)
 
 
 func _start_battle() -> void:
 	setup_panel.visible = false
+	arena_sim = ClassDB.instantiate("ArenaSim")
 	var rival_counts := _auto_pick(rival_roster)
+	# Units are added in the same order as their scene nodes, so index i in
+	# the simulation is units[i] here.
 	for pair in [[my_roster, my_counts, 0], [rival_roster, rival_counts, 1]]:
-		var index := 0
-		var total := 0
-		for c in pair[0]:
-			total += pair[1].get(c["key"], 0)
 		for c in pair[0]:
 			for k in pair[1].get(c["key"], 0):
-				_spawn(c, pair[2], index, total)
-				index += 1
+				if arena_sim.add_unit(c["world"], c["kind"], c["id"], pair[2]):
+					_spawn(c, pair[2])
+	arena_sim.start(rng.randi())
 	_build_battle_ui()
 	running = true
+	_sync()
 	_log("[b]The battle begins![/b]")
 
 
@@ -484,200 +470,93 @@ func _log(text: String) -> void:
 		log_label.text = "\n".join(log_lines)
 
 
-func _update_label(u: Unit) -> void:
-	var name: String = u.sheet["name"]
-	u.label.text = "%s\n%d/%d%s" % [name, max(u.hp, 0), u.max_hp, "  ◆" if u == possessed else ""]
-
-
-func _alive(team: int) -> Array:
-	return units.filter(func(u): return u.alive and u.team == team)
-
-
-func _nearest_enemy(u: Unit) -> Unit:
-	var best: Unit = null
-	var best_d := INF
-	for e: Unit in units:
-		if e.alive and e.team != u.team:
-			var d := u.node.position.distance_squared_to(e.node.position)
-			if d < best_d:
-				best_d = d
-				best = e
-	return best
-
-
-func _roll(dice: int, sides: int) -> int:
-	var total := 0
-	for i in dice:
-		total += rng.randi_range(1, max(sides, 1))
-	return total
-
-
-func _damage_after_defences(target: Unit, damage: int, kind: String) -> int:
-	if kind in target.sheet["immunities"]:
-		return 0
-	if kind in target.sheet["resistances"]:
-		return damage / 2
-	if kind in target.sheet["vulnerabilities"]:
-		return damage * 2
-	return damage
-
-
-func _hurt(target: Unit, amount: int, attacker: Unit, what: String) -> void:
-	target.hp -= amount
-	_update_label(target)
-	if target.hp <= 0 and target.alive:
-		target.alive = false
-		target.node.visible = false
-		if target == possessed:
-			possessed = null
-		_log("%s [color=#cc6666]falls[/color] to %s's %s." % [target.sheet["name"], attacker.sheet["name"], what])
-
-
-func _attack(u: Unit, target: Unit) -> void:
-	var allies := _alive(u.team).size()
-	for a in u.sheet["attacks"]:
-		for k in int(a["uses"]):
-			if not target.alive:
-				return
-			var natural := rng.randi_range(1, 20)
-			var bonus := int(a["to_hit"]) + (2 if u.sheet["pack_tactics"] and allies > 1 else 0)
-			if natural == 1 or (natural != 20 and natural + bonus < target.ac):
-				continue
-			var dice := int(a["dice"]) * (2 if natural == 20 else 1)
-			var dmg: int = max(_roll(dice, int(a["die"])) + int(a["bonus"]), 1)
-			_hurt(target, _damage_after_defences(target, dmg, a["damage"]), u, a["name"].to_lower())
-
-
-func _breathe(u: Unit) -> void:
-	var b: Dictionary = u.sheet["breath"]
-	u.breath_ready = false
-	var damage := _roll(int(b["dice"]), 6)
-	# The cone hits the closest enemies in front of the breather.
-	var targets: Array = units.filter(func(e): return e.alive and e.team != u.team and u.facing.dot((e.node.position - u.node.position).normalized()) > 0.3)
-	targets.sort_custom(func(a, c): return u.node.position.distance_squared_to(a.node.position) < u.node.position.distance_squared_to(c.node.position))
-	var hit := 0
-	for t: Unit in targets.slice(0, int(b["targets"])):
-		var save_mod: int = int(t.sheet["abilities"][int(b["save_ability"])]["modifier"])
-		var dealt := damage / 2 if rng.randi_range(1, 20) + save_mod >= int(b["dc"]) else damage
-		_hurt(t, _damage_after_defences(t, dealt, b["damage"]), u, b["name"].to_lower())
-		hit += 1
-	_log("%s uses %s (%d %s)." % [u.sheet["name"], b["name"], hit, "target" if hit == 1 else "targets"])
-
-
-func _reach(u: Unit, t: Unit) -> float:
-	return u.radius + t.radius + 0.6
+## Copies the simulation state onto the scene.
+func _sync() -> void:
+	state = JSON.parse_string(arena_sim.state_json())
+	var su: Array = state["units"]
+	for i in units.size():
+		var u: Unit = units[i]
+		var d: Dictionary = su[i]
+		u.alive = d["alive"]
+		u.hp = int(d["hp"])
+		u.max_hp = int(d["max_hp"])
+		u.node.visible = u.alive
+		u.node.position = Vector3(d["x"], 0, d["z"])
+		var facing := Vector3(d["fx"], 0, d["fz"])
+		if facing.length() > 0.01:
+			u.node.look_at(u.node.position + facing, Vector3.UP, true)
+		u.label.text = "%s\n%d/%d%s" % [u.name, max(u.hp, 0), u.max_hp, "  ◆" if i == possessed else ""]
+	if possessed >= 0 and not units[possessed].alive:
+		possessed = -1
+	for line in JSON.parse_string(arena_sim.events_json()):
+		_log(line)
+	var a := units.filter(func(u): return u.alive and u.team == 0).size()
+	var b := units.filter(func(u): return u.alive and u.team == 1).size()
+	if status_label:
+		status_label.text = "Your team: %d standing   ·   Rival: %d standing" % [a, b]
+	var result = state["result"]
+	if result != null and not finished:
+		finished = true
+		var fallen := units.filter(func(u): return not u.alive and u.team == 0).size()
+		var text := "[b][color=#77dd77]Victory![/color][/b]" if result == "a" else ("[b][color=#dd7777]Defeat.[/color][/b]" if result == "b" else "[b]Draw.[/b]")
+		_log("%s %d of your champions fell. (In the full game they would be lost forever and looted by the winner.)" % [text, fallen])
+		if status_label:
+			status_label.text = "Victory!" if result == "a" else ("Defeat." if result == "b" else "Draw.")
 
 
 ## Advances the battle by `dt` seconds of arena time.
 func step(dt: float) -> void:
-	if finished:
+	if finished or arena_sim == null:
 		return
-	for u: Unit in units:
-		if not u.alive:
-			continue
-		u.cooldown -= dt
-		var target := _nearest_enemy(u)
-		if target == null:
-			break
-		var to_target := target.node.position - u.node.position
-		to_target.y = 0.0
-		var dist := to_target.length()
-		if u == possessed:
-			_possessed_move(u, dt)
-		elif dist > _reach(u, target):
-			var dir := to_target / maxf(dist, 0.001)
-			# Keep apart from allies so crowds spread out.
-			for o: Unit in units:
-				if o != u and o.alive and o.team == u.team:
-					var away := u.node.position - o.node.position
-					var d := away.length()
-					if d < u.radius + o.radius and d > 0.001:
-						dir += away / d * 0.6
-			dir.y = 0.0
-			u.facing = dir.normalized()
-			u.node.position += u.facing * u.move_speed * dt
-			var flat := Vector2(u.node.position.x, u.node.position.z)
-			if flat.length() > ARENA_RADIUS:
-				flat = flat.normalized() * ARENA_RADIUS
-				u.node.position = Vector3(flat.x, 0, flat.y)
-		elif dist > 0.001:
-			u.facing = to_target / dist
-		if u.facing.length() > 0.01:
-			u.node.look_at(u.node.position + u.facing, Vector3.UP, true)
-		if u == possessed:
-			continue
-		# One action per round.
-		if u.cooldown <= 0.0:
-			u.cooldown = ROUND_SECONDS
-			if not u.breath_ready and rng.randi_range(1, 6) >= 5:
-				u.breath_ready = true
-			var regen := int(u.sheet["regeneration"])
-			if regen > 0:
-				u.hp = min(u.hp + regen, u.max_hp)
-				_update_label(u)
-			if u.breath_ready and u.sheet["breath"] != null and dist < 6.0:
-				_breathe(u)
-			elif dist <= _reach(u, target):
-				_attack(u, target)
-	var a := _alive(0).size()
-	var b := _alive(1).size()
-	if status_label:
-		status_label.text = "Your team: %d standing   ·   Rival: %d standing" % [a, b]
-	if a == 0 or b == 0:
-		finished = true
-		var fallen := units.filter(func(u): return not u.alive and u.team == 0).size()
-		var result := "[b][color=#77dd77]Victory![/color][/b]" if b == 0 else "[b][color=#dd7777]Defeat.[/color][/b]"
-		_log("%s %d of your champions fell. (In the full game they would be lost forever and looted by the winner.)" % [result, fallen])
-		if status_label:
-			status_label.text = "Victory!" if b == 0 else "Defeat."
+	if possessed >= 0:
+		_steer_possessed()
+	tick_budget += dt
+	var ticks := int(tick_budget / 0.1)
+	if ticks > 0:
+		tick_budget -= ticks * 0.1
+		arena_sim.step(ticks)
+		_sync()
 
 
 # --- Possession -------------------------------------------------------------
 
-func _possessed_move(u: Unit, dt: float) -> void:
-	var input := Vector3.ZERO
+func _steer_possessed() -> void:
+	var input := Vector2.ZERO
 	if Input.is_key_pressed(KEY_W):
-		input.z -= 1.0
+		input.y -= 1.0
 	if Input.is_key_pressed(KEY_S):
-		input.z += 1.0
+		input.y += 1.0
 	if Input.is_key_pressed(KEY_A):
 		input.x -= 1.0
 	if Input.is_key_pressed(KEY_D):
 		input.x += 1.0
-	if input == Vector3.ZERO:
-		return
 	# Movement is relative to the follow camera.
-	var basis := Basis(Vector3.UP, cam_yaw)
-	var dir := (basis * input).normalized()
-	u.facing = dir
-	u.node.position += dir * u.move_speed * 1.2 * dt
+	var dir3 := Basis(Vector3.UP, cam_yaw) * Vector3(input.x, 0, input.y)
+	var dir := Vector2(dir3.x, dir3.z)
+	if dir.distance_to(last_steer) > 0.01:
+		last_steer = dir
+		arena_sim.steer(possessed, dir.x, dir.y)
 
 
-func possess(u: Unit) -> void:
-	var previous := possessed
-	possessed = u
-	if previous:
-		_update_label(previous)
-	if u:
-		_update_label(u)
-		_log("You possess %s." % u.sheet["name"])
+func possess(index: int) -> void:
+	possessed = index
+	last_steer = Vector2.ZERO
+	arena_sim.possess(index)
+	if index >= 0:
+		_log("You possess %s." % units[index].name)
+	_sync()
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
-	if not (event is InputEventKey and event.pressed):
+	if not (event is InputEventKey and event.pressed) or arena_sim == null:
 		return
 	if event.keycode == KEY_ESCAPE:
-		possess(null)
-	elif possessed and possessed.alive:
-		var u := possessed
-		if event.keycode == KEY_SPACE and u.cooldown <= 0.0:
-			var t := _nearest_enemy(u)
-			if t and u.node.position.distance_to(t.node.position) <= _reach(u, t) + 0.5:
-				u.cooldown = ROUND_SECONDS
-				_attack(u, t)
-		elif event.keycode == KEY_Q and u.breath_ready and u.sheet["breath"] != null and u.cooldown <= 0.0:
-			u.cooldown = ROUND_SECONDS
-			_breathe(u)
+		possess(-1)
+	elif possessed >= 0:
+		if event.keycode == KEY_SPACE:
+			arena_sim.attack(possessed)
+		elif event.keycode == KEY_Q:
+			arena_sim.breathe(possessed)
 
 
 var dragging := false
@@ -688,33 +567,34 @@ func _on_view_input(event: InputEvent) -> void:
 		dragging = event.pressed
 		if event.pressed and running:
 			_pick_unit(event.position)
-	elif event is InputEventMouseMotion and dragging and possessed == null:
+	elif event is InputEventMouseMotion and dragging and possessed < 0:
 		cam_yaw -= event.relative.x * 0.005
 
 
 func _pick_unit(pos: Vector2) -> void:
 	var from := camera.project_ray_origin(pos)
 	var dir := camera.project_ray_normal(pos)
-	var best: Unit = null
+	var best := -1
 	var best_d := 1.5
-	for u: Unit in units:
+	for i in units.size():
+		var u: Unit = units[i]
 		if not u.alive or u.team != 0:
 			continue
-		var c: Vector3 = u.node.position + Vector3(0, u.radius, 0)
+		var c: Vector3 = u.node.position + Vector3(0, 0.8, 0)
 		var t := (c - from).dot(dir)
 		var d := (from + dir * t).distance_to(c)
 		if d < best_d:
 			best_d = d
-			best = u
-	if best:
+			best = i
+	if best >= 0:
 		possess(best)
 
 
 func _update_camera(delta: float) -> void:
 	if camera == null:
 		return
-	if possessed and possessed.alive:
-		var target := possessed.node.position
+	if possessed >= 0 and units[possessed].alive:
+		var target: Vector3 = units[possessed].node.position
 		var back := Basis(Vector3.UP, cam_yaw) * Vector3(0, 0, 1)
 		var want := target + back * 9.0 + Vector3(0, 6.0, 0)
 		camera.position = camera.position.lerp(want, clampf(delta * 4.0, 0.0, 1.0))
