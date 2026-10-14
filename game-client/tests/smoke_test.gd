@@ -120,6 +120,26 @@ func _initialize() -> void:
 	await process_frame
 	check(main.arena == null, "leaving the arena returns to the world")
 
+	# Visit a region with life and possess one of its creatures.
+	var cell := Vector2i(-1, -1)
+	for y in sim.height():
+		for x in sim.width():
+			var reg: Dictionary = JSON.parse_string(sim.region_json(x, y))
+			if reg["populations"].size() > 0 and cell.x < 0:
+				cell = Vector2i(x, y)
+	main.visit_region(cell)
+	var lv = main.local_view
+	check(lv.wanderers.size() > 0, "region visit spawns creatures from its populations")
+	var before: String = JSON.parse_string(sim.status_json())["hash"]
+	lv.possess(lv.wanderers[0])
+	for i in 10:
+		lv._process(0.1)
+	check(lv.possessed != null and lv.hud.text.begins_with("Possessing"), "a creature can be possessed in first person")
+	check(JSON.parse_string(sim.status_json())["hash"] == before, "possession does not change the world")
+	lv.close()
+	await process_frame
+	check(main.local_view == null, "leaving the region returns to the world")
+
 	main.preset_select.select(4)
 	main._new_world()
 	main._advance(400)

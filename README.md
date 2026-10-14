@@ -63,6 +63,7 @@ If the viewer says "The simulation extension is not loaded", step 6 did not fini
 - **God tools:** pick a tool, then click or drag on the map. **Add substance** and **Remove substance** use the selected substance, amount and radius. **Heat** and **Cool** change local temperature by 10 K per unit of amount. **Inspect** shows a region's chemistry, its best life triad, and the species living there.
 - **Planet:** drag the sliders to change star distance, star luminosity, gravity, global temperature, day length and axial tilt. The change applies when you release the slider.
 - **Moons:** add moons with a mass and distance, or remove the outermost. Close, heavy moons heat the planet with tides; a moon closer than 0.3 Earth–Moon distances is torn into rings.
+- **Visit a region:** inspect a region, then click **Visit this region** to see it at ground level with its creatures wandering about. Click a creature to possess it and look through its eyes (WASD to move, drag to look, Esc to release). Visiting never changes the world.
 - **Arena:** click **Enter the arena** to pick champions from your world under a cost cap and fight a rival world's champions. A rival world evolves while you choose. During the battle, click one of your units (blue rings) to possess it: WASD moves, Space attacks, Q breathes, Esc releases. Speed buttons run the fight at ×1, ×2 or ×4.
 - **Save / Load:** saves the world's action log to your Godot user folder and replays it on load. The state hash under the status panel should be identical after loading.
 
