@@ -6,6 +6,7 @@
 
 - **Genre:** God-game / evolution sandbox + competitive arena battler.
 - **Platform:** Standalone downloadable PC game (Windows first, then Linux/Steam Deck, macOS). Distributed on Steam and similar storefronts. Not a browser game.
+- **Art style:** stylised, in the spirit of World of Warcraft: exaggerated proportions, bold silhouettes, hand-painted textures, saturated colour. This suits procedural creatures of unknown anatomy, keeps large battles cheap to render, and fits Godot's renderer.
 - **Fantasy:** You are the architect of a world. You seed it with matter, tune its physics and metaphysics, and watch life emerge in whatever form your rules allow. Then you take the best of what your world produced and send it to fight the creations of other gods.
 
 ## 2. Core Pillars
@@ -176,7 +177,7 @@ Cost   = clamp(round(1 + 999 · (Power / PowerCap)^0.7), 1, 1000)
 
 ### 6.1 Mode
 
-- **Format:** 1v1 player matches at launch.
+- **Format:** 1v1 player matches at launch. Map types, match length, and victory conditions are deferred until the world simulation is complete.
 - **Decided: team size is variable.** The only limit is the total cost cap. Example with a 1000 cap: one player brings 1000 one-cost chumps; the other brings a single 1000-cost neutron-star dragon. Both are legal.
 - **Cost cap:** fixed per queue. Default queue: 1000. Suggested extra queues: skirmish (250), duel (1 champion, 1000 cap), unlimited casual.
 - **Control scheme (proposed):** armies of any size need two control layers:
@@ -200,7 +201,7 @@ Cost   = clamp(round(1 + 999 · (Power / PowerCap)^0.7), 1, 1000)
 - Ongoing cost per active player. Rough estimate: 0.25–1 vCPU per running world at about $0.02–0.05 per vCPU-hour, so about $0.005–0.05 per player-hour. A player with 100 hours costs about $0.50–5.00. If worlds keep evolving while the player is offline, cost rises to about $45–440 per world per year. This must be avoided.
 - These numbers are order-of-magnitude assumptions. Prototype measurements in Phase 0 will replace them.
 
-**Option B — deterministic replay verification (recommended).** The client runs the world. The server re-runs it to verify.
+**Option B — deterministic replay verification (decided).** The client runs the world. The server re-runs it to verify.
 
 - The sim-core is fully deterministic (fixed-point maths, seeded PRNG). A world is fully described by its seed plus the player's action log.
 - The client uploads the action log (kilobytes, not gigabytes) whenever the player binds a champion.
@@ -221,7 +222,7 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
   - **Gear** goes to the winner's inventory and can be equipped on the winner's own beings. Gear keeps its own properties, even if it comes from laws the winner's world does not use. Equipped loot counts toward the wearer's cost.
   - **Integrity:** the server issues every loot grant as a signed record. Loot enters the winner's action log, so replay verification (§6.2) accepts it.
 - Death makes every match high stakes. A 1000-cost apex being can be lost in one defeat. This is intended tension, but needs supporting rules:
-  - Surrender option that ends a match early. Champions that already fell stay lost and are looted; survivors return home (proposed).
+  - **Decided:** surrender ends a match early. Champions that already fell stay lost and are looted; survivors return home.
   - Clear pre-match preview of the opponent's total cost, but not their exact roster (proposed).
   - Unranked practice queue against AI or friends with no permadeath (proposed).
 
@@ -301,14 +302,16 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | 2 | World progression | Gated: free basic resources; Essence earned by defeating players unlocks extra and new resources |
 | 3 | Launch law set | Planetary and physical controls (temperature, planet and atmosphere composition, gravity, rotation, star distance and orbit, moons), plus Arcane Magic, Soul Power, and Daoist Cultivation |
 | 4 | Arena team size | Variable, limited by cost cap (1–1000 scale) and 500 units per side |
-| 5 | Anti-cheat | Strict; replay verification recommended (§6.2) |
-| 6 | Art direction | Pending: comparing a World of Warcraft-like stylised look against photorealism |
+| 5 | Anti-cheat | Strict; Option B, deterministic replay verification (§6.2) |
+| 6 | Art direction | Stylised, World of Warcraft-like |
 | 7 | Business model | Box price on Steam, about $10–20 |
 | — | Champion death | Permanent; winner loots all bodies and gear, loser gets nothing |
 | — | Godhand mode | Allowed in ranked; hard to make viable |
+| — | Surrender | Allowed; fallen champions are looted, survivors return home |
 
 ## 11. Open Questions
 
-1. Art direction: stylised or photorealistic (§10, row 6). Stylised recommended: procedural bodies of unknown anatomy look uncanny in photorealism, 2000-unit battles need cheap rendering, and Godot's renderer suits stylised art better.
-2. Anti-cheat approach: confirm Option B, replay verification (§6.2).
-3. Surrender rules and practice queue details (§6.2a).
+Deferred until the world simulation is complete:
+
+1. Arena match structure: map types, match length, and victory conditions (§6.1).
+2. Practice queue details (§6.2a).
