@@ -71,6 +71,9 @@ pub struct ChampionToken {
     pub account: String,
     pub kind: ChampionKind,
     pub world_seed: u64,
+    /// The moon of that world it lives on, if any.
+    #[serde(default)]
+    pub moon: Option<u8>,
     /// Species or individual id in its home world.
     pub id: u32,
     pub name: String,
@@ -88,6 +91,8 @@ pub struct Fallen {
     pub account: String,
     pub kind: ChampionKind,
     pub world_seed: u64,
+    #[serde(default)]
+    pub moon: Option<u8>,
     pub id: u32,
     pub name: String,
 }
@@ -119,9 +124,12 @@ pub enum ClientMsg {
         version: u32,
         auth: Auth,
     },
-    /// Verify a champion from this world log.
+    /// Verify a champion from this world log (from its moon `moon`, if
+    /// given).
     Bind {
         log: ActionLog,
+        #[serde(default)]
+        moon: Option<u8>,
         kind: ChampionKind,
         id: u32,
         /// The cost the client computed; must match the server's.

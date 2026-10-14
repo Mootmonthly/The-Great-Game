@@ -46,7 +46,33 @@ pub struct Planet {
     pub planet_radius: Fx,
     /// Tick of the most recent stellar flare, if any.
     pub last_flare_tick: Option<u64>,
+    /// How many moons this world may hold: one free, more bought with
+    /// Essence (§3).
+    #[serde(default = "one")]
+    pub moon_slots: u8,
+    /// For a moon's world: the planet it orbits.
+    #[serde(default)]
+    pub host: Option<Host>,
 }
+
+fn one() -> u8 {
+    1
+}
+
+/// The planet a moon world orbits, as the moon sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Host {
+    /// Planet mass and radius relative to Earth.
+    pub mass: Fx,
+    pub radius: Fx,
+    /// Orbit in Earth–Moon distances.
+    pub distance: Fx,
+}
+
+/// The Moon's mass in Earth masses.
+pub const LUNAR_MASS: Fx = Fx::ratio(123, 10000);
+/// A rocky moon's density relative to Earth's (the Moon: 3.34 / 5.51).
+const MOON_DENSITY: Fx = Fx::ratio(606, 1000);
 
 /// A moon. Mass in lunar masses, distance in Earth–Moon distances.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +103,8 @@ impl Default for Planet {
             planet_mass: Fx::ONE,
             planet_radius: Fx::ONE,
             last_flare_tick: None,
+            moon_slots: 1,
+            host: None,
         }
     }
 }
@@ -120,54 +148,60 @@ impl Planet {
         }
         let off = |actual: Fx, natural: Fx| (actual / natural.max(Fx::ratio(1, 10000))).log2().abs();
         let limit = self.moon_limit();
-        let unstable = self.moons.iter().filter(|m| m.distance > limit).count() as i64;
+        let unstable = self
+            .moons
+            .iter()
+            .filter(|m| m.distance > limit || m.distance < ROCHE_LIMIT)
+            .count() as i64;
         (off(self.gravity, self.natural_gravity()) + off(self.star_luminosity, self.natural_luminosity()) + Fx::ratio(unstable, 2))
             .min(Fx::from_int(20))
     }
 
-    /// In Natural mode, recomputes linked values and lets moons beyond the
-    /// stable limit escape.
+    /// In Natural mode, recomputes linked values and keeps moons between
+    /// the Roche limit and the stable limit. A moon is drawn in, never
+    /// lost, when the stable limit shrinks: each moon is a world.
     pub fn enforce_natural(&mut self) {
         if self.godhand {
             return;
         }
         self.gravity = self.natural_gravity().clamp(Fx::ratio(1, 100), Fx::from_int(50));
         self.star_luminosity = self.natural_luminosity();
-        let limit = self.moon_limit();
-        self.moons.retain(|m| m.distance <= limit);
+        let limit = self.moon_limit().max(ROCHE_LIMIT);
+        for m in &mut self.moons {
+            m.distance = m.distance.clamp(ROCHE_LIMIT, limit);
+        }
     }
 
-    /// Tidal strength relative to Earth's Moon: Σ mass / distance³.
+    /// Tidal strength relative to Earth's Moon: Σ mass / distance³. A moon
+    /// world also feels its planet: tidally locked, it flexes only a
+    /// little (5% of the planet's pull), as Io does.
     pub fn tidal_strength(&self) -> Fx {
-        self.moons.iter().fold(Fx::ZERO, |acc, m| {
+        let moons = self.moons.iter().fold(Fx::ZERO, |acc, m| {
             let d = m.distance.max(ROCHE_LIMIT);
             acc + m.mass / (d * d * d)
+        });
+        let host = self.host.map_or(Fx::ZERO, |h| {
+            let d = h.distance.max(ROCHE_LIMIT);
+            h.mass / LUNAR_MASS / (d * d * d) * Fx::ratio(5, 100)
+        });
+        moons + host
+    }
+
+    /// For a moon world: the share of each orbit spent in the planet's
+    /// shadow, radius / (π × distance × 60.3 Earth radii).
+    pub fn eclipse_fraction(&self) -> Fx {
+        self.host.map_or(Fx::ZERO, |h| {
+            let d = h.distance.max(Fx::ratio(5, 100));
+            (h.radius / (Fx::ratio(314159, 100000) * d * Fx::ratio(603, 10))).min(Fx::HALF)
         })
     }
 
-    /// Adds a moon. Too close and it is torn into rings; at nearly the same
-    /// orbit as another moon, the two collide and merge.
-    pub fn add_moon(&mut self, mass: Fx, distance: Fx) {
-        let mass = mass.clamp(Fx::ratio(1, 100), Fx::from_int(50));
-        let distance = distance.clamp(Fx::ratio(5, 100), Fx::from_int(50));
-        if distance < ROCHE_LIMIT {
-            self.rings += mass;
-            return;
-        }
-        if let Some(m) = self
-            .moons
-            .iter_mut()
-            .find(|m| (m.distance - distance).abs() * Fx::from_int(10) < distance)
-        {
-            let total = m.mass + mass;
-            m.distance = (m.distance * m.mass + distance * mass) / total;
-            m.mass = total;
-            return;
-        }
-        if self.moons.len() < MAX_MOONS {
-            self.moons.push(Moon { mass, distance });
-            self.moons.sort_by_key(|m| m.distance);
-        }
+    /// A moon's orbital period around its planet, in hours (Kepler: the
+    /// Moon's 27.3 days × √(distance³ / total mass), masses in Earths).
+    pub fn moon_period_hours(planet_mass: Fx, moon_mass_earths: Fx, distance: Fx) -> Fx {
+        let total = (planet_mass + moon_mass_earths).max(Fx::ratio(1, 1000)) / (Fx::ONE + LUNAR_MASS);
+        let d = distance.max(Fx::ratio(5, 100));
+        Fx::ratio(2732, 100) * Fx::from_int(24) * (d * d * d / total).sqrt()
     }
 }
 
@@ -231,6 +265,11 @@ pub struct World {
     pub civs: Vec<crate::civ::Civilization>,
     #[serde(default)]
     pub(crate) next_civ_id: u32,
+    /// The worlds of this planet's moons, in the order of `planet.moons`.
+    #[serde(default)]
+    pub moon_worlds: Vec<World>,
+    #[serde(default)]
+    pub(crate) moons_made: u32,
     pub last_breach_tick: Option<u64>,
     pub(crate) rng: Rng,
     log: ActionLog,
@@ -249,7 +288,7 @@ fn elements_of(substances: &[Substance]) -> Vec<String> {
 
 /// Bumped whenever the world's stored form or rules change, so old
 /// snapshots are not trusted.
-const SNAPSHOT_VERSION: u32 = 3;
+const SNAPSHOT_VERSION: u32 = 4;
 
 #[derive(Serialize)]
 struct SnapshotRef<'a> {
@@ -281,14 +320,23 @@ impl World {
             return Err("snapshot from another version".into());
         }
         let mut w = s.world;
-        w.substances = default_substances();
-        w.elements = elements_of(&w.substances);
-        if w.regions.iter().any(|r| r.amounts.len() != w.substances.len())
-            || w.atmosphere.len() != w.substances.len()
+        w.restore_tables()?;
+        Ok(w)
+    }
+
+    /// Reloads the data tables a snapshot leaves out, moons included.
+    fn restore_tables(&mut self) -> Result<(), String> {
+        self.substances = default_substances();
+        self.elements = elements_of(&self.substances);
+        if self.regions.iter().any(|r| r.amounts.len() != self.substances.len())
+            || self.atmosphere.len() != self.substances.len()
         {
             return Err("snapshot does not match the substance table".into());
         }
-        Ok(w)
+        for m in &mut self.moon_worlds {
+            m.restore_tables()?;
+        }
+        Ok(())
     }
 
     pub fn new(seed: u64) -> World {
@@ -343,6 +391,8 @@ impl World {
             souls: Vec::new(),
             civs: Vec::new(),
             next_civ_id: 1,
+            moon_worlds: Vec::new(),
+            moons_made: 0,
             last_breach_tick: None,
             rng,
             log: ActionLog::new(seed),
@@ -466,7 +516,34 @@ impl World {
             Action::SetAxialTilt { degrees } => {
                 self.planet.axial_tilt_deg = (*degrees).clamp(Fx::ZERO, Fx::from_int(90));
             }
-            Action::AddMoon { mass, distance } => self.planet.add_moon(*mass, *distance),
+            Action::AddMoon { mass, distance } => self.add_moon(*mass, *distance),
+            Action::SetMoonOrbit { moon, distance } => {
+                if let Some(m) = self.planet.moons.get_mut(*moon as usize) {
+                    m.distance = (*distance).clamp(Fx::ratio(5, 100), Fx::from_int(50));
+                }
+                self.planet.enforce_natural();
+                self.sort_moons();
+            }
+            Action::OnMoon { moon, action } => {
+                let allowed = matches!(
+                    **action,
+                    Action::AddSubstance { .. }
+                        | Action::AddSubstanceGlobal { .. }
+                        | Action::HeatRegion { .. }
+                        | Action::SetGlobalHeat { .. }
+                        | Action::SetGravity { .. }
+                        | Action::SetDayLength { .. }
+                        | Action::SetAxialTilt { .. }
+                        | Action::SetPlanetRadius { .. }
+                        | Action::SetVeilLaw { .. }
+                        | Action::SetLaw { .. }
+                        | Action::ChampionFell { .. }
+                        | Action::Loot { .. }
+                );
+                if let (true, Some(m)) = (allowed, self.moon_worlds.get_mut(*moon as usize)) {
+                    m.apply((**action).clone());
+                }
+            }
             Action::ChampionFell { individual } => self.champion_fell(*individual),
             Action::Loot { grant, x, y } => self.apply_loot(grant, *x, *y),
             Action::SetLaw { law, value } => self.set_law(*law, *value),
@@ -476,21 +553,108 @@ impl World {
             Action::RemoveMoon { index } => {
                 if (*index as usize) < self.planet.moons.len() {
                     self.planet.moons.remove(*index as usize);
+                    self.moon_worlds.remove(*index as usize);
                 }
             }
         }
         self.planet.enforce_natural();
+        self.sync_moons();
         if !matches!(action, Action::Tick { .. }) {
             // Show the effect of tool use immediately, without advancing time.
             self.update_climate();
             self.update_life_scores();
+            for m in &mut self.moon_worlds {
+                m.planet.enforce_natural();
+                m.update_climate();
+                m.update_life_scores();
+            }
         }
         self.log.push(action);
+    }
+
+    /// Adds a moon and the world on it. Too close and it is torn into
+    /// rings. It needs a free moon slot and its own orbit; moons have no
+    /// moons of their own.
+    fn add_moon(&mut self, mass: Fx, distance: Fx) {
+        if self.planet.host.is_some() {
+            return;
+        }
+        let mass = mass.clamp(Fx::ratio(1, 100), Fx::from_int(50));
+        let distance = distance.clamp(Fx::ratio(5, 100), Fx::from_int(50));
+        if distance < ROCHE_LIMIT {
+            self.planet.rings += mass;
+            return;
+        }
+        let slots = (self.planet.moon_slots as usize).min(MAX_MOONS);
+        if self.planet.moons.len() >= slots
+            || self
+                .planet
+                .moons
+                .iter()
+                .any(|m| (m.distance - distance).abs() * Fx::from_int(10) < distance)
+        {
+            return;
+        }
+        self.moons_made += 1;
+        let seed = Rng::new(self.seed ^ (self.moons_made as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)).next_u64();
+        let mut world = World::new(seed);
+        // Born now: its seasons follow the planet's year.
+        world.tick = self.tick;
+        let earths = mass * LUNAR_MASS;
+        world.planet.planet_mass = earths;
+        world.planet.planet_radius = ((earths / MOON_DENSITY).log2() / Fx::from_int(3))
+            .exp2()
+            .clamp(Fx::ratio(1, 10), Fx::from_int(20));
+        self.planet.moons.push(Moon { mass, distance });
+        self.moon_worlds.push(world);
+        self.planet.enforce_natural();
+        self.sort_moons();
+    }
+
+    /// Keeps moons and their worlds in distance order, together.
+    fn sort_moons(&mut self) {
+        let mut order: Vec<usize> = (0..self.planet.moons.len()).collect();
+        order.sort_by_key(|&k| (self.planet.moons[k].distance, k));
+        let moons: Vec<Moon> = order.iter().map(|&k| self.planet.moons[k]).collect();
+        let mut worlds: Vec<Option<World>> = std::mem::take(&mut self.moon_worlds).into_iter().map(Some).collect();
+        self.moon_worlds = order.iter().filter_map(|&k| worlds[k].take()).collect();
+        self.planet.moons = moons;
+    }
+
+    /// A moon shares its planet's star and mode; the planet feels the
+    /// moon's mass; in Natural mode the moon is tidally locked.
+    fn sync_moons(&mut self) {
+        let p = &mut self.planet;
+        for (m, orbit) in self.moon_worlds.iter_mut().zip(p.moons.iter_mut()) {
+            let mp = &mut m.planet;
+            mp.star_distance_au = p.star_distance_au;
+            mp.star_luminosity = p.star_luminosity;
+            mp.star_type = p.star_type;
+            mp.star_mass = p.star_mass;
+            mp.godhand = p.godhand;
+            mp.moon_slots = 0;
+            mp.host = Some(Host {
+                mass: p.planet_mass,
+                radius: p.planet_radius,
+                distance: orbit.distance,
+            });
+            if !p.godhand {
+                mp.day_length_hours = Planet::moon_period_hours(p.planet_mass, mp.planet_mass, orbit.distance)
+                    .clamp(Fx::ONE, Fx::from_int(10_000));
+            }
+            orbit.mass = (mp.planet_mass / LUNAR_MASS).max(Fx::ratio(1, 100));
+        }
+    }
+
+    /// The world of the moon at `index`.
+    pub fn moon(&self, index: usize) -> Option<&World> {
+        self.moon_worlds.get(index)
     }
 
     /// Advances one season.
     fn step(&mut self) {
         self.planet.enforce_natural();
+        self.sync_moons();
         self.stellar_weather();
         self.update_climate();
         self.update_substance_cycle();
@@ -502,6 +666,10 @@ impl World {
         self.update_individuals();
         self.update_civilizations();
         self.tick += 1;
+        self.sync_moons();
+        for m in &mut self.moon_worlds {
+            m.step();
+        }
     }
 
     /// Flares and Godhand strain strip atmosphere.
@@ -551,10 +719,16 @@ impl World {
             .min(Fx::from_int(400))
     }
 
-    /// Stellar flux relative to Earth at the equator.
+    /// Stellar flux relative to Earth at the equator, less what the
+    /// planet hides from its moon in eclipses.
     pub fn stellar_flux(&self) -> Fx {
         let d = self.planet.star_distance_au;
-        self.planet.star_luminosity / (d * d)
+        self.sunlight() / (d * d)
+    }
+
+    /// The star's brightness as this world sees it on average.
+    fn sunlight(&self) -> Fx {
+        self.planet.star_luminosity * (Fx::ONE - self.planet.eclipse_fraction())
     }
 
     /// Latitude factor 0 (equator) .. 1 (pole) for a row.
@@ -580,7 +754,7 @@ impl World {
         self.pressure = column * g;
 
         // Equilibrium temperature: 278 K × L^¼ / √d (Earth without greenhouse).
-        let l = self.planet.star_luminosity;
+        let l = self.sunlight();
         let t_eq = Fx::from_int(278) * l.sqrt().sqrt() / self.planet.star_distance_au.sqrt();
         // Greenhouse warming saturates for very thick atmospheres.
         let gh_mult = Fx::ONE + Fx::ratio(3, 2) * gh / (gh + Fx::ratio(6, 10));
@@ -770,6 +944,10 @@ impl World {
             }
         }
         h.u64(self.last_breach_tick.map_or(u64::MAX, |t| t));
+        h.u64(self.planet.moon_slots as u64 | (self.moons_made as u64) << 8);
+        for m in &self.moon_worlds {
+            h.u64(m.state_hash());
+        }
         for v in &self.veil {
             h.i64(v.0);
         }

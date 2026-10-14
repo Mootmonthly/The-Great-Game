@@ -62,8 +62,9 @@ fn long_days_are_harder_on_life() {
 }
 
 #[test]
-fn moons_too_close_become_rings_and_same_orbits_merge() {
+fn moons_too_close_become_rings_and_orbits_stay_apart() {
     let mut w = earthlike(3);
+    w.planet.moon_slots = 3;
     w.apply(Action::AddMoon {
         mass: Fx::ONE,
         distance: Fx::ONE,
@@ -72,12 +73,7 @@ fn moons_too_close_become_rings_and_same_orbits_merge() {
         mass: Fx::ONE,
         distance: Fx::ratio(105, 100),
     });
-    assert_eq!(
-        w.planet.moons.len(),
-        1,
-        "moons on nearly the same orbit merge"
-    );
-    assert_eq!(w.planet.moons[0].mass, Fx::from_int(2));
+    assert_eq!(w.planet.moons.len(), 1, "no second moon on nearly the same orbit");
     w.apply(Action::AddMoon {
         mass: Fx::HALF,
         distance: ROCHE_LIMIT / Fx::from_int(2),
@@ -91,6 +87,7 @@ fn moons_too_close_become_rings_and_same_orbits_merge() {
     assert_eq!(w.planet.moons.len(), 2);
     w.apply(Action::RemoveMoon { index: 0 });
     assert_eq!(w.planet.moons[0].distance, Fx::ratio(18, 10));
+    assert_eq!(w.moon_worlds.len(), 1);
 }
 
 #[test]

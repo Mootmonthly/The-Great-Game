@@ -38,9 +38,12 @@ impl World {
         let law = self.veil_law * Fx::ratio(8, 10);
         let strain = self.reality_strain();
         let physics = strain / (strain + Fx::from_int(3)) * Fx::ratio(8, 10);
-        // Frequent eclipses: every moon beyond the second.
+        // Frequent eclipses: every moon beyond the second, and, on a moon,
+        // the planet hiding the sun.
         let extra_moons = (self.planet.moons.len() as i64 - 2).max(0);
-        let eclipses = (Fx::ratio(5, 100) * Fx::from_int(extra_moons)).min(Fx::ratio(3, 10));
+        let eclipses = (Fx::ratio(5, 100) * Fx::from_int(extra_moons)
+            + self.planet.eclipse_fraction() * Fx::from_int(5))
+        .min(Fx::ratio(3, 10));
         (law + physics + eclipses).min(Fx::ONE)
     }
 

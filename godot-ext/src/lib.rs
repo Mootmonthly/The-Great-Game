@@ -21,6 +21,9 @@ unsafe impl ExtensionLibrary for GreatGameExtension {}
 #[class(base=RefCounted)]
 pub struct SimWorld {
     world: World,
+    /// The moon whose world the viewer shows and the tools change; None
+    /// for the planet.
+    focus: Option<usize>,
     globe: Option<sim_core::globe::GlobeMaps>,
     base: Base<RefCounted>,
 }
@@ -30,6 +33,7 @@ impl IRefCounted for SimWorld {
     fn init(base: Base<RefCounted>) -> Self {
         Self {
             world: World::new(1),
+            focus: None,
             globe: None,
             base,
         }
@@ -99,6 +103,24 @@ fn sheet_to_json(sh: &sim_core::sheet::CharacterSheet) -> Value {
     })
 }
 
+impl SimWorld {
+    /// The world in focus: the planet, or one of its moons.
+    fn view(&self) -> &World {
+        self.focus.and_then(|k| self.world.moon(k)).unwrap_or(&self.world)
+    }
+
+    /// Applies a tool action to the world in focus.
+    fn act(&mut self, action: Action) {
+        match self.focus {
+            Some(k) if k < self.world.moon_worlds.len() => self.world.apply(Action::OnMoon {
+                moon: k as u8,
+                action: Box::new(action),
+            }),
+            _ => self.world.apply(action),
+        }
+    }
+}
+
 fn coord(v: i64, max: usize) -> u16 {
     v.clamp(0, max as i64 - 1) as u16
 }
@@ -117,6 +139,7 @@ impl SimWorld {
             world.apply(a);
         }
         self.world = world;
+        self.focus = None;
         true
     }
 
@@ -165,7 +188,7 @@ impl SimWorld {
 
     #[func]
     fn add_substance(&mut self, x: i64, y: i64, radius: i64, substance: i64, amount: f64) {
-        self.world.apply(Action::AddSubstance {
+        self.act(Action::AddSubstance {
             x: coord(x, WIDTH),
             y: coord(y, HEIGHT),
             radius: radius.clamp(0, 16) as u8,
@@ -176,7 +199,7 @@ impl SimWorld {
 
     #[func]
     fn heat_region(&mut self, x: i64, y: i64, radius: i64, kelvin: f64) {
-        self.world.apply(Action::HeatRegion {
+        self.act(Action::HeatRegion {
             x: coord(x, WIDTH),
             y: coord(y, HEIGHT),
             radius: radius.clamp(0, 16) as u8,
@@ -186,7 +209,7 @@ impl SimWorld {
 
     #[func]
     fn set_global_heat(&mut self, kelvin: f64) {
-        self.world.apply(Action::SetGlobalHeat {
+        self.act(Action::SetGlobalHeat {
             kelvin: Fx::from_f64(kelvin),
         });
     }
@@ -207,14 +230,14 @@ impl SimWorld {
 
     #[func]
     fn set_day_length(&mut self, hours: f64) {
-        self.world.apply(Action::SetDayLength {
+        self.act(Action::SetDayLength {
             hours: Fx::from_f64(hours),
         });
     }
 
     #[func]
     fn set_axial_tilt(&mut self, degrees: f64) {
-        self.world.apply(Action::SetAxialTilt {
+        self.act(Action::SetAxialTilt {
             degrees: Fx::from_f64(degrees),
         });
     }
@@ -232,12 +255,18 @@ impl SimWorld {
     fn remove_moon(&mut self, index: i64) {
         if (0..=255).contains(&index) {
             self.world.apply(Action::RemoveMoon { index: index as u8 });
+            let i = index as usize;
+            self.focus = match self.focus {
+                Some(f) if f == i => None,
+                Some(f) if f > i => Some(f - 1),
+                f => f,
+            };
         }
     }
 
     #[func]
     fn set_gravity(&mut self, g: f64) {
-        self.world.apply(Action::SetGravity { g: Fx::from_f64(g) });
+        self.act(Action::SetGravity { g: Fx::from_f64(g) });
     }
 
     /// Natural mode (false) or Godhand mode (true).
@@ -263,7 +292,7 @@ impl SimWorld {
 
     #[func]
     fn set_planet_radius(&mut self, earths: f64) {
-        self.world.apply(Action::SetPlanetRadius {
+        self.act(Action::SetPlanetRadius {
             earths: Fx::from_f64(earths),
         });
     }
@@ -271,7 +300,7 @@ impl SimWorld {
     /// The Veil law (§4.4a), in percent: 0 sealed .. 100 wide open.
     #[func]
     fn set_veil_law(&mut self, percent: f64) {
-        self.world.apply(Action::SetVeilLaw {
+        self.act(Action::SetVeilLaw {
             openness: Fx::from_f64(percent / 100.0),
         });
     }
@@ -279,7 +308,7 @@ impl SimWorld {
     /// The Arcane Magic law, in percent: 0 absent .. 100 at full strength.
     #[func]
     fn set_law_arcane(&mut self, percent: f64) {
-        self.world.apply(Action::SetLaw {
+        self.act(Action::SetLaw {
             law: sim_core::laws::ARCANE,
             value: Fx::from_f64(percent / 100.0),
         });
@@ -288,7 +317,7 @@ impl SimWorld {
     /// The Soul Power law, in percent: 0 absent .. 100 at full strength.
     #[func]
     fn set_law_soul(&mut self, percent: f64) {
-        self.world.apply(Action::SetLaw {
+        self.act(Action::SetLaw {
             law: sim_core::laws::SOUL,
             value: Fx::from_f64(percent / 100.0),
         });
@@ -297,7 +326,7 @@ impl SimWorld {
     /// The Daoist Cultivation law, in percent: 0 absent .. 100 at full strength.
     #[func]
     fn set_law_qi(&mut self, percent: f64) {
-        self.world.apply(Action::SetLaw {
+        self.act(Action::SetLaw {
             law: sim_core::laws::QI,
             value: Fx::from_f64(percent / 100.0),
         });
@@ -307,7 +336,7 @@ impl SimWorld {
     /// percent: 0 never deadly .. 100 most deadly.
     #[func]
     fn set_law_tribulation(&mut self, percent: f64) {
-        self.world.apply(Action::SetLaw {
+        self.act(Action::SetLaw {
             law: sim_core::laws::TRIBULATION,
             value: Fx::from_f64(percent / 100.0),
         });
@@ -335,12 +364,12 @@ impl SimWorld {
     /// 3 viability, 4 Veil, 5 mana, 6 qi, 7 civilizations, 8+ substance amount (8 + substance index).
     #[func]
     fn overlay(&self, mode: i64) -> PackedByteArray {
-        PackedByteArray::from(self.world.overlay_rgba(Overlay::from_mode(mode)).as_slice())
+        PackedByteArray::from(self.view().overlay_rgba(Overlay::from_mode(mode)).as_slice())
     }
 
     #[func]
     fn status_json(&self) -> GString {
-        let w = &self.world;
+        let w = self.view();
         let p = &w.planet;
         let atmosphere: Vec<Value> = w
             .substances
@@ -408,12 +437,21 @@ impl SimWorld {
             "species_ever": w.species.last().map_or(0, |s| s.id),
             "atmosphere": atmosphere,
             "hash": format!("{:016x}", w.state_hash()),
+            "focus": self.focus.map_or(-1, |k| k as i64),
+            "moon_slots": self.world.planet.moon_slots,
+            "eclipse": p.eclipse_fraction().to_f64(),
+            "host": p.host.map(|h| json!({
+                "planet_mass": h.mass.to_f64(),
+                "planet_radius": h.radius.to_f64(),
+                "distance": h.distance.to_f64(),
+                "tidally_locked": !p.godhand,
+            })),
         }))
     }
 
     #[func]
     fn region_json(&self, x: i64, y: i64) -> GString {
-        let w = &self.world;
+        let w = self.view();
         let i = index(coord(x, WIDTH) as usize, coord(y, HEIGHT) as usize);
         let r = &w.regions[i];
         let life = w.region_life(i);
@@ -496,7 +534,7 @@ impl SimWorld {
     /// Living species sorted by biomass, largest first.
     #[func]
     fn species_json(&self, limit: i64) -> GString {
-        let w = &self.world;
+        let w = self.view();
         let mut living: Vec<_> = w.living_species().collect();
         living.sort_by(|a, b| b.biomass.cmp(&a.biomass).then(a.id.cmp(&b.id)));
         let list: Vec<Value> = living
@@ -511,7 +549,7 @@ impl SimWorld {
     /// if no record exists.
     #[func]
     fn species_detail_json(&self, id: i64) -> GString {
-        let w = &self.world;
+        let w = self.view();
         let Some(s) = w.species_by_id(id as u32) else {
             return GString::from("null");
         };
@@ -584,7 +622,7 @@ impl SimWorld {
     /// recorded ancestors, oldest first.
     #[func]
     fn tree_json(&self, limit: i64) -> GString {
-        let w = &self.world;
+        let w = self.view();
         let mut living: Vec<_> = w.living_species().collect();
         living.sort_by(|a, b| b.biomass.cmp(&a.biomass).then(a.id.cmp(&b.id)));
         let mut ids: Vec<u32> = Vec::new();
@@ -623,7 +661,7 @@ impl SimWorld {
     /// (most recent first).
     #[func]
     fn civilizations_json(&self) -> GString {
-        let w = &self.world;
+        let w = self.view();
         let tpy = sim_core::world::TICKS_PER_YEAR;
         let mut civs: Vec<_> = w.civs.iter().collect();
         civs.sort_by(|a, b| {
@@ -672,7 +710,7 @@ impl SimWorld {
     /// Living named individuals, most renowned first.
     #[func]
     fn individuals_json(&self, limit: i64) -> GString {
-        let w = &self.world;
+        let w = self.view();
         let mut living: Vec<_> = w.living_individuals().collect();
         living.sort_by(|a, b| b.renown.cmp(&a.renown).then(a.id.cmp(&b.id)));
         let list: Vec<Value> = living
@@ -702,7 +740,7 @@ impl SimWorld {
     /// Returns "null" if no record exists.
     #[func]
     fn individual_json(&self, id: i64) -> GString {
-        let w = &self.world;
+        let w = self.view();
         let Some(x) = w.individual_by_id(id as u32) else {
             return GString::from("null");
         };
@@ -758,7 +796,7 @@ impl SimWorld {
             width.clamp(16, 4096) as usize,
             height.clamp(8, 2048) as usize,
         );
-        self.globe = Some(self.world.globe_maps(w, h));
+        self.globe = Some(self.view().globe_maps(w, h));
     }
 
     /// RGBA8: surface colour, alpha = liquid mask.
@@ -779,12 +817,12 @@ impl SimWorld {
 
     #[func]
     fn atmosphere_json(&self) -> GString {
-        let a = self.world.atmosphere_look();
+        let a = self.view().atmosphere_look();
         to_gstring(json!({
             "color": a.color, "thickness": a.thickness, "clouds": a.clouds,
             "cloud_color": a.cloud_color, "sunlight": a.sunlight,
-            "veil_open": (Fx::ONE - self.world.veil_mean()).to_f64(),
-            "star_color": hex(self.world.planet.star_type.info().color),
+            "veil_open": (Fx::ONE - self.view().veil_mean()).to_f64(),
+            "star_color": hex(self.view().planet.star_type.info().color),
         }))
     }
 
@@ -792,7 +830,7 @@ impl SimWorld {
     /// ("individual"). Returns "null" if no record exists.
     #[func]
     fn sheet_json(&self, kind: GString, id: i64) -> GString {
-        let w = &self.world;
+        let w = self.view();
         let sheet = match kind.to_string().as_str() {
             "species" => w
                 .species_by_id(id as u32)
@@ -810,13 +848,22 @@ impl SimWorld {
 
     /// A champion from this world died in a ranked match: log its death so
     /// the world replays without it (§6.2a).
+    /// `moon` is the moon it lived on, or -1 for the planet.
     #[func]
-    fn champion_fell(&mut self, individual: i64) {
-        if individual >= 0 {
-            self.world.apply(Action::ChampionFell {
-                individual: individual as u32,
-            });
+    fn champion_fell(&mut self, individual: i64, moon: i64) {
+        if individual < 0 {
+            return;
         }
+        let fell = Action::ChampionFell {
+            individual: individual as u32,
+        };
+        self.world.apply(match u8::try_from(moon) {
+            Ok(moon) => Action::OnMoon {
+                moon,
+                action: Box::new(fell),
+            },
+            Err(_) => fell,
+        });
     }
 
     /// Brings looted remains (a grant from the arena server, as JSON) into
@@ -839,9 +886,75 @@ impl SimWorld {
             .map_or(GString::new(), |s| GString::from(s.name.as_str()))
     }
 
+    /// The planet's seed (champion tokens name their home planet by it).
     #[func]
     fn seed(&self) -> i64 {
         self.world.seed as i64
+    }
+
+    /// Shows and edits the world of moon `index`, or the planet for -1.
+    /// Returns false (and keeps the focus) for a moon that does not exist.
+    /// Time, the star and the moons themselves always belong to the planet.
+    #[func]
+    fn focus_moon(&mut self, index: i64) -> bool {
+        if index < 0 {
+            self.focus = None;
+            return true;
+        }
+        if (index as usize) < self.world.moon_worlds.len() {
+            self.focus = Some(index as usize);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The moon in focus, or -1 for the planet.
+    #[func]
+    fn focused_moon(&self) -> i64 {
+        self.focus.map_or(-1, |k| k as i64)
+    }
+
+    /// Moves moon `index` to a new orbit (Earth–Moon distances).
+    #[func]
+    fn set_moon_orbit(&mut self, index: i64, distance: f64) {
+        if let Ok(moon) = u8::try_from(index) {
+            self.world.apply(Action::SetMoonOrbit {
+                moon,
+                distance: Fx::from_f64(distance),
+            });
+        }
+    }
+
+    /// The planet's moons and a summary of the world on each.
+    #[func]
+    fn moons_json(&self) -> GString {
+        let p = &self.world.planet;
+        let moons: Vec<Value> = p
+            .moons
+            .iter()
+            .zip(&self.world.moon_worlds)
+            .enumerate()
+            .map(|(k, (m, w))| {
+                json!({
+                    "index": k,
+                    "mass": m.mass.to_f64(),
+                    "distance": m.distance.to_f64(),
+                    "month_hours": sim_core::world::Planet::moon_period_hours(p.planet_mass, w.planet.planet_mass, m.distance).to_f64(),
+                    "gravity": w.planet.gravity.to_f64(),
+                    "radius": w.planet.planet_radius.to_f64(),
+                    "day_length": w.planet.day_length_hours.to_f64(),
+                    "mean_temperature": w.mean_temperature.to_f64(),
+                    "pressure": w.pressure.to_f64(),
+                    "eclipse": w.planet.eclipse_fraction().to_f64(),
+                    "tidal_strength": w.planet.tidal_strength().to_f64(),
+                    "living_species": w.living_species().count(),
+                    "living_individuals": w.living_individuals().count(),
+                    "civilizations": w.living_civs().count(),
+                })
+            })
+            .collect();
+        to_gstring(json!({"moons": moons, "slots": p.moon_slots, "focus": self.focus.map_or(-1, |k| k as i64)}))
     }
 
     /// The action log as JSON: everything needed to rebuild this world.
@@ -856,6 +969,7 @@ impl SimWorld {
         match ActionLog::from_json(&json.to_string()) {
             Ok(log) => {
                 self.world = World::replay(&log);
+                self.focus = None;
                 true
             }
             Err(e) => {
@@ -892,13 +1006,20 @@ impl IRefCounted for ArenaSim {
 impl ArenaSim {
     /// Adds a champion to a team (0 = player, 1 = rival) before `start`,
     /// using the character sheet of a species ("species") or named
-    /// individual ("individual") from `world`.
+    /// individual ("individual") from `world`, or from its moon `moon`
+    /// (-1 for the planet).
     #[func]
-    fn add_unit(&mut self, world: Gd<SimWorld>, kind: GString, id: i64, team: i64) -> bool {
+    fn add_unit(&mut self, world: Gd<SimWorld>, kind: GString, id: i64, team: i64, moon: i64) -> bool {
         if self.arena.is_some() || !(0..=1).contains(&team) {
             return false;
         }
-        let w = &world.bind().world;
+        let planet = world.bind();
+        let Some(w) = (match usize::try_from(moon) {
+            Ok(k) => planet.world.moon(k),
+            Err(_) => Some(&planet.world),
+        }) else {
+            return false;
+        };
         let sheet = match kind.to_string().as_str() {
             "species" => w
                 .species_by_id(id as u32)

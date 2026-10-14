@@ -38,7 +38,12 @@ pub struct Verified {
 /// this account, and used once.
 pub fn check_loot(signer: &Signer, account: &str, log: &ActionLog) -> Result<Vec<u64>, String> {
     let mut ids = Vec::new();
-    for a in &log.actions {
+    // Loot can go to a moon's world too.
+    let all = log.actions.iter().map(|a| match a {
+        Action::OnMoon { action, .. } => action.as_ref(),
+        a => a,
+    });
+    for a in all {
         if let Action::Loot { grant, .. } = a {
             if !signer.verify(&grant.payload(), &grant.signature) {
                 return Err("the world contains loot this server never granted".into());
@@ -155,14 +160,16 @@ impl Checkpoints {
 
 /// Verifies with no checkpoints (a full replay) and no loot.
 pub fn verify(log: &ActionLog, kind: ChampionKind, id: u32, cost: i64) -> Result<Verified, String> {
-    verify_with(None, &Signer::random(), "", log, kind, id, cost)
+    verify_with(None, &Signer::random(), "", log, None, kind, id, cost)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn verify_with(
     checkpoints: Option<&Checkpoints>,
     signer: &Signer,
     account: &str,
     log: &ActionLog,
+    moon: Option<u8>,
     kind: ChampionKind,
     id: u32,
     cost: i64,
@@ -194,20 +201,25 @@ pub fn verify_with(
     if let Some(c) = checkpoints {
         c.store(account, &world);
     }
+    // A champion from a moon lives in that moon's world.
+    let world = match moon {
+        Some(k) => world.moon(k as usize).ok_or("this world has no such moon")?,
+        None => &world,
+    };
     let (name, sheet, fingerprint) = match kind {
         ChampionKind::Species => {
             let s = world
                 .species_by_id(id)
                 .filter(|s| s.is_alive())
                 .ok_or("no such living species in this world")?;
-            (s.name.clone(), species_sheet(&world, s), None)
+            (s.name.clone(), species_sheet(world, s), None)
         }
         ChampionKind::Individual => {
             let ind = world
                 .individual_by_id(id)
                 .filter(|x| x.is_alive())
                 .ok_or("no such living individual in this world")?;
-            let sheet = individual_sheet(&world, ind).ok_or("individual has no species")?;
+            let sheet = individual_sheet(world, ind).ok_or("individual has no species")?;
             (ind.title(), sheet, Some(ind.fingerprint(world.seed)))
         }
     };
@@ -217,7 +229,7 @@ pub fn verify_with(
             sheet.cost.cost
         ));
     }
-    let appearance = appearance(&world, kind, id).ok_or("being has no species")?;
+    let appearance = appearance(world, kind, id).ok_or("being has no species")?;
     let species_id = match kind {
         ChampionKind::Species => id,
         ChampionKind::Individual => world.individual_by_id(id).map_or(0, |i| i.species),
@@ -256,7 +268,7 @@ mod tests {
         let signer = Signer::random();
         let id = w.living_individuals().next().expect("individuals").id;
         let cost = |w: &World| individual_sheet(w, w.individual_by_id(id).unwrap()).unwrap().cost.cost;
-        let first = verify_with(Some(&cps), &signer, "ann", w.log(), ChampionKind::Individual, id, cost(&w)).unwrap();
+        let first = verify_with(Some(&cps), &signer, "ann", w.log(), None, ChampionKind::Individual, id, cost(&w)).unwrap();
         assert_eq!(first.resumed_from, 0);
 
         // The world goes on; the next bind resumes from the checkpoint.
@@ -265,7 +277,7 @@ mod tests {
             return;
         };
         let c2 = individual_sheet(&w, w.individual_by_id(id2).unwrap()).unwrap().cost.cost;
-        let resumed = verify_with(Some(&cps), &signer, "ann", w.log(), ChampionKind::Individual, id2, c2).unwrap();
+        let resumed = verify_with(Some(&cps), &signer, "ann", w.log(), None, ChampionKind::Individual, id2, c2).unwrap();
         assert!(resumed.resumed_from > 0);
         let full = verify(w.log(), ChampionKind::Individual, id2, c2).unwrap();
         assert_eq!(resumed.sheet, full.sheet);
@@ -273,10 +285,44 @@ mod tests {
         // A different history (an edit in the past) cannot use it.
         let mut forked = w.log().clone();
         forked.actions.insert(1, Action::SetGlobalHeat { kelvin: sim_core::Fx::ONE });
-        let r = verify_with(Some(&cps), &signer, "ann", &forked, ChampionKind::Species, 1, 0);
+        let r = verify_with(Some(&cps), &signer, "ann", &forked, None, ChampionKind::Species, 1, 0);
         assert!(r.map_or(true, |v| v.resumed_from == 0));
         // Nor another account.
-        let other = verify_with(Some(&cps), &signer, "bob", w.log(), ChampionKind::Individual, id2, c2).unwrap();
+        let other = verify_with(Some(&cps), &signer, "bob", w.log(), None, ChampionKind::Individual, id2, c2).unwrap();
         assert_eq!(other.resumed_from, 0);
+    }
+
+    #[test]
+    fn champions_can_come_from_a_moon() {
+        use sim_core::Fx;
+        let mut w = World::new(2);
+        for a in preset_actions(&w, "earthlike").unwrap() {
+            w.apply(a);
+        }
+        w.apply(Action::AddMoon {
+            mass: Fx::from_int(8),
+            distance: Fx::HALF,
+        });
+        let mut chemistry = preset_actions(&w, "earthlike").unwrap();
+        chemistry.retain(|a| matches!(a, Action::AddSubstanceGlobal { .. }));
+        let nitrogen = w.substance_index("nitrogen").unwrap() as u16;
+        chemistry.push(Action::AddSubstanceGlobal {
+            substance: nitrogen,
+            amount: Fx::from_int(3),
+        });
+        for a in chemistry {
+            w.apply(Action::OnMoon {
+                moon: 0,
+                action: Box::new(a),
+            });
+        }
+        w.apply(Action::Tick { ticks: 800 });
+        let moon = w.moon(0).unwrap();
+        let s = moon.living_species().max_by_key(|s| s.biomass).expect("life on the moon");
+        let cost = species_sheet(moon, s).cost.cost;
+        let signer = Signer::random();
+        let v = verify_with(None, &signer, "ann", w.log(), Some(0), ChampionKind::Species, s.id, cost).unwrap();
+        assert_eq!(v.name, s.name);
+        assert!(verify_with(None, &signer, "ann", w.log(), Some(1), ChampionKind::Species, s.id, cost).is_err());
     }
 }
