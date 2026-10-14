@@ -293,7 +293,8 @@ A local, offline prototype (`game-client/arena.gd`), reached from the viewer's *
 - **Combat:** the character sheets in real time. One 5e round is 1.5 s of arena time. Units walk to the nearest enemy (keeping apart from allies) and attack with their sheet's attacks: d20 + to-hit against armour class, critical hits on 20, damage dice, resistances, immunities and vulnerabilities. Breath weapons hit the nearest enemies in front, with a save for half, and recharge on 5–6. Regeneration and pack tactics apply.
 - **Possession:** click one of your units to take control: WASD moves it relative to the follow camera, Space attacks, Q uses its breath weapon, Esc releases it.
 - **Result:** the battle ends when one side is wiped out. The log notes which champions fell; permadeath and looting are not yet applied to the world.
-- **Not yet:** server authority and replay (the prototype runs client-side in GDScript; the real arena runs these rules in the Rust core on the server, §6.3), online opponents, match structure and victory conditions (open question 1), surrender.
+- **Deterministic core:** the match runs in the Rust core (`sim-core/src/arena.rs`, exposed to Godot as `ArenaSim`) in fixed 0.1 s steps with fixed-point positions. Godot only renders it and forwards player commands (possess, steer, attack, breathe), which are logged with the step they applied on. `Arena::replay` rebuilds a match from the two rosters, the seed and the command log and reaches the same result: the basis for server authority (§6.3). Tested.
+- **Not yet:** the network layer and dedicated server, online opponents, match structure and victory conditions (open question 1), surrender.
 
 ![Arena prototype: methane-breathing winged dragons from a frozen moon against a rival world](images/arena-battle.png)
 
@@ -406,7 +407,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
 
-**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. Remaining: Natural/Godhand orbital coupling and star types, final art, and moving arena rules into the Rust core for server authority.
+**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules now run in the deterministic Rust core with replayable command logs. Remaining: Natural/Godhand orbital coupling and star types, final art, and the network layer.
 
 ## 9. Business Model
 

@@ -116,6 +116,7 @@ func _initialize() -> void:
 		arena.step(0.25)
 		steps += 1
 	check(arena.finished, "arena battle reaches a result")
+	check(arena.arena_sim != null and arena.state["result"] != null, "the Rust core decided the arena result")
 	arena.close()
 	await process_frame
 	check(main.arena == null, "leaving the arena returns to the world")

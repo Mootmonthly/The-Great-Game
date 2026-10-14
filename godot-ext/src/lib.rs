@@ -630,3 +630,184 @@ impl SimWorld {
         }
     }
 }
+
+/// Real-time arena match run by the Rust core (`sim_core::arena`). Godot
+/// only renders it and forwards player commands, so the same match can be
+/// replayed on a server from the rosters, seed and command log.
+#[derive(GodotClass)]
+#[class(base=RefCounted)]
+pub struct ArenaSim {
+    teams: [Vec<sim_core::sheet::CharacterSheet>; 2],
+    arena: Option<sim_core::arena::Arena>,
+    base: Base<RefCounted>,
+}
+
+#[godot_api]
+impl IRefCounted for ArenaSim {
+    fn init(base: Base<RefCounted>) -> Self {
+        Self {
+            teams: [Vec::new(), Vec::new()],
+            arena: None,
+            base,
+        }
+    }
+}
+
+#[godot_api]
+impl ArenaSim {
+    /// Adds a champion to a team (0 = player, 1 = rival) before `start`,
+    /// using the character sheet of a species ("species") or named
+    /// individual ("individual") from `world`.
+    #[func]
+    fn add_unit(&mut self, world: Gd<SimWorld>, kind: GString, id: i64, team: i64) -> bool {
+        if self.arena.is_some() || !(0..=1).contains(&team) {
+            return false;
+        }
+        let w = &world.bind().world;
+        let sheet = match kind.to_string().as_str() {
+            "species" => w
+                .species_by_id(id as u32)
+                .map(|s| sim_core::sheet::species_sheet(w, s)),
+            "individual" => w
+                .individual_by_id(id as u32)
+                .and_then(|x| sim_core::sheet::individual_sheet(w, x)),
+            _ => None,
+        };
+        match sheet {
+            Some(s) => {
+                self.teams[team as usize].push(s);
+                true
+            }
+            None => false,
+        }
+    }
+
+    #[func]
+    fn start(&mut self, seed: i64) {
+        let [a, b] = std::mem::take(&mut self.teams);
+        self.arena = Some(sim_core::arena::Arena::new(a, b, seed as u64));
+    }
+
+    /// Advances `ticks` steps of 0.1 s.
+    #[func]
+    fn step(&mut self, ticks: i64) {
+        if let Some(a) = self.arena.as_mut() {
+            for _ in 0..ticks.clamp(0, 1000) {
+                a.step();
+            }
+        }
+    }
+
+    /// Possess one of your units, or release with -1.
+    #[func]
+    fn possess(&mut self, unit: i64) {
+        if let Some(a) = self.arena.as_mut() {
+            a.command(sim_core::arena::ArenaCommand::Possess {
+                team: 0,
+                unit: (unit >= 0).then_some(unit as usize),
+            });
+        }
+    }
+
+    #[func]
+    fn steer(&mut self, unit: i64, x: f64, z: f64) {
+        if let (Some(a), true) = (self.arena.as_mut(), unit >= 0) {
+            a.command(sim_core::arena::ArenaCommand::Steer {
+                unit: unit as usize,
+                x: Fx::from_f64(x),
+                z: Fx::from_f64(z),
+            });
+        }
+    }
+
+    #[func]
+    fn attack(&mut self, unit: i64) {
+        if let (Some(a), true) = (self.arena.as_mut(), unit >= 0) {
+            a.command(sim_core::arena::ArenaCommand::Attack {
+                unit: unit as usize,
+            });
+        }
+    }
+
+    #[func]
+    fn breathe(&mut self, unit: i64) {
+        if let (Some(a), true) = (self.arena.as_mut(), unit >= 0) {
+            a.command(sim_core::arena::ArenaCommand::Breathe {
+                unit: unit as usize,
+            });
+        }
+    }
+
+    /// Positions, facing, hit points and status of every unit, plus the
+    /// arena clock and result ("a", "b", "draw" or null).
+    #[func]
+    fn state_json(&self) -> GString {
+        let Some(a) = self.arena.as_ref() else {
+            return GString::from("null");
+        };
+        let units: Vec<Value> = a
+            .units
+            .iter()
+            .map(|u| {
+                json!({
+                    "x": u.pos.x.to_f64(), "z": u.pos.z.to_f64(),
+                    "fx": u.facing.x.to_f64(), "fz": u.facing.z.to_f64(),
+                    "hp": u.hp, "max_hp": u.sheet.hit_points, "alive": u.alive, "team": u.team,
+                    "possessed": u.possessed, "breath_ready": u.breath_ready, "has_breath": u.sheet.breath.is_some(),
+                    "radius": u.radius.to_f64(), "name": u.sheet.name, "size": u.sheet.size.name(),
+                })
+            })
+            .collect();
+        let result = a.result.map(|r| match r {
+            sim_core::arena::ArenaResult::TeamA => "a",
+            sim_core::arena::ArenaResult::TeamB => "b",
+            sim_core::arena::ArenaResult::Draw => "draw",
+        });
+        to_gstring(json!({"time": a.time.to_f64(), "result": result, "units": units}))
+    }
+
+    /// Readable log lines for events since the last call.
+    #[func]
+    fn events_json(&mut self) -> GString {
+        let Some(a) = self.arena.as_mut() else {
+            return GString::from("[]");
+        };
+        let events = a.take_events();
+        let name = |i: usize| a.units[i].sheet.name.clone();
+        let lines: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                sim_core::arena::ArenaEvent::Breath {
+                    attacker,
+                    name: breath,
+                    targets,
+                } => Some(format!(
+                    "{} uses {} ({} {}).",
+                    name(*attacker),
+                    breath,
+                    targets.len(),
+                    if targets.len() == 1 {
+                        "target"
+                    } else {
+                        "targets"
+                    }
+                )),
+                sim_core::arena::ArenaEvent::Fell { unit, by } => Some(format!(
+                    "{} [color=#cc6666]falls[/color] to {}.",
+                    name(*unit),
+                    name(*by)
+                )),
+                _ => None,
+            })
+            .collect();
+        to_gstring(json!(lines))
+    }
+
+    /// Number of player commands recorded (they make the match replayable).
+    #[func]
+    fn command_count(&self) -> i64 {
+        self.arena
+            .as_ref()
+            .map_or(0, |a| a.command_log.len() as i64)
+    }
+}
