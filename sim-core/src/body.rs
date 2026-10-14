@@ -24,10 +24,14 @@ pub enum PartKind {
     Claw,
     Wing,
     Gland,
+    // Parts of beings from beyond the Veil (§4.4a). Never evolved.
+    Tendril,
+    PhaseMembrane,
+    Void,
 }
 
 impl PartKind {
-    pub const ALL: [PartKind; 12] = [
+    pub const ALL: [PartKind; 15] = [
         PartKind::Segment,
         PartKind::Shell,
         PartKind::Fin,
@@ -40,6 +44,9 @@ impl PartKind {
         PartKind::Claw,
         PartKind::Wing,
         PartKind::Gland,
+        PartKind::Tendril,
+        PartKind::PhaseMembrane,
+        PartKind::Void,
     ];
 
     pub fn name(self) -> &'static str {
@@ -56,6 +63,9 @@ impl PartKind {
             PartKind::Claw => "claw",
             PartKind::Wing => "wing",
             PartKind::Gland => "gland",
+            PartKind::Tendril => "tendril",
+            PartKind::PhaseMembrane => "phase membrane",
+            PartKind::Void => "void",
         }
     }
 
@@ -67,13 +77,14 @@ impl PartKind {
             PartKind::Limb | PartKind::Claw => LIMBS,
             PartKind::Wing => FLIGHT,
             PartKind::Gland => GLANDS,
+            PartKind::Tendril | PartKind::PhaseMembrane | PartKind::Void => OTHERWORLDLY,
         }
     }
 
     fn max_count(self) -> u8 {
         match self {
             PartKind::Segment => 12,
-            PartKind::Limb | PartKind::Tentacle => 10,
+            PartKind::Limb | PartKind::Tentacle | PartKind::Tendril => 10,
             PartKind::Eye => 8,
             PartKind::Wing | PartKind::Fin | PartKind::Claw => 6,
             PartKind::Leaf => 8,
@@ -90,6 +101,9 @@ pub const LIMBS: u16 = 1 << 3;
 pub const FLIGHT: u16 = 1 << 4;
 pub const GLANDS: u16 = 1 << 5;
 pub const SAPIENCE: u16 = 1 << 6;
+/// Came through the Veil (§4.4a). Not an evolutionary milestone: no native
+/// lineage can reach it.
+pub const OTHERWORLDLY: u16 = 1 << 7;
 
 pub struct Milestone {
     pub flag: u16,
@@ -145,7 +159,10 @@ pub fn milestone_names(flags: u16) -> Vec<&'static str> {
 
 /// Largest body size a lineage can reach with its milestones.
 pub fn size_cap(flags: u16) -> Fx {
-    if flags & MULTICELLULAR == 0 {
+    if flags & OTHERWORLDLY != 0 {
+        // Not bound by the square-cube law.
+        Fx::from_int(1000)
+    } else if flags & MULTICELLULAR == 0 {
         Fx::ratio(5, 100)
     } else if flags & SKELETON == 0 {
         Fx::from_int(3)
@@ -231,17 +248,21 @@ impl Body {
     }
 
     pub fn traits(&self, body_size: Fx) -> BodyTraits {
-        let shell = self.mass(PartKind::Shell);
+        let shell = self.mass(PartKind::Shell) + self.mass(PartKind::PhaseMembrane);
         let locomotion = self.mass(PartKind::Fin) * Fx::ratio(3, 10)
             + self.mass(PartKind::Limb) * Fx::ratio(4, 10)
             + self.mass(PartKind::Wing) * Fx::ratio(6, 10)
-            + self.mass(PartKind::Tentacle) * Fx::ratio(1, 10);
+            + self.mass(PartKind::Tentacle) * Fx::ratio(1, 10)
+            + self.mass(PartKind::Tendril) * Fx::ratio(1, 10)
+            + self.mass(PartKind::PhaseMembrane) * Fx::ratio(3, 10);
         let brain =
             self.mass(PartKind::Brain) * (Fx::ONE + self.mass(PartKind::Eye) * Fx::ratio(1, 10));
         let weapons = self.mass(PartKind::Jaw)
             + self.mass(PartKind::Claw) * Fx::ratio(8, 10)
             + self.mass(PartKind::Gland) * Fx::ratio(6, 10)
-            + self.mass(PartKind::Tentacle) * Fx::ratio(3, 10);
+            + self.mass(PartKind::Tentacle) * Fx::ratio(3, 10)
+            + self.mass(PartKind::Tendril) * Fx::ratio(3, 10)
+            + self.mass(PartKind::Void) * Fx::ratio(8, 10);
         let complexity = self
             .parts
             .iter()

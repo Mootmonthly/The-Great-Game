@@ -16,19 +16,23 @@ pub enum Overlay {
     Life,
     /// How suitable each region is for any kind of life.
     Viability,
+    /// Veil strength: dark where sealed, glowing violet where thin, with
+    /// beings from beyond marked in their colour.
+    Veil,
     /// Amount of one substance (surface plus atmosphere column).
     Substance(usize),
 }
 
 impl Overlay {
-    /// Mode numbers used by the Godot viewer: 0..3, then 4 + substance index.
+    /// Mode numbers used by the Godot viewer: 0..4, then 5 + substance index.
     pub fn from_mode(mode: i64) -> Overlay {
         match mode {
             0 => Overlay::Surface,
             1 => Overlay::Temperature,
             2 => Overlay::Life,
             3 => Overlay::Viability,
-            m => Overlay::Substance((m - 4).max(0) as usize),
+            4 => Overlay::Veil,
+            m => Overlay::Substance((m - 5).max(0) as usize),
         }
     }
 }
@@ -148,6 +152,25 @@ impl World {
                 } else {
                     mix([20.0, 40.0, 20.0], [120.0, 255.0, 120.0], v * 1.5)
                 }
+            }
+            Overlay::Veil => {
+                let open = 1.0 - self.veil(i).to_f64();
+                let mut c = mix(mix([12.0, 12.0, 18.0], ground, 0.15), [190.0, 80.0, 255.0], open * 1.2);
+                if open * 1.2 > 1.0 {
+                    c = mix(c, [255.0, 230.0, 255.0], open * 1.2 - 1.0);
+                }
+                let horror = self
+                    .regions[i]
+                    .populations
+                    .iter()
+                    .filter(|p| self.is_otherworldly(p.species))
+                    .max_by_key(|p| (p.biomass, std::cmp::Reverse(p.species)));
+                if let Some(p) = horror {
+                    if let Some(s) = self.species_by_id(p.species) {
+                        c = mix(c, rgb(s.color), 0.4 + (p.biomass.to_f64() / 20.0).min(0.5));
+                    }
+                }
+                c
             }
             Overlay::Substance(s) => {
                 let Some(sub) = self.substances.get(s) else {

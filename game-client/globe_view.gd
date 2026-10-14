@@ -144,6 +144,11 @@ func refresh() -> void:
 	var color := Color(a["color"][0], a["color"][1], a["color"][2])
 	var thickness: float = a["thickness"]
 	atmosphere.visible = thickness > 0.01
+	# A thin Veil tints the sky violet.
+	var veil_open: float = a.get("veil_open", 0.0)
+	color = color.lerp(Color(0.7, 0.3, 1.0), clampf(veil_open * 0.8, 0.0, 0.6))
+	if veil_open > 0.3:
+		atmosphere.visible = true
 	atmo_material.set_shader_parameter("atmo_color", color)
 	atmo_material.set_shader_parameter("strength", 0.35 + thickness * 1.2)
 	atmo_material.set_shader_parameter("sun_direction", sun.global_transform.basis.z)
@@ -155,6 +160,8 @@ func refresh() -> void:
 	cloud_material.set_shader_parameter("cloud_color", Color(a["cloud_color"][0], a["cloud_color"][1], a["cloud_color"][2]))
 	var sunlight: float = a["sunlight"]
 	sun.light_energy = clampf(0.6 + 0.6 * sqrt(sunlight), 0.35, 1.6)
+	if a.has("star_color"):
+		sun.light_color = Color.html(a["star_color"])
 
 
 ## Updates rotation speed, tilt, moons and rings from the world status.

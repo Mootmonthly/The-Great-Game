@@ -46,6 +46,16 @@ pub enum Action {
     AddMoon { mass: Fx, distance: Fx },
     /// Removes the moon at `index` (moons are sorted by distance).
     RemoveMoon { index: u8 },
+    /// Natural mode (false) or Godhand mode (true).
+    SetGodhand { on: bool },
+    /// Star type, by index into `star::STARS`. Resets the star's mass.
+    SetStarType { star: u8 },
+    /// Star mass in solar masses (limited to the type's range in Natural).
+    SetStarMass { solar: Fx },
+    /// Planet radius relative to Earth.
+    SetPlanetRadius { earths: Fx },
+    /// The Veil law (§4.4a): 0 sealed .. 1 wide open.
+    SetVeilLaw { openness: Fx },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

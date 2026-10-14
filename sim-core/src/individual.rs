@@ -28,6 +28,7 @@ pub enum MemoryKind {
     Migrated,
     Fled,
     MournedFriend,
+    WitnessedHorror,
 }
 
 impl MemoryKind {
@@ -41,6 +42,7 @@ impl MemoryKind {
             MemoryKind::Migrated => "moved to new lands",
             MemoryKind::Fled => "fled danger",
             MemoryKind::MournedFriend => "mourned the death of",
+            MemoryKind::WitnessedHorror => "glimpsed a being from beyond the Veil",
         }
     }
 }
@@ -397,15 +399,28 @@ impl World {
             let size = species.genome.size;
             let ratio = Fx::from_int(3);
             let (mut threat, mut prey) = (Fx::ZERO, Fx::ZERO);
+            let native = !species.has(body::OTHERWORLDLY);
             for p in &self.regions[region].populations {
                 if let Some(other) = self.species_by_id(p.species) {
-                    if other.genome.size >= size * ratio && other.traits.offense > Fx::ratio(2, 10)
+                    if native && other.has(body::OTHERWORLDLY) {
+                        // Whatever its size, a thing from beyond is terrifying.
+                        threat += p.biomass * Fx::from_int(3);
+                    } else if other.genome.size >= size * ratio && other.traits.offense > Fx::ratio(2, 10)
                     {
                         threat += p.biomass;
                     } else if other.genome.size * ratio <= size {
                         prey += p.biomass;
                     }
                 }
+            }
+            if native
+                && self.entity_biomass(region) > Fx::ZERO
+                && !self.individuals[k]
+                    .memories
+                    .iter()
+                    .any(|m| m.kind == MemoryKind::WitnessedHorror)
+            {
+                self.individuals[k].remember(tick, MemoryKind::WitnessedHorror, None);
             }
             let others: Vec<usize> = self
                 .individuals_in(region)

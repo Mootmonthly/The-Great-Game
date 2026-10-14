@@ -2,6 +2,8 @@
 //! class. Structured data crosses the boundary as JSON strings, which keeps
 //! the binding surface small; the map overlay crosses as raw RGBA bytes.
 
+#![recursion_limit = "256"]
+
 use godot::prelude::*;
 use serde_json::{json, Value};
 use sim_core::presets::{preset_actions, PRESETS};
@@ -52,6 +54,7 @@ fn species_summary(w: &World, s: &sim_core::life::Species) -> Value {
         "size": g.size.to_f64(), "temp_opt": g.temp_opt.to_f64(), "temp_tol": g.temp_tol.to_f64(),
         "body": g.body.describe(&substance_names(w)),
         "milestones": sim_core::body::milestone_names(g.milestones),
+        "otherworldly": s.has(sim_core::body::OTHERWORLDLY),
         "temperament": s.temperament.describe(),
         "parent": s.parent, "born_year": s.born_tick / sim_core::world::TICKS_PER_YEAR,
         "cost": sim_core::sheet::species_sheet(w, s).cost.cost,
@@ -234,6 +237,60 @@ impl SimWorld {
         self.world.apply(Action::SetGravity { g: Fx::from_f64(g) });
     }
 
+    /// Natural mode (false) or Godhand mode (true).
+    #[func]
+    fn set_godhand(&mut self, on: bool) {
+        self.world.apply(Action::SetGodhand { on });
+    }
+
+    /// Star type by index into `stars_json`.
+    #[func]
+    fn set_star_type(&mut self, star: i64) {
+        if (0..sim_core::star::STARS.len() as i64).contains(&star) {
+            self.world.apply(Action::SetStarType { star: star as u8 });
+        }
+    }
+
+    #[func]
+    fn set_star_mass(&mut self, solar: f64) {
+        self.world.apply(Action::SetStarMass {
+            solar: Fx::from_f64(solar),
+        });
+    }
+
+    #[func]
+    fn set_planet_radius(&mut self, earths: f64) {
+        self.world.apply(Action::SetPlanetRadius {
+            earths: Fx::from_f64(earths),
+        });
+    }
+
+    /// The Veil law (§4.4a), in percent: 0 sealed .. 100 wide open.
+    #[func]
+    fn set_veil_law(&mut self, percent: f64) {
+        self.world.apply(Action::SetVeilLaw {
+            openness: Fx::from_f64(percent / 100.0),
+        });
+    }
+
+    /// The star types, in index order.
+    #[func]
+    fn stars_json(&self) -> GString {
+        let stars: Vec<Value> = sim_core::star::STARS
+            .iter()
+            .map(|s| {
+                json!({
+                    "name": s.name, "description": s.description,
+                    "mass": s.mass.to_f64(), "min_mass": s.min_mass.to_f64(),
+                    "max_mass": s.max_mass.to_f64(), "luminosity": s.luminosity.to_f64(),
+                    "light_quality": s.light_quality.to_f64(), "radiation": s.radiation.to_f64(),
+                    "flares": s.flares, "color": hex(s.color),
+                })
+            })
+            .collect();
+        to_gstring(json!(stars))
+    }
+
     /// RGBA8 pixels, one per region. Modes: 0 surface, 1 temperature, 2 life,
     /// 3 viability, 4+ substance amount (4 + substance index).
     #[func]
@@ -262,6 +319,26 @@ impl SimWorld {
             "star_distance": p.star_distance_au.to_f64(),
             "star_luminosity": p.star_luminosity.to_f64(),
             "gravity": p.gravity.to_f64(),
+            "godhand": p.godhand,
+            "star_type": p.star_type as u8,
+            "star_name": p.star_type.info().name,
+            "star_color": hex(p.star_type.info().color),
+            "star_mass": p.star_mass.to_f64(),
+            "planet_mass": p.planet_mass.to_f64(),
+            "planet_radius": p.planet_radius.to_f64(),
+            "year_length": p.year_length().to_f64(),
+            "moon_limit": p.moon_limit().to_f64(),
+            "radiation": w.surface_radiation().to_f64(),
+            "harmful_radiation": w.harmful_radiation().to_f64(),
+            "strain": p.strain().to_f64(),
+            "reality_strain": w.reality_strain().to_f64(),
+            "last_flare_year": p.last_flare_tick.map_or(-1, |t| (t / 4) as i64),
+            "veil_law": w.veil_law.to_f64() * 100.0,
+            "veil_thinning": w.veil_thinning().to_f64(),
+            "veil_min": w.veil_min().to_f64(),
+            "veil_mean": w.veil_mean().to_f64(),
+            "entity_species": w.living_species().filter(|s| s.has(sim_core::body::OTHERWORLDLY)).count(),
+            "last_breach_year": w.last_breach_tick.map_or(-1, |t| (t / 4) as i64),
             "global_heat": p.global_heat.to_f64(),
             "day_length": p.day_length_hours.to_f64(),
             "axial_tilt": p.axial_tilt_deg.to_f64(),
@@ -346,6 +423,7 @@ impl SimWorld {
             "temperature": r.temperature.to_f64(),
             "elevation": r.elevation.to_f64(),
             "geothermal": r.geothermal.to_f64(),
+            "veil": w.veil(i).to_f64(),
             "substances": substances,
             "best_profile": best,
             "populations": pops,
@@ -586,6 +664,8 @@ impl SimWorld {
         to_gstring(json!({
             "color": a.color, "thickness": a.thickness, "clouds": a.clouds,
             "cloud_color": a.cloud_color, "sunlight": a.sunlight,
+            "veil_open": (Fx::ONE - self.world.veil_mean()).to_f64(),
+            "star_color": hex(self.world.planet.star_type.info().color),
         }))
     }
 

@@ -210,6 +210,20 @@ impl Species {
             "Huge"
         };
         let mut words = vec![size_word.to_string()];
+        if self.has(body::OTHERWORLDLY) {
+            words.push("Otherworldly".into());
+            if g.body.count(PartKind::Eye) >= 4 {
+                words.push("Many-eyed".into());
+            }
+            if g.body.count(PartKind::Tendril) > 0 {
+                words.push("Tendrilled".into());
+            }
+            if g.body.count(PartKind::Void) > 0 {
+                words.push("Hollow".into());
+            }
+            words.push("Veil-born Horror".into());
+            return words.join(" ");
+        }
         if self.has(body::SAPIENCE) {
             words.push("Sapient".into());
         }
@@ -336,6 +350,8 @@ impl World {
         let flux = self.stellar_flux();
         // Tides from moons stir and heat the planet: extra energy everywhere.
         let tidal_energy = (self.planet.tidal_strength() * Fx::ratio(5, 100)).min(Fx::HALF);
+        // Red and dim stars give light that is poorer for photosynthesis.
+        let light_quality = self.planet.star_type.info().light_quality;
         let p = self.pressure;
         let mut life = Vec::with_capacity(REGION_COUNT);
         for (i, r) in self.regions.iter().enumerate() {
@@ -365,7 +381,7 @@ impl World {
                 fuel += sub.fuel * available;
                 oxidizer += sub.oxidizer * available;
             }
-            let light = saturate(flux * World::insolation(y), Fx::ratio(3, 10));
+            let light = saturate(flux * World::insolation(y), Fx::ratio(3, 10)) * light_quality;
             let geothermal = (r.geothermal * Fx::ratio(7, 10) + tidal_energy).min(Fx::ONE);
             let chemical = fuel.min(oxidizer).min(Fx::ONE);
             let energy = [light, geothermal, chemical];
@@ -403,7 +419,7 @@ impl World {
         self.life = life;
     }
 
-    fn species_index(&self, id: u32) -> usize {
+    pub(crate) fn species_index(&self, id: u32) -> usize {
         self.species
             .binary_search_by_key(&id, |s| s.id)
             .expect("population refers to a known species")
@@ -445,7 +461,7 @@ impl World {
         }
     }
 
-    fn add_species(&mut self, profile: Profile, genome: Genome, parent: Option<u32>) -> u32 {
+    pub(crate) fn add_species(&mut self, profile: Profile, genome: Genome, parent: Option<u32>) -> u32 {
         let id = self.next_species_id;
         self.next_species_id += 1;
         let name = self.new_name();
@@ -470,6 +486,7 @@ impl World {
     pub(crate) fn update_life(&mut self) {
         self.abiogenesis();
         self.population_dynamics();
+        self.entity_dynamics();
         self.migration();
         self.speciation();
         self.census();
@@ -491,6 +508,7 @@ impl World {
             let s = &self.species[k];
             if !s.is_alive()
                 || s.has(body::SAPIENCE)
+                || s.has(body::OTHERWORLDLY)
                 || !s.has(body::NERVOUS)
                 || s.biomass < Fx::from_int(5)
                 || s.traits.intelligence < Fx::ratio(35, 100)
@@ -549,6 +567,8 @@ impl World {
     /// separate niches, which lets large creatures evolve alongside microbes.
     fn population_dynamics(&mut self) {
         let gravity = self.planet.gravity;
+        // Radiation kills; armour shields.
+        let radiation_harm = (self.harmful_radiation() * Fx::ratio(5, 100)).min(Fx::HALF);
         let swing = self.day_night_swing();
         // A predator must be at least this many times bigger than its prey.
         let prey_ratio = Fx::from_int(3);
@@ -557,7 +577,12 @@ impl World {
                 continue;
             }
             let temp = self.regions[i].temperature;
-            let pops = self.regions[i].populations.clone();
+            // Beings from beyond follow their own rules (`entity_dynamics`).
+            let (entities, pops): (Vec<Population>, Vec<Population>) = self.regions[i]
+                .populations
+                .iter()
+                .cloned()
+                .partition(|p| self.is_otherworldly(p.species));
             let n = pops.len();
             struct Info {
                 strength: Fx,
@@ -591,7 +616,7 @@ impl World {
                     Info {
                         strength: s.strength(),
                         r: s.growth_rate(),
-                        death: s.death_rate(),
+                        death: s.death_rate() + radiation_harm * (Fx::ONE - s.traits.armor * Fx::HALF),
                         fit: self.life[i].fit(&s.profile) * tf * photo,
                         habitat: self.life[i].habitat(&s.profile) * tf,
                         size: s.genome.size,
@@ -678,6 +703,7 @@ impl World {
                     });
                 }
             }
+            next.extend(entities);
             self.regions[i].populations = next;
         }
     }
@@ -696,9 +722,15 @@ impl World {
                     + s.traits.speed * Fx::ratio(1, 10)
                     + s.temperament.curiosity * s.behaviour_weight() * Fx::ratio(5, 100);
                 let profile = s.profile;
+                let otherworldly = s.has(body::OTHERWORLDLY);
                 let ns: Vec<usize> = neighbours(i).collect();
                 let j = ns[self.rng.below(ns.len() as u64) as usize];
-                if self.life[j].fit(&profile) > Fx::ZERO {
+                let suits = if otherworldly {
+                    self.entity_target(j)
+                } else {
+                    self.life[j].fit(&profile) > Fx::ZERO
+                };
+                if suits {
                     moves.push((i, j, p.species, p.biomass * frac));
                 }
             }
@@ -728,13 +760,15 @@ impl World {
     /// Occasionally a local population splits off as a new species, adapted
     /// to its region.
     fn speciation(&mut self) {
+        // Radiation drives mutation: harsh stars speed up speciation.
+        let mutagen = Fx::ONE + self.harmful_radiation().min(Fx::from_int(3));
         let mut living = self.living_count();
         for i in 0..REGION_COUNT {
             let mut k = 0;
             while k < self.regions[i].populations.len() {
                 let p = self.regions[i].populations[k].clone();
                 k += 1;
-                if p.biomass < Fx::from_int(2) {
+                if p.biomass < Fx::from_int(2) || self.is_otherworldly(p.species) {
                     continue;
                 }
                 // Speciation slows as the planet fills with species.
@@ -751,7 +785,7 @@ impl World {
                 } else {
                     Fx::ratio(3, 1000)
                 };
-                if !self.rng.chance(rate * crowding) {
+                if !self.rng.chance(rate * crowding * mutagen) {
                     continue;
                 }
                 let parent = self.species[self.species_index(p.species)].clone();

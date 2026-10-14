@@ -42,6 +42,7 @@ fn blank(name: &str, hp: i64, ac: i64, attacks: Vec<Attack>) -> CharacterSheet {
         traits: vec![],
         regeneration: 0,
         pack_tactics: false,
+        frighten_dc: None,
         cost: CostBreakdown::default(),
     }
 }

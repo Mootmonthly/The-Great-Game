@@ -5,7 +5,7 @@ extends Control
 ## godot-ext crate). The UI is built in code so the scene file stays trivial.
 
 const SAVE_PATH := "user://world_log.json"
-const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability"]
+const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability", "Veil"]
 const TOOLS := ["Inspect", "Add substance", "Remove substance", "Heat", "Cool"]
 const TreeView := preload("res://tree_view.gd")
 const GlobeView := preload("res://globe_view.gd")
@@ -57,6 +57,10 @@ var substance_select: OptionButton
 var amount_box: SpinBox
 var radius_box: SpinBox
 var planet_sliders := {}
+var mode_select: OptionButton
+var star_select: OptionButton
+var star_label: RichTextLabel
+var veil_label: RichTextLabel
 
 
 func _ready() -> void:
@@ -283,12 +287,42 @@ func _build_ui() -> void:
 
 	# Planet
 	_section(panel, "Planet")
-	_planet_slider(panel, "star_distance", "Star distance (AU)", 0.03, 10.0, 1.0, true, "set_star_distance")
-	_planet_slider(panel, "star_luminosity", "Star luminosity (suns)", 0.05, 20.0, 1.0, true, "set_star_luminosity")
-	_planet_slider(panel, "gravity", "Gravity (g)", 0.05, 5.0, 1.0, true, "set_gravity")
+	var mode_row := HBoxContainer.new()
+	panel.add_child(mode_row)
+	mode_row.add_child(_label("Mode"))
+	mode_select = OptionButton.new()
+	mode_select.add_item("Natural")
+	mode_select.add_item("Godhand")
+	mode_select.tooltip_text = "Natural: physics links the settings (gravity from mass and radius, brightness from the star). Godhand: set anything, but impossible settings strain the world."
+	mode_select.item_selected.connect(func(i):
+		sim.set_godhand(i == 1)
+		globe_timer = 0.0
+		_refresh_all())
+	mode_row.add_child(mode_select)
+	mode_row.add_child(_label("Star"))
+	star_select = OptionButton.new()
+	for star in JSON.parse_string(sim.stars_json()):
+		star_select.add_item(star["name"])
+	star_select.item_selected.connect(func(i):
+		sim.set_star_type(i)
+		globe_timer = 0.0
+		_refresh_all())
+	mode_row.add_child(star_select)
+	star_label = _rich(70)
+	panel.add_child(star_label)
+	_planet_slider(panel, "star_mass", "Star mass (suns)", 0.05, 100.0, 1.0, true, "set_star_mass")
+	_planet_slider(panel, "star_distance", "Star distance (AU)", 0.01, 200.0, 1.0, true, "set_star_distance")
+	_planet_slider(panel, "star_luminosity", "Star luminosity (suns)", 0.0001, 10000.0, 1.0, true, "set_star_luminosity")
+	_planet_slider(panel, "planet_radius", "Planet radius (Earths)", 0.1, 20.0, 1.0, true, "set_planet_radius")
+	_planet_slider(panel, "gravity", "Gravity (g)", 0.01, 50.0, 1.0, true, "set_gravity")
 	_planet_slider(panel, "global_heat", "Global heat (K)", -200.0, 1000.0, 0.0, false, "set_global_heat")
 	_planet_slider(panel, "day_length", "Day length (hours)", 2.0, 5000.0, 24.0, true, "set_day_length")
 	_planet_slider(panel, "axial_tilt", "Axial tilt (degrees)", 0.0, 90.0, 0.0, false, "set_axial_tilt")
+
+	_section(panel, "Laws")
+	_planet_slider(panel, "veil_law", "Veil (% open)", 0.0, 100.0, 0.0, false, "set_veil_law")
+	veil_label = _rich(50)
+	panel.add_child(veil_label)
 
 	_section(panel, "Moons")
 	moons_label = _rich(40)
@@ -309,7 +343,7 @@ func _build_ui() -> void:
 	moon_distance.max_value = 50
 	moon_distance.step = 0.05
 	moon_distance.value = 1.0
-	moon_distance.tooltip_text = "In Earth–Moon distances. Below 0.3 the moon is torn into rings."
+	moon_distance.tooltip_text = "In Earth–Moon distances. Below 0.3 the moon is torn into rings; beyond the stable limit it escapes (Natural) or strains the world (Godhand)."
 	moon_row.add_child(moon_distance)
 	var moon_buttons := HBoxContainer.new()
 	panel.add_child(moon_buttons)
@@ -608,7 +642,25 @@ func _refresh_text() -> void:
 	if st["rings"] > 0.0:
 		moon_text += "\nRings: %.2f lunar masses of debris" % st["rings"]
 	moon_text += "\nTides: %.2f× Earth's · day–night swing: ±%.0f K" % [st["tidal_strength"], st["day_night_swing"]]
+	moon_text += "\nMoons beyond %.2f Earth–Moon distances %s." % [st["moon_limit"], "strain the world" if st["godhand"] else "escape"]
 	moons_label.text = moon_text
+	mode_select.select(1 if st["godhand"] else 0)
+	star_select.select(int(st["star_type"]))
+	var star_text := "[color=#%s]●[/color] %s · year %.2f Earth years · planet mass %.2f Earths\nSurface radiation %.2f× Earth's (harmful: %.2f)" % [
+		st["star_color"], st["star_name"], st["year_length"], st["planet_mass"], st["radiation"], st["harmful_radiation"]]
+	if st["last_flare_year"] >= 0:
+		star_text += " · last flare in year %d" % st["last_flare_year"]
+	if st["godhand"]:
+		star_text += "\n[color=#e0a040]Strain %.2f[/color] (atmosphere loss, tidal heat)" % st["strain"]
+	if st["reality_strain"] > 0.0:
+		star_text += "\n[color=#b080ff]Reality strain %.2f[/color]" % st["reality_strain"]
+	star_label.text = star_text
+	var veil_text := "Veil: weakest %.2f, average %.2f (1 = sealed; below 0.5 things can come through)" % [st["veil_min"], st["veil_mean"]]
+	if st["entity_species"] > 0:
+		veil_text += "\n[color=#c080ff]%d kind%s of being from beyond[/color]" % [st["entity_species"], "" if st["entity_species"] == 1 else "s"]
+	if st["last_breach_year"] >= 0:
+		veil_text += " · last breach in year %d" % st["last_breach_year"]
+	veil_label.text = veil_text
 	globe_view.set_planet(st)
 
 	if selected_region.x >= 0:
@@ -618,8 +670,8 @@ func _refresh_text() -> void:
 func _refresh_region() -> void:
 	visit_button.disabled = false
 	var r: Dictionary = JSON.parse_string(sim.region_json(selected_region.x, selected_region.y))
-	var text := "[b]Region (%d, %d)[/b]\n%.1f K (%.1f °C), elevation %.2f, geothermal %.2f\n" % [
-		r["x"], r["y"], r["temperature"], r["temperature"] - 273.15, r["elevation"], r["geothermal"]]
+	var text := "[b]Region (%d, %d)[/b]\n%.1f K (%.1f °C), elevation %.2f, geothermal %.2f, Veil %.2f\n" % [
+		r["x"], r["y"], r["temperature"], r["temperature"] - 273.15, r["elevation"], r["geothermal"], r["veil"]]
 	var subs := []
 	for s in r["substances"]:
 		subs.append("%s %.2f (%s)" % [s["name"], s["amount"], s["phase"]])

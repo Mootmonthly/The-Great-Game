@@ -245,6 +245,8 @@ pub struct CharacterSheet {
     pub regeneration: i64,
     /// +2 to hit while an ally fights alongside.
     pub pack_tactics: bool,
+    /// Wisdom save DC against being frightened by its presence, if any.
+    pub frighten_dc: Option<i64>,
     pub cost: CostBreakdown,
 }
 
@@ -306,6 +308,7 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     let t = &s.traits;
     let nervous = s.has(body::NERVOUS);
     let sapient = s.has(body::SAPIENCE);
+    let otherworldly = s.has(body::OTHERWORLDLY);
     let temperament = ind.map_or(s.temperament, |i| i.personality);
     let size = g.size;
     let category = SizeCategory::from_size(size);
@@ -332,7 +335,9 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         40,
     );
     let intelligence = clamp_score(
-        Fx::ONE + t.intelligence * Fx::from_int(20) + Fx::from_int(if sapient { 4 } else { 0 }),
+        Fx::ONE
+            + t.intelligence * Fx::from_int(20)
+            + Fx::from_int(if sapient || otherworldly { 4 } else { 0 }),
         30,
     );
     let caution = if nervous {
@@ -347,8 +352,14 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         Fx::from_int(6) + t.perception * Fx::from_int(8) + caution + age_bonus,
         30,
     );
+    // An overwhelming presence: beings from beyond are hard to ignore.
+    let presence = if otherworldly { 6 } else { 0 };
     let charisma = match ind {
-        Some(i) => i.charisma(),
+        Some(i) => (i.charisma() + presence).min(30),
+        None if otherworldly => clamp_score(
+            Fx::from_int(8 + presence) + temperament.sociability * Fx::from_int(6),
+            30,
+        ),
         None if nervous => clamp_score(
             Fx::from_int(2) + temperament.sociability * Fx::from_int(10),
             30,
@@ -371,13 +382,18 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     let con_mod = modifier(constitution);
     let hit_points = (hit_dice * ((die + 1) / 2 + con_mod)).max(1);
     let proficiency = (2 + hit_dice / 8).clamp(2, 9);
-    let armor_class = (10 + modifier(dexterity) + (t.armor * Fx::from_int(9)).round()).clamp(5, 30);
+    // A phase membrane leaves part of the body elsewhere: harder to hit.
+    let phased = if b.count(PartKind::PhaseMembrane) > 0 { 2 } else { 0 };
+    let armor_class =
+        (10 + modifier(dexterity) + (t.armor * Fx::from_int(9)).round() + phased).clamp(5, 30);
 
     // Speeds in feet.
     let speed_scale =
         |base: i64, range: i64| round5(Fx::from_int(base) + t.speed * Fx::from_int(range));
     let speed_walk = if limbs > 0 {
         speed_scale(20, 40)
+    } else if otherworldly {
+        speed_scale(10, 30)
     } else if b.count(PartKind::Segment) >= 2 && b.count(PartKind::Fin) == 0 {
         10
     } else {
@@ -390,6 +406,9 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     };
     let speed_fly = if b.count(PartKind::Wing) > 0 {
         speed_scale(30, 60)
+    } else if otherworldly {
+        // Drifts, unbound by gravity.
+        speed_scale(10, 30)
     } else {
         0
     };
@@ -433,6 +452,18 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     if !nervous {
         immunities.push(DamageType::Psychic);
     }
+    if otherworldly {
+        // Ordinary weapons only half touch it; its chemistry is not ours.
+        resistances.retain(|r| *r != DamageType::Cold && *r != DamageType::Acid);
+        immunities.retain(|r| *r != DamageType::Fire && *r != DamageType::Poison);
+        vulnerabilities.clear();
+        resistances.extend([
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+            DamageType::Psychic,
+        ]);
+    }
     resistances.sort();
     resistances.dedup();
     vulnerabilities.retain(|v| !resistances.contains(v) && !immunities.contains(v));
@@ -440,7 +471,11 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     // Senses.
     let eyes = b.count(PartKind::Eye);
     let mut senses = Vec::new();
-    if !nervous {
+    if otherworldly && eyes >= 4 {
+        senses.push("truesight 60 ft.".to_string());
+    } else if otherworldly {
+        senses.push("darkvision 120 ft.".to_string());
+    } else if !nervous {
         senses.push("blindsight 10 ft. (blind beyond)".to_string());
     } else if eyes == 0 {
         senses.push("tremorsense 30 ft.".to_string());
@@ -453,7 +488,9 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     let passive = 10 + modifier(wisdom) + if keen { proficiency } else { 0 };
     senses.push(format!("passive Perception {passive}"));
 
-    let languages = if sapient {
+    let languages = if otherworldly {
+        vec!["telepathy 120 ft.".to_string()]
+    } else if sapient {
         if b.count(PartKind::Jaw) == 0 {
             vec![format!("{} (telepathy 60 ft.)", s.name)]
         } else {
@@ -496,6 +533,29 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
             uses: (claw.count as i64).min(2),
         });
     }
+    if let Some(tendril) = b.part(PartKind::Tendril) {
+        attacks.push(Attack {
+            name: "Tendril".into(),
+            to_hit,
+            dice: 1,
+            die: smaller,
+            bonus: attack_mod,
+            damage: DamageType::Bludgeoning,
+            uses: (tendril.count as i64 / 2).clamp(1, 3),
+        });
+    }
+    if otherworldly {
+        let int_mod = modifier(intelligence);
+        attacks.push(Attack {
+            name: "Mind Lash".into(),
+            to_hit: proficiency + int_mod.max(attack_mod),
+            dice: 1 + hit_dice / 4,
+            die: 8,
+            bonus: int_mod.max(0),
+            damage: DamageType::Psychic,
+            uses: 1,
+        });
+    }
     if let Some(tentacle) = b.part(PartKind::Tentacle) {
         attacks.push(Attack {
             name: "Tentacle".into(),
@@ -523,7 +583,15 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         attacks[0].uses += 1;
     }
 
-    let breath = b
+    let void = b.part(PartKind::Void).map(|_| Breath {
+        name: "Void Pulse".into(),
+        dice: (hit_dice / 2 + 1).max(2),
+        damage: DamageType::Psychic,
+        save_ability: WIS,
+        dc: 8 + proficiency + modifier(charisma),
+        targets: if category >= SizeCategory::Huge { 3 } else { 2 },
+    });
+    let breath = void.or_else(|| b
         .part(PartKind::Gland)
         .and_then(|gland| gland.substance)
         .map(|sub| {
@@ -541,7 +609,7 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
                 dc: 8 + proficiency + con_mod,
                 targets: if category >= SizeCategory::Huge { 3 } else { 2 },
             }
-        });
+        }));
 
     // Traits.
     let mut traits = Vec::new();
@@ -581,6 +649,26 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
             text: "Can move through spaces as narrow as 1 inch.".into(),
         });
     }
+    if otherworldly {
+        traits.push(Trait {
+            name: "Otherworldly".into(),
+            text: "Does not eat, breathe or age as native life does. It feeds on nearby minds."
+                .into(),
+        });
+        traits.push(Trait {
+            name: "Maddening Presence".into(),
+            text: format!(
+                "Creatures that start their turn within 30 ft. and can see it must succeed on a DC {} Wisdom save or be frightened until the end of their next turn.",
+                8 + proficiency + modifier(charisma)
+            ),
+        });
+        if b.count(PartKind::PhaseMembrane) > 0 {
+            traits.push(Trait {
+                name: "Phase Membrane".into(),
+                text: "Part of its body is always elsewhere (+2 AC).".into(),
+            });
+        }
+    }
     if sapient {
         traits.push(Trait {
             name: "Tool User".into(),
@@ -588,7 +676,9 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         });
     }
 
-    let creature_type = if !s.has(body::MULTICELLULAR) {
+    let creature_type = if otherworldly {
+        "Aberration"
+    } else if !s.has(body::MULTICELLULAR) {
         "Ooze"
     } else if sapient {
         "Humanoid"
@@ -609,7 +699,9 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         "Beast"
     };
 
-    let alignment = if !sapient {
+    let alignment = if otherworldly {
+        "Unknowable".to_string()
+    } else if !sapient {
         "Unaligned".to_string()
     } else {
         let order = if temperament.sociability > Fx::ratio(6, 10) {
@@ -657,6 +749,7 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         traits,
         regeneration,
         pack_tactics,
+        frighten_dc: otherworldly.then(|| 8 + proficiency + modifier(charisma)),
         cost: CostBreakdown::default(),
     };
     sheet.cost = cost(&sheet);
@@ -725,6 +818,12 @@ pub fn cost(sheet: &CharacterSheet) -> CostBreakdown {
         .any(|s| s.starts_with("darkvision") || s.starts_with("tremorsense"))
     {
         utility += Fx::ratio(5, 100);
+    }
+    if sheet.senses.iter().any(|s| s.starts_with("truesight")) {
+        utility += Fx::ratio(1, 10);
+    }
+    if sheet.has_trait("Maddening Presence") {
+        utility += Fx::ratio(15, 100);
     }
     if sheet.has_trait("Tool User") {
         utility += Fx::ratio(1, 10);

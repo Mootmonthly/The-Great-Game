@@ -18,7 +18,9 @@ pub mod presets;
 pub mod render;
 pub mod rng;
 pub mod sheet;
+pub mod star;
 pub mod substance;
+pub mod veil;
 pub mod world;
 
 pub use action::{Action, ActionLog};

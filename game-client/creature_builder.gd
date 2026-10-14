@@ -4,7 +4,8 @@ extends RefCounted
 ##
 ## Layout: the body runs along +Z (head in front), Y is up. Segments become a
 ## chain of rounded blobs; limbs, fins, wings, tentacles, eyes, jaws, shells,
-## fronds and glands attach to them. CreatureAnim animates the result.
+## fronds and glands attach to them. Beings from beyond the Veil float, with
+## tendrils, phase membranes and voids. CreatureAnim animates the result.
 
 const SHADER := preload("res://shaders/creature.gdshader")
 const CreatureAnim := preload("res://creature_anim.gd")
@@ -105,6 +106,9 @@ static func build(detail: Dictionary) -> Node3D:
 	var has_limbs := parts.has("limb")
 	var leg_len := 0.32 * (_k(float(parts["limb"]["size"])) if has_limbs else 1.0)
 	var base_y := leg_len * 0.9 + r * 0.6 if has_limbs else (0.55 if parts.has("fin") or parts.has("wing") else r)
+	var otherworldly: bool = detail.get("otherworldly", false)
+	if otherworldly:
+		base_y = r * 2.5 + 0.35  # Drifts above the ground, unbound by gravity.
 	body.position.y = base_y
 
 	var seg_z: Array[float] = []
@@ -236,6 +240,51 @@ static func build(detail: Dictionary) -> Node3D:
 				chain.append(seg)
 				parent = seg
 			root.tentacles.append(chain)
+
+	# Tendrils: long, thin, dark chains trailing from all around the body.
+	if parts.has("tendril"):
+		var n := int(parts["tendril"]["count"])
+		var tk := _k(float(parts["tendril"]["size"]))
+		var tendril_mat := _material(color.darkened(0.6), Color(0.6, 0.2, 0.9), 0.4)
+		for i in n:
+			var ang := (float(i) / n) * TAU
+			var along: float = lerpf(head_z, back_z, float(i % 3) / 2.0)
+			var chain: Array = []
+			var parent: Node3D = body
+			for j in 7:
+				var seg := Node3D.new()
+				seg.position = Vector3(cos(ang) * r * 0.8, sin(ang) * r * 0.4 - r * 0.3, along) if j == 0 else Vector3(0, -r * 0.42 * tk, 0)
+				if j == 0:
+					seg.rotation = Vector3(0, 0, ang * 0.3)
+				parent.add_child(seg)
+				_mesh(seg, _capsule(r * 0.06 * (1.0 - j * 0.11) * tk, r * 0.48 * tk), tendril_mat, Vector3(0, -r * 0.21 * tk, 0))
+				chain.append(seg)
+				parent = seg
+			root.tentacles.append(chain)
+
+	# A void: a hole in the world where the body should be, ringed with light.
+	if parts.has("void"):
+		var vk := _k(float(parts["void"]["size"]))
+		var mid_z: float = (head_z + back_z) * 0.5
+		var hole := StandardMaterial3D.new()
+		hole.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		hole.albedo_color = Color(0, 0, 0)
+		_mesh(body, _sphere(r * 0.7 * vk), hole, Vector3(0, r * 0.2, mid_z))
+		var ring := TorusMesh.new()
+		ring.inner_radius = r * 0.72 * vk
+		ring.outer_radius = r * 0.85 * vk
+		_mesh(body, ring, _material(Color(0.4, 0.1, 0.6), Color(0.8, 0.4, 1.0), 2.0), Vector3(0, r * 0.2, mid_z), Vector3.ONE, Vector3(PI / 2, 0, 0))
+
+	# Phase membrane: a translucent shimmer around the whole body.
+	if parts.has("phase membrane"):
+		var mk := _k(float(parts["phase membrane"]["size"]))
+		var shimmer := StandardMaterial3D.new()
+		shimmer.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		shimmer.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		shimmer.albedo_color = Color(0.75, 0.5, 1.0, 0.16)
+		shimmer.cull_mode = BaseMaterial3D.CULL_DISABLED
+		var length: float = absf(head_z - back_z) + head_r * 2.0
+		_mesh(body, _sphere(1.0), shimmer, Vector3(0, 0, (head_z + back_z) * 0.5), Vector3(head_r * 1.6 * mk, head_r * 1.5 * mk, length * 0.65 * mk))
 	return root
 
 
