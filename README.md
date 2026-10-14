@@ -55,6 +55,7 @@ If the viewer says "The simulation extension is not loaded", step 6 did not fini
 - **World:** pick a seed and a preset, then click **New world**. `blank` is an empty petri dish with bare rock and no atmosphere.
 - **Time:** **Play** runs the simulation; **Speed** sets seasons per second. **+1 year** and **+10 years** step forward.
 - **View:** switch the map between surface, temperature, life (each colour is a species), viability (where life could exist), and the amount of any single substance. Dots on the map are named individuals.
+- **3D globe:** switch on "3D globe" under View to see the world as a stylised, rotating planet: toon-lit continents and seas, ice caps, glowing lava, clouds and an atmosphere tinted by its gases. Drag to rotate, scroll to zoom.
 - **Species tab:** the largest living species. Click one to see its body parts, milestones, traits, temperament and ancestry.
 - **Family tree tab:** one line per species from its first year to extinction (or now), joined to its parent. Click a line to select it.
 - **Individuals tab:** named individuals, most renowned first. Click one for its personality, relationships and life story.

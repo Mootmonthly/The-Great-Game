@@ -59,6 +59,14 @@ func _initialize() -> void:
 	var hash_after: String = JSON.parse_string(sim.status_json())["hash"]
 	check(hash_before == hash_after, "save and load replays to the same state hash")
 
+	# 3D globe.
+	main.globe_toggle.button_pressed = true
+	await process_frame
+	check(main.globe_view.albedo_texture != null and main.globe_view.albedo_texture.get_width() == 1024, "3D globe builds its surface textures")
+	var atmo: Dictionary = JSON.parse_string(sim.atmosphere_json())
+	check(atmo["thickness"] > 0.3, "earthlike globe has a visible atmosphere")
+	main.globe_toggle.button_pressed = false
+
 	# Species tab and detail.
 	main.tabs.current_tab = 0
 	main._refresh_tabs()

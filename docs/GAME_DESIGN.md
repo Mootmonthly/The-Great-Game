@@ -349,6 +349,11 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 ## 8. Roadmap (Proposed)
 
+**Visual test (done before Phase 1):** a stylised 3D globe built from a simulated world: toon lighting with a hard day/night edge, height-based relief, seas with glints, ice, lava with glowing cracks, banded clouds, and an atmosphere glow coloured by the simulated gases. It is a test of the art direction (§1), not final art.
+
+![Globe visual test: Earth-like, frozen moon, sulfur world, magma world](images/globe-visual-test.png)
+
+
 | Phase | Goal | Exit criteria |
 |---|---|---|
 | 0. Prototype: Petri Dish | Godot 4 + Rust sim-core. 2D top-down. 10 substances, temperature, gravity, star distance; life triad; species populations evolve. Determinism test across Windows and Linux | Two seeds with different chemistry produce visibly different life; identical replay hashes on both platforms; measured sim cost per world-hour |
