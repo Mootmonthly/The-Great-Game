@@ -78,10 +78,50 @@ Each triad combination produces a **Biochemistry Profile**. The profile constrai
 ### 4.4 Evolution
 
 - Unit of simulation is the **species population** in a region (L1), not the individual.
-- Each species has a **genome**: a vector of continuous traits (size, limb count, sensory modes, armour, metabolism, intelligence, reproduction rate, magical affinity, and so on), bounded by its Biochemistry Profile.
-- Each sim-season: fitness is scored against region conditions and competing species; populations grow or shrink; traits mutate; isolated populations speciate.
-- **Body Plan Synthesis:** the trait vector maps to a procedural body plan (skeleton/topology, locomotion, surface material) for rendering and animation.
+- Each species has a **genome**, bounded by its Biochemistry Profile, with three parts:
+  - **Physiology:** size, temperature preference and tolerance, fecundity, metabolism.
+  - **Body-part genome:** a list of parts (segments, shells, fins, fronds, eyes, jaws, brains, tentacles, limbs, claws, wings, glands), each with a count and size. Glands carry a substance from the local chemistry, which later sets their breath weapon or venom. Armour, speed, intelligence and offence are derived from the parts, never set directly.
+  - **Brain genome:** a small neural network (§4.8).
+- **Evolutionary milestones** gate which parts a lineage can grow. Each needs its predecessors plus suitable conditions in the world:
+
+  | Milestone | Requires | Condition | Unlocks |
+  |---|---|---|---|
+  | Multicellularity | — | Dense, well-fed population | Segments, shells, fins, fronds; size above microscopic |
+  | Nervous system | Multicellularity | — | Eyes, jaws, brains, tentacles; behaviour (§4.8) |
+  | Skeleton | Multicellularity | Enough structural material in the local chemistry | Large bodies |
+  | Chemical glands | Multicellularity | A reactive substance in the region | Glands |
+  | Limbs | Skeleton + nervous system | — | Limbs, claws |
+  | Flight | Limbs | Gravity ≤ 2 g, pressure ≥ 0.15 bar | Wings |
+  | Sapience | Nervous system | High intelligence, manipulators (limbs or tentacles), sociable temperament | Named civilisations (later phases) |
+
+- Each sim-season: fitness is scored against region conditions and competing species; populations grow or shrink; species compete within size niches and hunt much smaller species; genomes mutate; populations speciate.
+- **Sapience rule (decided):** an unmodified, stable Earth-like world should produce sapient life almost every time, given enough time. Worlds that never reach sapience should be the result of unusual player choices (exotic chemistry, broken orbital dynamics, harsh laws), not the basic Earth template.
+- How the simulation achieves this:
+  - **Feedback loop:** as with hands, social life and brains on Earth, lineages with manipulators (limbs or tentacles) and a sociable temperament grow brains faster, and clever, social tool-users compete better.
+  - **Awakening:** a species that is clever, social and has manipulators can become sapient in any season, not only when a new species splits off.
+  - **Competitive exclusion:** each sapient species already alive makes further awakenings less likely, and sapient lineages split into new species far less often. A world ends up with a handful of sapient peoples, not hundreds. That suits fantasy settings with several peoples (elves, dwarves, goblins).
+- Pace (Phase 0.5 prototype, Earth-like world): multicellular life within about 100 years, nervous systems and skeletons within about 300, sapience usually within about 500–1,000 years (all 8 test seeds by year 1,000), limbs and flight within about 1,000.
+- **Body Plan Synthesis:** the body-part genome maps to a procedural body plan (skeleton/topology, locomotion, surface material) for rendering and animation.
 - **Archetype Matcher:** trait vectors near a known fantasy archetype receive that archetype's name, silhouette hints, and signature ability. Example: large + flight + reptilian + exothermic gland → "Dragon" with a breath weapon whose damage type comes from the gland's chemistry. Beings that match no archetype get a generated name. This is how classical monsters and true aliens coexist.
+
+### 4.4a Extradimensional Beings
+
+Not all life has to come from the world's own chemistry. Some beings come from outside reality: Lovecraftian, extradimensional entities that do not follow the life triad at all.
+
+- **The Veil:** a measure of how separate the world is from whatever lies beyond. Each region has a Veil strength; where it is thin, things can come through.
+- **What thins the Veil (proposed):**
+  - **Player laws:** a "Veil" setting among the metaphysical laws, from sealed to wide open. Exotic Veil-thinning resources can be unlocked with Essence.
+  - **Extreme physics:** strong gravity wells, frequent eclipses from many moons, and Godhand-mode settings that break real physics all strain reality.
+  - **Metaphysics:** mana convergence (Arcane Magic), mass deaths releasing souls (Soul Power), and cultivators breaking through to higher realms.
+  - **Minds:** sapient cultures whose religions reach outwards (§4.8, level 6). Worship can call things in.
+- **Biology without chemistry:** extradimensional beings need no backbone, medium or energy gradient. They feed on what the world's minds and metaphysics produce: thought, fear, souls, mana. In the population simulation, they draw energy from nearby species with nervous systems and raise those species' fear, rather than eating biomass.
+- **Bodies:** their own body-part set, not bound by gravity or the square-cube law: impossible geometry, phase membranes that exist partly elsewhere, eye clusters, tendrils, voids. They ignore normal size caps.
+- **Minds:** alien brains with extra senses and outputs. Their temperament may read as incoherent to the world's creatures. They can become named individuals. Their presence warps relationships: cults form around them, and they compete with the player as objects of worship.
+- **Character sheet:** type Aberration. Typical traits: psychic damage, Frightened and madness effects, truesight, telepathy, resistance to non-magical damage. Usually high cost.
+- **Risk and reward:** a world with a thin Veil can produce the strongest champions in the game, but the entities can destabilise or consume the world's own life. They can arrive uninvited if the player creates the right conditions, so world-building choices have consequences.
+- **Naming:** all entities get original generated names. No names from commercial mythos products.
+- **Physics alone is enough (decided):** extreme enough physics can thin the Veil even in a world with no metaphysical laws at all. A purely physical world is safer, not immune.
+- **Status:** design only; planned with the metaphysical laws (roadmap phase 4).
 
 ### 4.5 Sapience and Civilization
 
@@ -128,6 +168,36 @@ Laws can stack. Their interactions are the main source of emergent variety.
 - Top-down orbital camera with smooth zoom from planet to ground level.
 - Tools: add substance, heat/cool, adjust pressure, adjust orbit/rotation/gravity, add/remove moons, meteor/seed delivery, set law, accelerate time, bless/curse, observe (tracking overlays: population, chemistry, mana, civilizations).
 - **Possession:** select any individual at L2 to drop into L3 first-person control. The creature's actual stats and abilities apply. Possession can be used for exploration, guiding a civilization, or testing a future champion.
+
+### 4.8 Minds: Neural Networks
+
+Every being's behaviour comes from a small neural network in its genome: 8 senses (food, threat, prey, stranger, kin, hunger, injury, bias), 6 hidden neurons, 4 actions (approach, flee, attack, socialise). Brains use fixed-point maths, so they are as deterministic as the rest of the simulation and replay verification still works. One decision costs about 200 multiply-adds; one CPU core manages about 1–2 million per second.
+
+Brains run at several levels, chosen so cost stays bounded:
+
+![Neural-network feasibility levels](images/neural-network-feasibility.png)
+
+(Source for the image: `images/neural-network-feasibility.html`.)
+
+
+| Level | What runs | Scale | Where | Status |
+|---|---|---|---|---|
+| 1. Species instincts | Each species' brain is tested once in standard situations. The answers become its temperament (aggression, fear, curiosity, sociability), which drives hunting, fleeing, pack cooperation and migration in the population simulation. | Every species | Main simulation | Phase 0.5 |
+| 2. Named individuals | Persistent beings with a personal variant of their species' brain, a personality, health, renown, relationships and memories. They act every season: travel, flee, fight, befriend. Deaths are mourned, and killers earn grudges. | About 300 now; target 1,000–10,000 | Main simulation | Phase 0.5 (groundwork) |
+| 3. Crowds near the camera | Ordinary creatures around the camera get full brains and act in real time. | About 10,000–50,000 | Display only | Later |
+| 4. Relationships | Bonds between individuals: kinship, trust, rivalry, love, debt. | Thousands of links | Main simulation | Phase 0.5 (affinity and kinship) |
+| 5. Culture | Settlements hold shared values. Ideas (rituals, taboos, crafts, beliefs) spread person to person; each individual's brain decides whether to adopt them. | Per settlement | Main simulation | Later |
+| 6. Religion | Beings explain events they cannot account for. The player's interventions are real, witnessable events, so religions can form around the player. Different cultures may read the same act differently. | Per culture | Main simulation | Later |
+| 7. Arena AI | A champion's personality steers a tactical arena AI: cautious beings keep their distance, loyal ones protect allies. | About 1,000 units per match | Arena server | Later |
+| 8. Language | Made-up languages per culture plus templated speech. An optional AI language model may add flavour lines during possession, as cosmetics only. | — | Display only | Later |
+
+**Camera rule:** anything that affects the world (named individuals, relationships, culture, religion) runs in the main simulation, independent of the camera, so replay verification reproduces it. Crowds near the camera are display only: moving the camera must never change the world.
+
+**Feeding the character sheet (§5):**
+- **Charisma:** sociability, number of friendships, and renown. The prototype shows a CHA preview for named individuals.
+- **Intelligence and Wisdom:** brain size and complexity, plus life experience for named individuals.
+- **Alignment:** personality plus cultural values.
+- **Backstory:** a named champion carries its real relationships, deeds and memories.
 
 ## 5. Character Sheets
 
@@ -199,7 +269,8 @@ Cost   = clamp(round(1 + 999 · (Power / PowerCap)^0.7), 1, 1000)
 - Requires always-online play, even for single-player world building. Steam players often criticise this.
 - God-mode tools feel laggy, because every change waits on the network.
 - Ongoing cost per active player. Rough estimate: 0.25–1 vCPU per running world at about $0.02–0.05 per vCPU-hour, so about $0.005–0.05 per player-hour. A player with 100 hours costs about $0.50–5.00. If worlds keep evolving while the player is offline, cost rises to about $45–440 per world per year. This must be avoided.
-- These numbers are order-of-magnitude assumptions. Prototype measurements in Phase 0 will replace them.
+- These numbers are order-of-magnitude assumptions.
+- **Measured (Phase 0.5 prototype):** a fully populated world costs about 20–30 ms of one CPU core per simulated year, including named individuals. Replaying 1,000 simulated years to verify a champion takes about 20–30 CPU-seconds.
 
 **Option B — deterministic replay verification (decided).** The client runs the world. The server re-runs it to verify.
 
@@ -281,10 +352,11 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | Phase | Goal | Exit criteria |
 |---|---|---|
 | 0. Prototype: Petri Dish | Godot 4 + Rust sim-core. 2D top-down. 10 substances, temperature, gravity, star distance; life triad; species populations evolve. Determinism test across Windows and Linux | Two seeds with different chemistry produce visibly different life; identical replay hashes on both platforms; measured sim cost per world-hour |
+| 0.5 Prototype: Bodies & Minds | Body-part genomes, evolutionary milestones, brain genomes and temperament, named individuals with relationships, family tree view | Lineages progress from microbes to limbed, winged creatures; individuals form friendships and feuds; replay stays deterministic |
 | 1. Prototype: Sheet & Cost | Genome → 5e sheet → cost. Headless auto-battler between two generated beings | Cost correlates with mock-battle win rate (target r > 0.8) |
 | 2. Vertical Slice | 3D planet view, full planetary controls (rotation, orbit, moons, atmosphere), body plan synthesis, possession, local 1v1 arena with small armies | Playable start-to-arena loop offline |
 | 3. Online Alpha | Dedicated server, replay verification, matchmaking, permadeath, Essence economy, large-army arena (500 units per side) | Closed test with external players |
-| 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
+| 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
 
 ## 9. Business Model
@@ -308,6 +380,9 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Champion death | Permanent; winner loots all bodies and gear, loser gets nothing |
 | — | Godhand mode | Allowed in ranked; hard to make viable |
 | — | Surrender | Allowed; fallen champions are looted, survivors return home |
+| — | Evolution model | Body-part genomes gated by evolutionary milestones, with neural-network brains used as far as cost allows (§4.4, §4.8) |
+| — | Sapience on Earth-like worlds | Almost always, given time; "never sapient" worlds come from unusual player choices (§4.4) |
+| — | Extradimensional beings | Included as a possibility, arriving through a thin Veil; extreme physics alone can let them in (§4.4a) |
 
 ## 11. Open Questions
 

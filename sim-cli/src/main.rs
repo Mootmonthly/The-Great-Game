@@ -91,12 +91,16 @@ fn summary_line(w: &World) -> String {
         .unwrap_or(Fx::ZERO);
     let max_int = living
         .iter()
-        .map(|s| s.genome.intelligence)
+        .map(|s| s.traits.intelligence)
         .max()
         .unwrap_or(Fx::ZERO);
     format!(
-        "year {:5}  T̄ {:7.1} K  P {:6.2} bar  species {:4} alive / {:5} ever  biomass {:9.1}  max size {:6.2}  max int {:4.2}",
+        "year {:5}  sapient {:3}  T̄ {:7.1} K  P {:6.2} bar  species {:4} alive / {:5} ever  biomass {:9.1}  max size {:6.2}  max int {:4.2}",
         w.year(),
+        living
+            .iter()
+            .filter(|s| s.has(sim_core::body::SAPIENCE))
+            .count(),
         w.mean_temperature.to_f64(),
         w.pressure.to_f64(),
         living.len(),
@@ -107,20 +111,60 @@ fn summary_line(w: &World) -> String {
     )
 }
 
+fn print_milestones(w: &World) {
+    println!("\nMilestones reached (living species):");
+    for m in &sim_core::body::MILESTONES {
+        let n = w
+            .living_species()
+            .filter(|s| s.genome.milestones & m.flag != 0)
+            .count();
+        println!("  {:18} {n}", m.name);
+    }
+}
+
+fn print_individuals(w: &World, n: usize) {
+    let mut living: Vec<_> = w.living_individuals().collect();
+    println!(
+        "\nNamed individuals: {} alive, {} on record",
+        living.len(),
+        w.individuals.len()
+    );
+    living.sort_by(|a, b| b.renown.cmp(&a.renown).then(a.id.cmp(&b.id)));
+    for x in living.iter().take(n) {
+        let species = w
+            .species_by_id(x.species)
+            .map_or("?".to_string(), |s| s.name.clone());
+        println!(
+            "  {:28} {:12} age {:3}  CHA {:2}  renown {:5.2}  friends {} enemies {}  ({})",
+            x.title(),
+            species,
+            x.age_years(w.tick),
+            x.charisma(),
+            x.renown.to_f64(),
+            x.friends(),
+            x.enemies(),
+            x.personality.describe()
+        );
+    }
+}
+
 fn print_top_species(w: &World, n: usize) {
     let mut living: Vec<_> = w.living_species().collect();
     living.sort_by(|a, b| b.biomass.cmp(&a.biomass).then(a.id.cmp(&b.id)));
     println!("\nTop species:");
     for s in living.iter().take(n) {
+        let names: Vec<String> = w.substances.iter().map(|x| x.name.clone()).collect();
         println!(
-            "  #{:<5} {:14} {:44} biomass {:8.1}  regions {:4}  size {:6.2}  T opt {:6.1} K",
+            "  #{:<5} {:14} {:44} biomass {:8.1}  regions {:4}  size {:6.2}  T opt {:6.1} K\n         body: {}; temperament: {}",
             s.id,
             s.name,
             s.description(w),
             s.biomass.to_f64(),
             s.range,
             s.genome.size.to_f64(),
-            s.genome.temp_opt.to_f64()
+            s.genome.temp_opt.to_f64(),
+            s.genome.body.describe(&names),
+            s.temperament.describe()
         );
     }
 }
@@ -142,6 +186,8 @@ fn run(preset: &str, seed: u64, years: u64, every: u64, png_dir: Option<&str>) -
         }
     }
     let elapsed = t0.elapsed();
+    print_milestones(&world);
+    print_individuals(&world, 8);
     print_top_species(&world, 10);
     println!(
         "\nLife map (letters = dominant species, '.' = viable but empty):\n{}",

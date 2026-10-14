@@ -72,7 +72,20 @@ fn golden_hash() {
     );
 }
 
-const GOLDEN_EARTHLIKE_SEED1_200: &str = "9144ef05039409ea";
+const GOLDEN_EARTHLIKE_SEED1_200: &str = "092a1223cbdc2739";
+
+/// Same check on a world with named individuals, brains and relationships.
+#[test]
+fn golden_hash_with_individuals() {
+    let w = run_preset("frozen_moon", 1, 2400);
+    assert!(w.living_individuals().count() > 0);
+    assert_eq!(
+        format!("{:016x}", w.state_hash()),
+        GOLDEN_FROZEN_MOON_SEED1_600
+    );
+}
+
+const GOLDEN_FROZEN_MOON_SEED1_600: &str = "a77c3d477d890906";
 
 #[test]
 fn different_chemistry_gives_different_life() {
@@ -119,4 +132,74 @@ fn cold_world_uses_other_energy_than_light() {
         .max_by_key(|s| s.biomass)
         .expect("life emerged");
     assert_ne!(s.profile.energy, EnergyKind::Light);
+}
+
+#[test]
+fn milestones_are_reached_in_order() {
+    use sim_core::body::{MILESTONES, MULTICELLULAR, NERVOUS};
+    let w = run_preset("earthlike", 1, 1600);
+    assert!(w
+        .living_species()
+        .any(|s| s.genome.milestones & NERVOUS != 0));
+    for s in w.living_species() {
+        for m in &MILESTONES {
+            if s.genome.milestones & m.flag != 0 {
+                assert_eq!(
+                    s.genome.milestones & m.requires,
+                    m.requires,
+                    "{} skipped a prerequisite",
+                    s.name
+                );
+            }
+        }
+        if s.genome.milestones & MULTICELLULAR == 0 {
+            assert!(
+                s.genome.size <= Fx::ratio(5, 100),
+                "single cells stay microscopic"
+            );
+        }
+    }
+}
+
+#[test]
+fn named_individuals_form_relationships() {
+    let w = run_preset("earthlike", 1, 2400);
+    let living: Vec<_> = w.living_individuals().collect();
+    assert!(
+        !living.is_empty(),
+        "individuals appear once nervous systems evolve"
+    );
+    assert!(living.iter().any(|x| !x.relations.is_empty()));
+    assert!(w.individuals.iter().any(|x| x.memories.len() > 1));
+    for x in &living {
+        assert!((1..=30).contains(&x.charisma()));
+        assert!(w.species_by_id(x.species).is_some());
+    }
+}
+
+/// Design rule (docs/GAME_DESIGN.md §4.4): an unmodified Earth-like world
+/// should almost always produce sapient life given time.
+#[test]
+fn earthlike_worlds_reach_sapience() {
+    use sim_core::body::SAPIENCE;
+    let handles: Vec<_> = (1..=3u64)
+        .map(|seed| {
+            std::thread::spawn(move || {
+                let w = run_preset("earthlike", seed, 4000);
+                (
+                    seed,
+                    w.living_species()
+                        .filter(|s| s.genome.milestones & SAPIENCE != 0)
+                        .count(),
+                )
+            })
+        })
+        .collect();
+    for h in handles {
+        let (seed, sapient) = h.join().unwrap();
+        assert!(
+            sapient > 0,
+            "earthlike seed {seed} has no sapient species after 1000 years"
+        );
+    }
 }

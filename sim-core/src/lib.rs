@@ -5,8 +5,11 @@
 //! docs/GAME_DESIGN.md §7.
 
 pub mod action;
+pub mod body;
+pub mod brain;
 pub mod fixed;
 pub mod hash;
+pub mod individual;
 pub mod life;
 pub mod presets;
 pub mod render;

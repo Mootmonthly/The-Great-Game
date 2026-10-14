@@ -34,6 +34,27 @@ fn to_gstring(v: Value) -> GString {
     GString::from(v.to_string().as_str())
 }
 
+fn hex(c: [u8; 3]) -> String {
+    format!("{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
+fn substance_names(w: &World) -> Vec<String> {
+    w.substances.iter().map(|s| s.name.clone()).collect()
+}
+
+fn species_summary(w: &World, s: &sim_core::life::Species) -> Value {
+    let g = &s.genome;
+    json!({
+        "id": s.id, "name": s.name, "description": s.description(w), "color": hex(s.color),
+        "biomass": s.biomass.to_f64(), "regions": s.range, "alive": s.is_alive(),
+        "size": g.size.to_f64(), "temp_opt": g.temp_opt.to_f64(), "temp_tol": g.temp_tol.to_f64(),
+        "body": g.body.describe(&substance_names(w)),
+        "milestones": sim_core::body::milestone_names(g.milestones),
+        "temperament": s.temperament.describe(),
+        "parent": s.parent, "born_year": s.born_tick / sim_core::world::TICKS_PER_YEAR,
+    })
+}
+
 fn coord(v: i64, max: usize) -> u16 {
     v.clamp(0, max as i64 - 1) as u16
 }
@@ -175,6 +196,7 @@ impl SimWorld {
             "gravity": p.gravity.to_f64(),
             "global_heat": p.global_heat.to_f64(),
             "living_species": w.living_species().count(),
+            "living_individuals": w.living_individuals().count(),
             "species_ever": w.species.last().map_or(0, |s| s.id),
             "atmosphere": atmosphere,
             "hash": format!("{:016x}", w.state_hash()),
@@ -236,19 +258,194 @@ impl SimWorld {
         let list: Vec<Value> = living
             .iter()
             .take(limit.max(0) as usize)
-            .map(|s| {
-                let g = &s.genome;
+            .map(|s| species_summary(w, s))
+            .collect();
+        to_gstring(json!(list))
+    }
+
+    /// Everything about one species, including its ancestry. Returns "null"
+    /// if no record exists.
+    #[func]
+    fn species_detail_json(&self, id: i64) -> GString {
+        let w = &self.world;
+        let Some(s) = w.species_by_id(id as u32) else {
+            return GString::from("null");
+        };
+        let mut v = species_summary(w, s);
+        let names = substance_names(w);
+        let parts: Vec<Value> = s
+            .genome
+            .body
+            .parts
+            .iter()
+            .map(|p| {
                 json!({
-                    "id": s.id, "name": s.name, "description": s.description(w),
-                    "color": format!("{:02x}{:02x}{:02x}", s.color[0], s.color[1], s.color[2]),
-                    "biomass": s.biomass.to_f64(), "regions": s.range,
-                    "size": g.size.to_f64(), "temp_opt": g.temp_opt.to_f64(), "temp_tol": g.temp_tol.to_f64(),
-                    "armor": g.armor.to_f64(), "speed": g.speed.to_f64(), "intelligence": g.intelligence.to_f64(),
-                    "parent": s.parent, "born_year": s.born_tick / sim_core::world::TICKS_PER_YEAR,
+                    "part": p.kind.name(), "count": p.count, "size": p.size.to_f64(),
+                    "substance": p.substance.and_then(|i| names.get(i as usize)).cloned(),
+                })
+            })
+            .collect();
+        let mut ancestors = Vec::new();
+        let mut cursor = s.parent;
+        while let Some(pid) = cursor {
+            match w.species_by_id(pid) {
+                Some(a) => {
+                    ancestors.push(json!({"id": a.id, "name": a.name, "description": a.description(w), "alive": a.is_alive()}));
+                    cursor = a.parent;
+                }
+                None => {
+                    ancestors.push(json!({"id": pid, "name": "(forgotten ancestor)", "description": "", "alive": false}));
+                    break;
+                }
+            }
+            if ancestors.len() >= 40 {
+                break;
+            }
+        }
+        let children = w.species.iter().filter(|c| c.parent == Some(s.id)).count();
+        let t = &s.traits;
+        let tm = &s.temperament;
+        let obj = v.as_object_mut().expect("summary is an object");
+        obj.insert("parts".into(), json!(parts));
+        obj.insert("ancestors".into(), json!(ancestors));
+        obj.insert("children".into(), json!(children));
+        obj.insert("traits".into(), json!({
+            "armor": t.armor.to_f64(), "speed": t.speed.to_f64(), "intelligence": t.intelligence.to_f64(),
+            "offense": t.offense.to_f64(), "perception": t.perception.to_f64(), "photosynthesis": t.photosynthesis.to_f64(),
+        }));
+        obj.insert(
+            "temperament_values".into(),
+            json!({
+                "aggression": tm.aggression.to_f64(), "fear": tm.fear.to_f64(),
+                "curiosity": tm.curiosity.to_f64(), "sociability": tm.sociability.to_f64(),
+            }),
+        );
+        obj.insert(
+            "profile".into(),
+            json!({
+                "backbone": w.elements[s.profile.element as usize],
+                "medium": w.substances[s.profile.medium as usize].name,
+                "energy": s.profile.energy.name(),
+            }),
+        );
+        obj.insert(
+            "individuals".into(),
+            json!(w.living_individuals().filter(|x| x.species == s.id).count()),
+        );
+        to_gstring(v)
+    }
+
+    /// Family tree data: the `limit` largest living species plus all their
+    /// recorded ancestors, oldest first.
+    #[func]
+    fn tree_json(&self, limit: i64) -> GString {
+        let w = &self.world;
+        let mut living: Vec<_> = w.living_species().collect();
+        living.sort_by(|a, b| b.biomass.cmp(&a.biomass).then(a.id.cmp(&b.id)));
+        let mut ids: Vec<u32> = Vec::new();
+        for s in living.iter().take(limit.max(0) as usize) {
+            let mut cursor = Some(s.id);
+            while let Some(id) = cursor {
+                if ids.contains(&id) {
+                    break;
+                }
+                match w.species_by_id(id) {
+                    Some(x) => {
+                        ids.push(id);
+                        cursor = x.parent;
+                    }
+                    None => break,
+                }
+            }
+        }
+        ids.sort();
+        let tpy = sim_core::world::TICKS_PER_YEAR;
+        let nodes: Vec<Value> = ids
+            .iter()
+            .filter_map(|&id| w.species_by_id(id))
+            .map(|s| {
+                json!({
+                    "id": s.id, "parent": s.parent, "name": s.name, "color": hex(s.color),
+                    "born_year": s.born_tick / tpy, "extinct_year": s.extinct_tick.map(|t| t / tpy),
+                    "milestones": s.genome.milestones.count_ones(), "alive": s.is_alive(),
+                })
+            })
+            .collect();
+        to_gstring(json!({"year": w.year(), "nodes": nodes}))
+    }
+
+    /// Living named individuals, most renowned first.
+    #[func]
+    fn individuals_json(&self, limit: i64) -> GString {
+        let w = &self.world;
+        let mut living: Vec<_> = w.living_individuals().collect();
+        living.sort_by(|a, b| b.renown.cmp(&a.renown).then(a.id.cmp(&b.id)));
+        let list: Vec<Value> = living
+            .iter()
+            .take(limit.max(0) as usize)
+            .map(|x| {
+                let species = w.species_by_id(x.species);
+                json!({
+                    "id": x.id, "title": x.title(), "name": x.name,
+                    "species": species.map(|s| s.name.clone()), "species_id": x.species,
+                    "color": species.map(|s| hex(s.color)),
+                    "x": x.region % WIDTH, "y": x.region / WIDTH,
+                    "age": x.age_years(w.tick), "charisma": x.charisma(), "renown": x.renown.to_f64(),
+                    "friends": x.friends(), "enemies": x.enemies(),
+                    "personality": x.personality.describe(),
+                    "last_action": x.last_action.map(|a| sim_core::brain::output::NAMES[a]),
                 })
             })
             .collect();
         to_gstring(json!(list))
+    }
+
+    /// Everything about one individual: relationships and life story.
+    /// Returns "null" if no record exists.
+    #[func]
+    fn individual_json(&self, id: i64) -> GString {
+        let w = &self.world;
+        let Some(x) = w.individual_by_id(id as u32) else {
+            return GString::from("null");
+        };
+        let name_of = |other: u32| {
+            w.individual_by_id(other)
+                .map_or("someone forgotten".to_string(), |o| o.title())
+        };
+        let relations: Vec<Value> = x
+            .relations
+            .iter()
+            .map(|r| json!({"id": r.other, "name": name_of(r.other), "affinity": r.affinity.to_f64(), "kin": r.kin,
+                "alive": w.individual_by_id(r.other).is_some_and(|o| o.is_alive())}))
+            .collect();
+        let tpy = sim_core::world::TICKS_PER_YEAR;
+        let memories: Vec<Value> = x
+            .memories
+            .iter()
+            .map(|m| {
+                let text = match m.other {
+                    Some(o) => format!("{} {}", m.kind.describe(), name_of(o)),
+                    None => m.kind.describe().to_string(),
+                };
+                json!({"year": m.tick / tpy, "text": text})
+            })
+            .collect();
+        let species = w.species_by_id(x.species);
+        let p = &x.personality;
+        to_gstring(json!({
+            "id": x.id, "title": x.title(), "alive": x.is_alive(),
+            "species": species.map(|s| s.name.clone()), "species_id": x.species,
+            "species_description": species.map(|s| s.description(w)),
+            "x": x.region % WIDTH, "y": x.region / WIDTH,
+            "age": x.age_years(w.tick), "lifespan_years": x.lifespan / tpy,
+            "health": x.health.to_f64(), "renown": x.renown.to_f64(), "charisma": x.charisma(),
+            "personality": p.describe(),
+            "temperament_values": {"aggression": p.aggression.to_f64(), "fear": p.fear.to_f64(),
+                "curiosity": p.curiosity.to_f64(), "sociability": p.sociability.to_f64()},
+            "relations": relations, "memories": memories,
+            "cause_of_death": x.cause_of_death,
+            "last_action": x.last_action.map(|a| sim_core::brain::output::NAMES[a]),
+        }))
     }
 
     /// The action log as JSON: everything needed to rebuild this world.
