@@ -41,6 +41,9 @@ var show_individuals: CheckBox
 var globe_view: SubViewportContainer
 var globe_toggle: CheckButton
 var globe_timer := 0.0
+var moons_label: RichTextLabel
+var moon_mass: SpinBox
+var moon_distance: SpinBox
 var seed_box: SpinBox
 var preset_select: OptionButton
 var play_button: Button
@@ -282,6 +285,48 @@ func _build_ui() -> void:
 	_planet_slider(panel, "star_luminosity", "Star luminosity (suns)", 0.05, 20.0, 1.0, true, "set_star_luminosity")
 	_planet_slider(panel, "gravity", "Gravity (g)", 0.05, 5.0, 1.0, true, "set_gravity")
 	_planet_slider(panel, "global_heat", "Global heat (K)", -200.0, 1000.0, 0.0, false, "set_global_heat")
+	_planet_slider(panel, "day_length", "Day length (hours)", 2.0, 5000.0, 24.0, true, "set_day_length")
+	_planet_slider(panel, "axial_tilt", "Axial tilt (degrees)", 0.0, 90.0, 0.0, false, "set_axial_tilt")
+
+	_section(panel, "Moons")
+	moons_label = _rich(40)
+	panel.add_child(moons_label)
+	var moon_row := HBoxContainer.new()
+	panel.add_child(moon_row)
+	moon_row.add_child(_label("Mass"))
+	moon_mass = SpinBox.new()
+	moon_mass.min_value = 0.01
+	moon_mass.max_value = 50
+	moon_mass.step = 0.01
+	moon_mass.value = 1.0
+	moon_mass.tooltip_text = "In lunar masses"
+	moon_row.add_child(moon_mass)
+	moon_row.add_child(_label("Distance"))
+	moon_distance = SpinBox.new()
+	moon_distance.min_value = 0.05
+	moon_distance.max_value = 50
+	moon_distance.step = 0.05
+	moon_distance.value = 1.0
+	moon_distance.tooltip_text = "In Earth–Moon distances. Below 0.3 the moon is torn into rings."
+	moon_row.add_child(moon_distance)
+	var moon_buttons := HBoxContainer.new()
+	panel.add_child(moon_buttons)
+	var add_moon := Button.new()
+	add_moon.text = "Add moon"
+	add_moon.pressed.connect(func():
+		sim.add_moon(moon_mass.value, moon_distance.value)
+		globe_timer = 0.0
+		_refresh_all())
+	moon_buttons.add_child(add_moon)
+	var remove_moon := Button.new()
+	remove_moon.text = "Remove outermost"
+	remove_moon.pressed.connect(func():
+		var st: Dictionary = JSON.parse_string(sim.status_json())
+		if st["moons"].size() > 0:
+			sim.remove_moon(st["moons"].size() - 1)
+			globe_timer = 0.0
+			_refresh_all())
+	moon_buttons.add_child(remove_moon)
 
 	# Inspector
 	_section(panel, "Selected region")
@@ -541,6 +586,16 @@ func _refresh_text() -> void:
 		st["year"], st["seed"], st["mean_temperature"], st["mean_temperature"] - 273.15,
 		st["pressure"], st["stellar_flux"], ", ".join(atmo) if atmo.size() > 0 else "none",
 		st["living_species"], st["species_ever"], st["living_individuals"], st["hash"]]
+
+	var moons := []
+	for m in st["moons"]:
+		moons.append("%.2f lunar masses at %.2f" % [m["mass"], m["distance"]])
+	var moon_text := ("\n".join(moons) if moons.size() > 0 else "No moons.")
+	if st["rings"] > 0.0:
+		moon_text += "\nRings: %.2f lunar masses of debris" % st["rings"]
+	moon_text += "\nTides: %.2f× Earth's · day–night swing: ±%.0f K" % [st["tidal_strength"], st["day_night_swing"]]
+	moons_label.text = moon_text
+	globe_view.set_planet(st)
 
 	if selected_region.x >= 0:
 		_refresh_region()

@@ -334,6 +334,8 @@ impl World {
 
     pub(crate) fn update_life_scores(&mut self) {
         let flux = self.stellar_flux();
+        // Tides from moons stir and heat the planet: extra energy everywhere.
+        let tidal_energy = (self.planet.tidal_strength() * Fx::ratio(5, 100)).min(Fx::HALF);
         let p = self.pressure;
         let mut life = Vec::with_capacity(REGION_COUNT);
         for (i, r) in self.regions.iter().enumerate() {
@@ -364,7 +366,7 @@ impl World {
                 oxidizer += sub.oxidizer * available;
             }
             let light = saturate(flux * World::insolation(y), Fx::ratio(3, 10));
-            let geothermal = r.geothermal * Fx::ratio(7, 10);
+            let geothermal = (r.geothermal * Fx::ratio(7, 10) + tidal_energy).min(Fx::ONE);
             let chemical = fuel.min(oxidizer).min(Fx::ONE);
             let energy = [light, geothermal, chemical];
             let kinetics = (t / Fx::from_int(250)).clamp(Fx::ratio(1, 10), Fx::ONE);
@@ -547,6 +549,7 @@ impl World {
     /// separate niches, which lets large creatures evolve alongside microbes.
     fn population_dynamics(&mut self) {
         let gravity = self.planet.gravity;
+        let swing = self.day_night_swing();
         // A predator must be at least this many times bigger than its prey.
         let prey_ratio = Fx::from_int(3);
         for i in 0..REGION_COUNT {
@@ -570,7 +573,15 @@ impl World {
                 .iter()
                 .map(|p| {
                     let s = &self.species[self.species_index(p.species)];
-                    let tf = s.temperature_fit(temp, gravity);
+                    // Long days: life must survive both the hot day and the
+                    // cold night.
+                    let tf = if swing > Fx::ZERO {
+                        (s.temperature_fit(temp + swing, gravity)
+                            + s.temperature_fit(temp - swing, gravity))
+                            * Fx::HALF
+                    } else {
+                        s.temperature_fit(temp, gravity)
+                    };
                     // Light-catching fronds boost light-fed species.
                     let photo = if s.profile.energy == EnergyKind::Light {
                         Fx::ONE + s.traits.photosynthesis * Fx::HALF

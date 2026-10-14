@@ -191,6 +191,36 @@ impl SimWorld {
     }
 
     #[func]
+    fn set_day_length(&mut self, hours: f64) {
+        self.world.apply(Action::SetDayLength {
+            hours: Fx::from_f64(hours),
+        });
+    }
+
+    #[func]
+    fn set_axial_tilt(&mut self, degrees: f64) {
+        self.world.apply(Action::SetAxialTilt {
+            degrees: Fx::from_f64(degrees),
+        });
+    }
+
+    /// Mass in lunar masses, distance in Earth–Moon distances.
+    #[func]
+    fn add_moon(&mut self, mass: f64, distance: f64) {
+        self.world.apply(Action::AddMoon {
+            mass: Fx::from_f64(mass),
+            distance: Fx::from_f64(distance),
+        });
+    }
+
+    #[func]
+    fn remove_moon(&mut self, index: i64) {
+        if (0..=255).contains(&index) {
+            self.world.apply(Action::RemoveMoon { index: index as u8 });
+        }
+    }
+
+    #[func]
     fn set_gravity(&mut self, g: f64) {
         self.world.apply(Action::SetGravity { g: Fx::from_f64(g) });
     }
@@ -224,6 +254,12 @@ impl SimWorld {
             "star_luminosity": p.star_luminosity.to_f64(),
             "gravity": p.gravity.to_f64(),
             "global_heat": p.global_heat.to_f64(),
+            "day_length": p.day_length_hours.to_f64(),
+            "axial_tilt": p.axial_tilt_deg.to_f64(),
+            "moons": p.moons.iter().map(|m| json!({"mass": m.mass.to_f64(), "distance": m.distance.to_f64()})).collect::<Vec<_>>(),
+            "rings": p.rings.to_f64(),
+            "tidal_strength": p.tidal_strength().to_f64(),
+            "day_night_swing": w.day_night_swing().to_f64(),
             "living_species": w.living_species().count(),
             "living_individuals": w.living_individuals().count(),
             "species_ever": w.species.last().map_or(0, |s| s.id),

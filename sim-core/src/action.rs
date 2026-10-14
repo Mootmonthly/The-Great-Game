@@ -38,6 +38,14 @@ pub enum Action {
     SetStarLuminosity { suns: Fx },
     /// Surface gravity relative to Earth.
     SetGravity { g: Fx },
+    /// Length of a day in hours.
+    SetDayLength { hours: Fx },
+    /// Axial tilt in degrees (0–90).
+    SetAxialTilt { degrees: Fx },
+    /// Adds a moon: mass in lunar masses, distance in Earth–Moon distances.
+    AddMoon { mass: Fx, distance: Fx },
+    /// Removes the moon at `index` (moons are sorted by distance).
+    RemoveMoon { index: u8 },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

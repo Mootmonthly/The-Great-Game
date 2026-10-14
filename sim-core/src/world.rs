@@ -26,7 +26,26 @@ pub struct Planet {
     pub star_luminosity: Fx,
     pub gravity: Fx,
     pub global_heat: Fx,
+    /// Length of a day in hours. Long days mean hot days and cold nights.
+    pub day_length_hours: Fx,
+    /// Axial tilt in degrees. Tilt makes seasons.
+    pub axial_tilt_deg: Fx,
+    pub moons: Vec<Moon>,
+    /// Mass (in lunar masses) of rings left by moons torn apart.
+    pub rings: Fx,
 }
+
+/// A moon. Mass in lunar masses, distance in Earth–Moon distances.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Moon {
+    pub mass: Fx,
+    pub distance: Fx,
+}
+
+/// Moons closer than this (Earth–Moon distances) are torn apart into rings
+/// (roughly the Roche limit).
+pub const ROCHE_LIMIT: Fx = Fx::ratio(3, 10);
+pub const MAX_MOONS: usize = 12;
 
 impl Default for Planet {
     fn default() -> Planet {
@@ -35,6 +54,45 @@ impl Default for Planet {
             star_luminosity: Fx::ONE,
             gravity: Fx::ONE,
             global_heat: Fx::ZERO,
+            day_length_hours: Fx::from_int(24),
+            axial_tilt_deg: Fx::ZERO,
+            moons: Vec::new(),
+            rings: Fx::ZERO,
+        }
+    }
+}
+
+impl Planet {
+    /// Tidal strength relative to Earth's Moon: Σ mass / distance³.
+    pub fn tidal_strength(&self) -> Fx {
+        self.moons.iter().fold(Fx::ZERO, |acc, m| {
+            let d = m.distance.max(ROCHE_LIMIT);
+            acc + m.mass / (d * d * d)
+        })
+    }
+
+    /// Adds a moon. Too close and it is torn into rings; at nearly the same
+    /// orbit as another moon, the two collide and merge.
+    pub fn add_moon(&mut self, mass: Fx, distance: Fx) {
+        let mass = mass.clamp(Fx::ratio(1, 100), Fx::from_int(50));
+        let distance = distance.clamp(Fx::ratio(5, 100), Fx::from_int(50));
+        if distance < ROCHE_LIMIT {
+            self.rings += mass;
+            return;
+        }
+        if let Some(m) = self
+            .moons
+            .iter_mut()
+            .find(|m| (m.distance - distance).abs() * Fx::from_int(10) < distance)
+        {
+            let total = m.mass + mass;
+            m.distance = (m.distance * m.mass + distance * mass) / total;
+            m.mass = total;
+            return;
+        }
+        if self.moons.len() < MAX_MOONS {
+            self.moons.push(Moon { mass, distance });
+            self.moons.sort_by_key(|m| m.distance);
         }
     }
 }
@@ -221,6 +279,18 @@ impl World {
             Action::SetGravity { g } => {
                 self.planet.gravity = (*g).clamp(Fx::ratio(1, 100), Fx::from_int(50));
             }
+            Action::SetDayLength { hours } => {
+                self.planet.day_length_hours = (*hours).clamp(Fx::ONE, Fx::from_int(10_000));
+            }
+            Action::SetAxialTilt { degrees } => {
+                self.planet.axial_tilt_deg = (*degrees).clamp(Fx::ZERO, Fx::from_int(90));
+            }
+            Action::AddMoon { mass, distance } => self.planet.add_moon(*mass, *distance),
+            Action::RemoveMoon { index } => {
+                if (*index as usize) < self.planet.moons.len() {
+                    self.planet.moons.remove(*index as usize);
+                }
+            }
         }
         if !matches!(action, Action::Tick { .. }) {
             // Show the effect of tool use immediately, without advancing time.
@@ -239,6 +309,14 @@ impl World {
         self.update_life();
         self.update_individuals();
         self.tick += 1;
+    }
+
+    /// Extra day–night temperature swing (kelvin, half-amplitude) from days
+    /// longer than Earth's. Thick atmospheres hold heat overnight.
+    pub fn day_night_swing(&self) -> Fx {
+        let ratio = (self.planet.day_length_hours / Fx::from_int(24)).sqrt();
+        ((ratio - Fx::ONE).max(Fx::ZERO) * Fx::from_int(20) / (Fx::ONE + self.pressure))
+            .min(Fx::from_int(400))
     }
 
     /// Stellar flux relative to Earth at the equator.
@@ -277,10 +355,23 @@ impl World {
         // Thick atmospheres carry heat to the poles.
         let spread = Fx::ONE / (Fx::ONE + self.pressure / Fx::from_int(2));
 
+        // Seasons: tilt warms one hemisphere and cools the other, swapping
+        // twice a year. Thick atmospheres damp them.
+        let season = [0, 1, 0, -1][(self.tick % TICKS_PER_YEAR) as usize];
+        let season_amp = self.planet.axial_tilt_deg / Fx::from_int(23) * Fx::from_int(15) * spread;
+        // Tidal heating from moons, like Io's volcanoes.
+        let tidal_heat = (self.planet.tidal_strength() * Fx::from_int(2)).min(Fx::from_int(300));
+
         let mut sum = Fx::ZERO;
         for y in 0..HEIGHT {
             let insol = Fx::ONE + (World::insolation(y) - Fx::ONE) * spread;
-            let t_row = t_eq * insol.max(Fx::ratio(1, 100)).sqrt().sqrt() * gh_mult;
+            let mut t_row = t_eq * insol.max(Fx::ratio(1, 100)).sqrt().sqrt() * gh_mult;
+            if season != 0 {
+                let half = Fx::ratio(HEIGHT as i64, 2);
+                let north = (half - Fx::from_int(y as i64) - Fx::HALF) / half;
+                t_row += season_amp * north * Fx::from_int(season);
+            }
+            t_row += tidal_heat;
             for x in 0..WIDTH {
                 let r = &mut self.regions[y * WIDTH + x];
                 let geo = r.geothermal * r.geothermal * Fx::from_int(60);
@@ -411,6 +502,13 @@ impl World {
         h.i64(self.planet.star_luminosity.0);
         h.i64(self.planet.gravity.0);
         h.i64(self.planet.global_heat.0);
+        h.i64(self.planet.day_length_hours.0);
+        h.i64(self.planet.axial_tilt_deg.0);
+        h.i64(self.planet.rings.0);
+        for m in &self.planet.moons {
+            h.i64(m.mass.0);
+            h.i64(m.distance.0);
+        }
         for a in &self.atmosphere {
             h.i64(a.0);
         }
