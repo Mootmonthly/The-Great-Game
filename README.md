@@ -87,4 +87,4 @@ godot --headless --path game-client -s res://tests/smoke_test.gd
 
 ## Documentation
 
-The game design document is in progress in PR #1 (`docs/GAME_DESIGN.md`).
+- [Game Design Document](docs/GAME_DESIGN.md) — pillars, systems design, technical architecture, roadmap, and open questions.
