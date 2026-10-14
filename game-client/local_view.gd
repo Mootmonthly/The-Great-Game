@@ -26,6 +26,7 @@ class Wanderer:
 	var detail: Dictionary
 	var sheet: Dictionary
 	var aquatic := false
+	var plant := false
 	var target := Vector3.ZERO
 	var speed := 1.5
 	var height := 1.0
@@ -201,6 +202,8 @@ func _spawn_life() -> void:
 		if detail == null or sheet == null:
 			continue
 		var n := clampi(int(float(p["biomass"]) / 6.0), 1, 6)
+		if CreatureBuilder.is_plant(detail):
+			n = clampi(int(float(p["biomass"]) / 3.0), 2, 14)  # Plants grow in stands.
 		for k in n:
 			_add_wanderer(detail, sheet, p["name"], Color.WHITE, false)
 	for x in info["individuals_here"]:
@@ -220,7 +223,9 @@ func _add_wanderer(detail: Dictionary, sheet: Dictionary, name: String, label_co
 	for p in detail["parts"]:
 		limbs = limbs or p["part"] == "limb"
 		fins = fins or p["part"] == "fin"
-	w.aquatic = (fins or detail["parts"].is_empty()) and not limbs and sea_level > -50.0
+	w.plant = CreatureBuilder.is_plant(detail)
+	# Plants with fins are kelp and grow on the seabed; the rest on land.
+	w.aquatic = (fins or (detail["parts"].is_empty() and not w.plant)) and not limbs and sea_level > -50.0
 	var model := CreatureBuilder.build(detail)
 	var box := CreatureBuilder.bounds(model)
 	var extent: float = max(box.size.x, max(box.size.y, box.size.z))
@@ -235,6 +240,10 @@ func _add_wanderer(detail: Dictionary, sheet: Dictionary, name: String, label_co
 	w.speed = 0.8 + float(max(int(sheet["speed"]["walk"]), int(sheet["speed"]["swim"]))) / 20.0
 	holder.position = _random_spot(w.aquatic)
 	w.target = _random_spot(w.aquatic)
+	if w.plant:
+		w.speed = 0.0
+		holder.position.y = _height_at(holder.position.x, holder.position.z)  # Rooted in the ground or seabed.
+		holder.rotation.y = rng.randf() * TAU
 	if named:
 		var l := Label3D.new()
 		l.text = name
@@ -261,7 +270,7 @@ func _random_spot(aquatic: bool) -> Vector3:
 
 func _process(delta: float) -> void:
 	for w: Wanderer in wanderers:
-		if w == possessed:
+		if w == possessed or w.plant:
 			continue
 		var to := w.target - w.node.position
 		to.y = 0.0
@@ -351,6 +360,8 @@ func _pick(pos: Vector2) -> void:
 	var best: Wanderer = null
 	var best_d := 3.0
 	for w: Wanderer in wanderers:
+		if w.plant:
+			continue  # Plants cannot be possessed.
 		var c := w.node.position + Vector3(0, w.height * 0.5, 0)
 		var t := (c - from).dot(dir)
 		var d := (from + dir * t).distance_to(c)

@@ -10,6 +10,8 @@ var tentacles: Array = []
 var jaw: Node3D
 var tail: Node3D
 var blob := false
+## Scales the tentacle/stem sway (plants use a small value).
+var sway := 1.0
 ## Animation speed multiplier; 0 freezes the pose.
 var pace := 1.0
 var t := 0.0
@@ -24,8 +26,8 @@ func _process(delta: float) -> void:
 		wings[i].rotation.z = wing_sides[i] * (sin(t * 7.0) * 0.5 + 0.55)
 	for chain in tentacles:
 		for j in chain.size():
-			chain[j].rotation.x = sin(t * 3.0 + j * 0.9) * 0.35
-			chain[j].rotation.z = cos(t * 2.3 + j * 0.7) * 0.2
+			chain[j].rotation.x = sin(t * 3.0 + j * 0.9) * 0.35 * sway
+			chain[j].rotation.z = cos(t * 2.3 + j * 0.7) * 0.2 * sway
 	if jaw:
 		jaw.rotation.x = maxf(0.0, sin(t * 2.0)) * 0.25
 	if tail:

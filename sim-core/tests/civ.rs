@@ -7,7 +7,7 @@ use sim_core::sheet::{class_of, species_sheet, Class};
 use sim_core::{body, Action, World};
 use std::sync::OnceLock;
 
-/// A frozen moon after 800 years: sapient peoples, settlements, a war.
+/// A frozen moon after 800 years: a sapient people and its settlements.
 fn world() -> &'static World {
     static W: OnceLock<World> = OnceLock::new();
     W.get_or_init(|| {
@@ -39,6 +39,17 @@ fn sapient_species_found_civilizations() {
             assert!(!o.settlements.iter().any(|x| c.settlements.iter().any(|y| y.region == x.region)));
         }
     }
+}
+
+/// Several peoples share this Earth-like world after 800 years, and fight.
+#[test]
+fn neighbouring_peoples_go_to_war() {
+    let mut w = World::new(5);
+    for a in preset_actions(&w, "earthlike").unwrap() {
+        w.apply(a);
+    }
+    w.apply(Action::Tick { ticks: 3200 });
+    assert!(w.living_civs().count() > 1);
     assert!(w.civs.iter().map(|c| c.battles_won + c.battles_lost).sum::<u32>() > 0, "peoples go to war");
 }
 

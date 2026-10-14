@@ -95,6 +95,25 @@ Each triad combination produces a **Biochemistry Profile**. The profile constrai
   | Sapience | Nervous system | High intelligence, manipulators (limbs or tentacles), sociable temperament | Named civilisations (later phases) |
 
 - Each sim-season: fitness is scored against region conditions and competing species; populations grow or shrink; species compete within size niches and hunt much smaller species; genomes mutate; populations speciate.
+- **Food chain (decided):** life is split into producers and animals.
+  - **Producers** are species without a nervous system: plants and microbes. They live directly on light, heat or chemistry, and compete only with other producers.
+  - **Animals** have a nervous system and get little energy directly: one tenth of a producer's share, plus a bit more for each light-catching frond. They compete only with other animals of similar size. They live by eating:
+    - **Grazing:** animals of every size share one pasture in each region. The food on offer is the producers' standing crop, or a share of what the producers there could grow, whichever is larger. The second option means heat- and chemistry-fed worlds can feed animals too. Each animal species gets a slice of the pasture in proportion to how much it grazes (hunters graze little) and how well it lives there. Grazing removes at most a quarter of a region's plants each season.
+    - **Hunting:** predators eat much smaller animals, as before.
+  - Names follow the role: a mindless multicellular light-feeder is a *Plant* (a *Bloom* if it has leaves); an animal that does not hunt is a *Grazer*.
+  - Measured in the prototype at year 1,000 on Earth-like worlds (8 seeds):
+    - Standing plant biomass is about equal to animal biomass. Before this change it was about 1:20.
+    - Every seed still reaches sapience, between years 200 and 600.
+    - On the frozen moon, animals now live on chemistry-fed producers, and seed 1 still founds a civilisation by year 800.
+- **Humanoid bias (decided):** sapience pulls bodies toward a humanoid plan: four limbs (two legs, two arms), two eyes, at most two body segments, and no fins or tentacles.
+  - Each step happens with some chance:
+    - when a species becomes sapient
+    - in each offspring of a sapient lineage
+    - as a slow drift of living sapient peoples, about one step a decade
+  - Wings and leaves are lost more slowly, so winged or leafy peoples remain possible.
+  - Lineages without the Limbs milestone (for example tentacled peoples) keep their own plan.
+  - In the prototype, most sapient species (37 of 41 in one measurement) are humanoid by year 1,000.
+  - The viewer builds humanoids upright, and builds plants as rooted, swaying stems, trunks or kelp that cannot be possessed.
 - **Sapience rule (decided):** an unmodified, stable Earth-like world should produce sapient life almost every time, given enough time. Worlds that never reach sapience should be the result of unusual player choices (exotic chemistry, broken orbital dynamics, harsh laws), not the basic Earth template.
 - How the simulation achieves this:
   - **Feedback loop:** as with hands, social life and brains on Earth, lineages with manipulators (limbs or tentacles) and a sociable temperament grow brains faster, and clever, social tool-users compete better.
@@ -642,6 +661,9 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Online server rules | Species champions are rank and file and can be bound again; named individuals die forever via a ledger of the dead; disconnecting mid-match counts as surrender unless the player rejoins within 30 s (owner asked for reconnecting); an unranked practice queue with no permadeath (§6.2–6.3) |
 | — | Metaphysical laws (rules) | Built as in §4.6: Arcane Magic (ley-line mana, Spellcasting milestone), Soul Power (souls and rebirth), Daoist Cultivation (nine realms, tribulations); all thin the Veil in their own way. Numbers open to tuning |
 | — | Civilizations and equipment (rules) | Built as in §4.5 and §5.4: peoples found by sapient species, eras limited by materials, magic traditions, culture-driven diplomacy, wars and schisms; gear by body part from local materials. Numbers open to tuning |
+| — | Moons | A player has at most one moon for now; more moons are purchasable with Essence. A moon is its own world: it gets every planet control (temperature, composition, atmosphere, gravity, rotation…) and its own simulated life, while staying a moon of the main planet with all the orbital mechanics that entails |
+| — | Ecology | Flora and fauna form a real food chain: plants hold the light niche, animals with nervous systems graze plants instead of photosynthesising, predators eat animals |
+| — | Humanoid sapients | Sapience biases evolution toward a humanoid body plan (two legs, two arms, a head with eyes) in the simulation itself |
 | — | Next work order | Civilizations and equipment together; then re-check cost balance; then the arena revisit, Essence spending, and final art |
 | — | macOS | Development and CI on macOS paused for now; Windows and Linux only |
 | — | Classes | Named individuals only, earned from their life story and their world's laws (fighter from victories, wizard needs Arcane Magic, cultivator needs Daoist Cultivation…); not assigned. Built together with the metaphysical laws, before the arena revisit |
