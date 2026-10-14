@@ -9,6 +9,7 @@ const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability"]
 const TOOLS := ["Inspect", "Add substance", "Remove substance", "Heat", "Cool"]
 const TreeView := preload("res://tree_view.gd")
 const GlobeView := preload("res://globe_view.gd")
+const CreaturePreview := preload("res://creature_preview.gd")
 
 var sim: RefCounted
 var substances: Array = []
@@ -31,6 +32,7 @@ var status_label: RichTextLabel
 var region_label: RichTextLabel
 var species_list: RichTextLabel
 var species_detail: RichTextLabel
+var creature_preview: SubViewportContainer
 var tree_view: Control
 var individuals_list: RichTextLabel
 var individual_detail: RichTextLabel
@@ -116,10 +118,17 @@ func _build_ui() -> void:
 	species_list = _scroll_rich()
 	species_list.meta_clicked.connect(_on_meta)
 	species_tab.add_child(species_list)
+	var species_right := VBoxContainer.new()
+	species_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	species_tab.add_child(species_right)
+	creature_preview = CreaturePreview.new()
+	creature_preview.custom_minimum_size = Vector2(0, 220)
+	creature_preview.visible = false
+	species_right.add_child(creature_preview)
 	species_detail = _scroll_rich()
 	species_detail.meta_clicked.connect(_on_meta)
 	species_detail.text = "Click a species to see its body, temperament and ancestry."
-	species_tab.add_child(species_detail)
+	species_right.add_child(species_detail)
 
 	var tree_scroll := ScrollContainer.new()
 	tree_scroll.name = "Family tree"
@@ -608,6 +617,8 @@ func _refresh_species_detail() -> void:
 	if d == null:
 		species_detail.text = "That species is no longer on record."
 		return
+	creature_preview.visible = true
+	creature_preview.show_species(d)
 	var status := "alive, %d regions, biomass %.0f" % [d["regions"], d["biomass"]] if d["alive"] else "[color=#cc6666]extinct[/color]"
 	var t: Dictionary = d["traits"]
 	var tm: Dictionary = d["temperament_values"]

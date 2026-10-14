@@ -74,6 +74,8 @@ func _initialize() -> void:
 	main._on_meta("s:%d" % int(top[0]["id"]))
 	check(main.species_detail.text.contains("Temperament"), "species detail shows temperament")
 	check(main.species_detail.text.contains("Character sheet"), "species detail shows a character sheet")
+	await process_frame
+	check(main.creature_preview.visible and main.creature_preview.creature != null, "species detail shows a 3D creature model")
 	var sheet = JSON.parse_string(sim.sheet_json("species", int(top[0]["id"])))
 	check(sheet != null and sheet["cost"] >= 1 and sheet["cost"] <= 1000, "species sheet has a cost from 1 to 1000")
 
