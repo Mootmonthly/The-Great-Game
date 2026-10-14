@@ -1,4 +1,4 @@
-# The Great Game — Game Design Document (Draft v0.1)
+# The Great Game — Game Design Document (Draft v0.2)
 
 > Status: living document. Sections marked **[OPEN]** need a decision before production on that system starts.
 
@@ -13,8 +13,8 @@
 1. **Craft an evolving world.** Start from a blank petri dish. Add elements and molecules, tune temperature and conditions, and grow a biosphere. Viewed from on high.
 2. **Write the laws of reality.** As life develops, define the rules: magic systems, physical laws, the power of the soul, Daoist cultivation, and more. Sapient life is possible, not guaranteed. Sapient species form civilizations, laws, and relationships. The player can possess any being and enter the world in first person.
 3. **Life is not limited to carbon and water.** The simulation extrapolates life from whatever chemistry and metaphysics the world contains: classical fantasy creatures (goblins, dragons) and alien ones (hydrogen-silica goo demons) alike.
-4. **Every being has a character sheet.** Beings receive stats in a D&D 5th-edition-style format and a **cost from 1 to 100** based on stats, innate abilities, and equipment.
-5. **Champions fight online.** Players draft champions from their own world into a team under a fixed total cost cap and control them directly in an online arena, using their innate abilities.
+4. **Every being has a character sheet.** Beings receive stats in a D&D 5th-edition-style format and a **cost from 1 to 1000** based on stats, innate abilities, and equipment.
+5. **Champions fight online.** Players draft champions from their own world into a team under a fixed total cost cap and control them directly in an online arena, using their innate abilities. Team size is limited only by the cost cap. **Death in the arena is permanent.**
 
 ## 3. Core Loop
 
@@ -33,7 +33,9 @@
  └─────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Essence** (working name) is the bridge currency. Arena play earns Essence. Essence unlocks rarer elements, exotic laws, and time acceleration in the world. **[OPEN]** Confirm whether world progression should be gated at all, or fully sandboxed with a separate "ranked seed" mode.
+- **Essence** (working name) is the bridge currency. **Decided:** every world starts with a free set of basic resources. Players earn Essence by defeating other players in the arena and spend it to add extra and new resources beyond the basics.
+- Essence cannot be bought with real money (see §9). Paid Essence would be pay-to-win in a competitive game with permadeath.
+- **Snowball risk:** winners earn more resources, which makes them stronger. Mitigations to test: losers earn a small consolation amount; rating-based matchmaking keeps opponents close in strength; diminishing Essence from repeat wins against much weaker players.
 
 ## 4. World Simulation
 
@@ -88,7 +90,27 @@ Each triad combination produces a **Biochemistry Profile**. The profile constrai
 
 ### 4.6 Laws of Reality
 
-Laws are unlockable rule modules that change simulation equations and unlock new traits and abilities. Each law has tunable parameters.
+**Decided launch set: planetary and physical controls.** The player controls these from the start:
+
+| Control | Range / notes | What it drives |
+|---|---|---|
+| Temperature | Global baseline plus regional heat/cool tools | Phases of substances, biome bands, life triad viability |
+| Planetary composition | Elements and molecules in crust, mantle, and oceans/solvents | Available backbones, minerals, volcanism, magnetic field |
+| Atmospheric composition | Gases and their proportions, surface pressure | Breathable/usable gases, greenhouse effect, sky colour, flight viability |
+| Gravity | Surface gravity multiplier | Maximum creature size, flight cost, atmosphere retention, mountain height |
+| Rotation speed | Day length; optional axial tilt | Day/night cycle, temperature swings, wind patterns, seasons |
+| Star distance and orbital speed | Distance from the star and orbital period | Energy received, year length, climate zones |
+| Star properties | Star type and luminosity (suggested) | Light spectrum, radiation level, photosynthesis-style energy |
+| Moons | Number of moons; each with mass, distance, and orbital speed | Tides, eclipses, night light, orbital stability, impact risk |
+
+**Physics coupling:** in real physics, orbital period follows from distance and star mass, and gravity follows from planet mass and radius. Two modes are proposed:
+
+- **Natural mode:** linked values update together. Unstable configurations (for example, moons too close or too many) degrade over time with visible consequences such as tidal breakup or moons colliding.
+- **Godhand mode:** each value is set independently, which is physically impossible but fun. **[OPEN]** Decide whether Godhand mode is allowed in ranked worlds.
+
+Extra and exotic resources (rare elements, unusual molecules, more moons, unusual star types) are unlocked with Essence.
+
+**Post-launch metaphysical laws (assumed, to confirm):** the metaphysical laws below expand the game after launch. They are rule modules that change simulation equations and unlock new traits and abilities. Each law has tunable parameters.
 
 | Law | Effect on simulation | Example parameters |
 |---|---|---|
@@ -96,14 +118,14 @@ Laws are unlockable rule modules that change simulation equations and unlock new
 | Soul Power | Beings accumulate soul strength over a lifetime; enables reincarnation and soul-based abilities | Soul persistence, inheritance rate |
 | Daoist Cultivation | Individuals can advance through cultivation realms by absorbing qi; growth beyond species norm | Qi density, realm thresholds, tribulation risk |
 | Divine Favour | Worship generates energy for the player and grants blessings | Faith decay, miracle cost |
-| Altered Physics | Change gravity, speed of sound, heat flow, entropy rate | Multipliers within safe bounds |
+| Altered Physics | Change speed of sound, heat flow, entropy rate beyond the launch controls | Multipliers within safe bounds |
 
-Laws can stack. Their interactions are the main source of emergent variety. **[OPEN]** Define the minimum law set for launch (suggest: Physics tuning, Arcane Magic, Cultivation).
+Laws can stack. Their interactions are the main source of emergent variety. **[OPEN]** Confirm which metaphysical laws, if any, ship at launch.
 
 ### 4.7 Player Interaction (God Mode)
 
 - Top-down orbital camera with smooth zoom from planet to ground level.
-- Tools: add substance, heat/cool, adjust pressure, meteor/seed delivery, set law, accelerate time, bless/curse, observe (tracking overlays: population, chemistry, mana, civilizations).
+- Tools: add substance, heat/cool, adjust pressure, adjust orbit/rotation/gravity, add/remove moons, meteor/seed delivery, set law, accelerate time, bless/curse, observe (tracking overlays: population, chemistry, mana, civilizations).
 - **Possession:** select any individual at L2 to drop into L3 first-person control. The creature's actual stats and abilities apply. Possession can be used for exploration, guiding a civilization, or testing a future champion.
 
 ## 5. Character Sheets
@@ -128,7 +150,7 @@ Every individual can produce a sheet in a 5e-compatible format:
 
 Mechanics from the D&D 5e System Reference Document (SRD 5.1) are released under Creative Commons CC-BY-4.0 and may be used commercially with attribution. The names "Dungeons & Dragons", "D&D", and non-SRD content (for example, specific trademarked monsters such as beholders and mind flayers) must not be used. Marketing should say "inspired by classic tabletop RPG character sheets." Include the required SRD attribution in the credits.
 
-### 5.3 Cost (1–100)
+### 5.3 Cost (1–1000)
 
 Cost must be predictable, explainable to players, and resistant to exploits. Proposed formula, modelled on the 5e Challenge Rating approach (offence vs. defence):
 
@@ -140,11 +162,12 @@ StatRating       = Σ over 6 ability scores of max(0, score − 10)
 
 Power  = 0.40·Defensive + 0.40·Offensive + 0.15·Utility + 0.05·Stat
          + EquipmentPower
-Cost   = clamp(round(1 + 99 · (Power / PowerCap)^0.7), 1, 100)
+Cost   = clamp(round(1 + 999 · (Power / PowerCap)^0.7), 1, 1000)
 ```
 
 - The 0.7 exponent spreads low-power beings across more cost values so cheap champions remain distinct.
-- **PowerCap** is a tuned constant: the power of a reference top-tier being (roughly an ancient dragon) maps to about 95.
+- **PowerCap** is a tuned constant. A reference apex being (for example, a dragon living on a neutron-star-like world) maps to about 1000. A classic ancient dragon lands far lower, roughly 250–350. A commoner-level creature costs 1.
+- Ability scores may exceed the 5e cap of 30 for extreme beings. The cost formula must stay monotonic beyond that range.
 - Equipment adds power by the same offence/defence evaluation and is part of the champion's locked loadout.
 - Each ability has a hand-tuned or simulation-derived utility score stored in data. A balance tool runs automated mock battles to re-tune weights (see §8).
 - The sheet UI shows the cost breakdown so players understand why a being costs what it costs.
@@ -153,20 +176,54 @@ Cost   = clamp(round(1 + 99 · (Power / PowerCap)^0.7), 1, 100)
 
 ### 6.1 Mode
 
-- **Format:** team battle, 1v1 player matches at launch (e.g. each player fields up to 4 champions). **[OPEN]** Champion count per team, and whether players control one champion at a time (swap) or command all of them.
-- **Cost cap:** fixed per queue (for example 150 total cost). Alternative queues: low cap (50), solo champion (100 cap, 1 champion), unlimited casual.
-- **Control:** real-time, third-person action combat. Players move their champion and trigger innate abilities mapped to hotkeys. Uncontrolled champions follow simple AI stances (aggressive, defensive, follow).
+- **Format:** 1v1 player matches at launch.
+- **Decided: team size is variable.** The only limit is the total cost cap. Example with a 1000 cap: one player brings 1000 one-cost chumps; the other brings a single 1000-cost neutron-star dragon. Both are legal.
+- **Cost cap:** fixed per queue. Default queue: 1000. Suggested extra queues: skirmish (250), duel (1 champion, 1000 cap), unlimited casual.
+- **Control scheme (proposed):** armies of any size need two control layers:
+  - **Command layer (RTS-style):** select units or groups, issue move/attack/hold orders, set AI stances (aggressive, defensive, follow).
+  - **Possession layer (action-style):** take direct third-person control of any one champion at a time and trigger its innate abilities from hotkeys. Switch between champions freely.
+- **Scale target:** up to about 2000 units per match (1000 per side). This requires an ECS-style arena simulation, crowd pathfinding, GPU-instanced rendering, and animation level of detail for distant units. **[OPEN]** Confirm the maximum unit count; a hard cap (for example 500 per side) is much cheaper to build.
 - **Translating 5e to real time:** turns become cooldowns. One "round" = 6 seconds. Actions have a cooldown or charge model; attack rolls happen on hit (accuracy vs. AC) so tabletop stats still matter; saves resolve against ability DCs. Legendary actions become extra charges.
 
 ### 6.2 Champion Binding and Integrity
 
 - When the player binds a champion, the game takes an **immutable snapshot**: sheet, abilities, equipment, body plan, cosmetic data, and the computed cost.
 - Snapshots are uploaded to the server and validated: the server recomputes cost from the sheet and rejects mismatches. The server also checks the sheet against generation rules (no impossible stat combinations).
-- **[OPEN]** Whether a full world simulation must be verifiable (strong anti-cheat, high cost) or whether rule validation of the sheet is enough (recommended for launch).
+- **Decided: strict anti-cheat.** The server must be able to prove that a champion really evolved in a legitimately simulated world.
+
+**Option A — server-hosted worlds.** The world simulation runs only on the server; the client is a viewer.
+
+- Strongest guarantee: the client never holds the true world state.
+- Requires always-online play, even for single-player world building. Steam players often criticise this.
+- God-mode tools feel laggy, because every change waits on the network.
+- Ongoing cost per active player. Rough estimate: 0.25–1 vCPU per running world at about $0.02–0.05 per vCPU-hour, so about $0.005–0.05 per player-hour. A player with 100 hours costs about $0.50–5.00. If worlds keep evolving while the player is offline, cost rises to about $45–440 per world per year. This must be avoided.
+- These numbers are order-of-magnitude assumptions. Prototype measurements in Phase 0 will replace them.
+
+**Option B — deterministic replay verification (recommended).** The client runs the world. The server re-runs it to verify.
+
+- The sim-core is fully deterministic (fixed-point maths, seeded PRNG). A world is fully described by its seed plus the player's action log.
+- The client uploads the action log (kilobytes, not gigabytes) whenever the player binds a champion.
+- The server replays the log headless, with no rendering, typically 20–100 times faster than real play. It checks that the replayed world contains the bound champion with the same sheet and cost.
+- Each successful verification stores a signed checkpoint, so the next verification replays only from the last checkpoint.
+- Rough cost: 1–5% of Option A. That is about $0.01–0.25 per player lifetime.
+- Equally strict as Option A, provided determinism holds on every platform. Offline world building still works; only binding and arena play need a connection.
+- Constraint: anything that changes a being's sheet must be in the log. Recommendation: possession (L3) does not change sheets, which keeps replays short.
+
+At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is no recurring revenue. Option B keeps server costs a small fraction of that.
+
+### 6.2a Permadeath
+
+- **Decided:** a champion that dies in the arena is dead forever.
+- The dead individual is removed from its home world. Its species, descendants, and civilization continue. **[OPEN]** Confirm removal from the world, and whether its body, relics, or equipment can return as world items or legends.
+- Death makes every match high stakes. A 1000-cost apex being can be lost in one defeat. This is intended tension, but needs supporting rules:
+  - Surrender/retreat option that ends a match early with a smaller loss (proposed).
+  - Clear pre-match preview of the opponent's total cost, but not their exact roster (proposed).
+  - Unranked practice queue against AI or friends with no permadeath (proposed).
 
 ### 6.3 Networking
 
-- **Server-authoritative** dedicated servers, with client-side prediction and rollback for the player's own champion.
+- **Server-authoritative** dedicated servers run the arena simulation.
+- With up to 2000 units, replicating every unit's state is expensive. Recommended model: clients send inputs only; the server and clients all run the same deterministic arena simulation (lockstep with server validation, as in many RTS games). Client-side prediction smooths the possessed champion.
 - Matchmaking by rating (Glicko-2) per queue.
 - Steamworks for identity, friends, invites, and lobbies; dedicated servers on a cloud host for ranked play.
 
@@ -180,7 +237,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 ## 7. Technical Architecture (Proposal)
 
-### 7.1 Engine **[OPEN]**
+### 7.1 Engine — **Decided: Godot 4**
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -188,7 +245,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | **Unity 6 (C#, DOTS/ECS)** | Mature, DOTS suits large simulations, large asset ecosystem, Netcode for Entities | Runtime fee history, licensing risk |
 | **Unreal Engine 5 (C++)** | Best visuals and netcode for action combat, mature dedicated servers | Heavy for a sim-first game, 5% royalty past threshold, steeper iteration |
 
-**Recommendation:** Godot 4 with the simulation core written as a separate, engine-independent library (Rust or C++). This keeps the hardest part portable, testable, and runnable headless on servers and in the balance farm.
+**Decision:** Godot 4. The simulation core is a separate, engine-independent library (Rust recommended, loaded through GDExtension). This keeps the hardest part portable, testable, and runnable headless on servers, in replay verification (§6.2), and in the balance farm.
 
 ### 7.2 Module Layout
 
@@ -208,7 +265,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 ### 7.3 Key Technical Principles
 
-- **Determinism:** sim-core uses a seeded PRNG and fixed-point or carefully controlled floating point, so a world seed plus a player action log reproduces the same world. This enables save files, replays, and debugging.
+- **Determinism:** sim-core uses a seeded PRNG and fixed-point maths, so a world seed plus a player action log reproduces the same world on every platform. This is required for anti-cheat (§6.2) and enables save files, replays, and debugging.
 - **Data-driven content:** substances, traits, archetypes, abilities, and laws are data files. Designers and modders add content without code changes. Steam Workshop support later.
 - **Background simulation:** L0/L1 run on worker threads; the render thread never waits on simulation.
 - **Save format:** versioned, compressed snapshot plus action log.
@@ -217,19 +274,38 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 | Phase | Goal | Exit criteria |
 |---|---|---|
-| 0. Prototype: Petri Dish | 2D top-down. Add 10 substances, temperature control, life triad, species populations evolve | Two seeds with different chemistry produce visibly different life |
+| 0. Prototype: Petri Dish | Godot 4 + Rust sim-core. 2D top-down. 10 substances, temperature, gravity, star distance; life triad; species populations evolve. Determinism test across Windows and Linux | Two seeds with different chemistry produce visibly different life; identical replay hashes on both platforms; measured sim cost per world-hour |
 | 1. Prototype: Sheet & Cost | Genome → 5e sheet → cost. Headless auto-battler between two generated beings | Cost correlates with mock-battle win rate (target r > 0.8) |
-| 2. Vertical Slice | 3D planet view, body plan synthesis, one law (Arcane Magic), possession, local 1v1 arena | Playable start-to-arena loop offline |
-| 3. Online Alpha | Dedicated server, matchmaking, snapshot validation, cost-capped teams | Closed test with external players |
-| 4. Content & Depth | Civilizations, more laws (Cultivation, Soul), archetypes, equipment | Sapient civs emerge in some fraction of worlds |
+| 2. Vertical Slice | 3D planet view, full planetary controls (rotation, orbit, moons, atmosphere), body plan synthesis, possession, local 1v1 arena with small armies | Playable start-to-arena loop offline |
+| 3. Online Alpha | Dedicated server, replay verification, matchmaking, permadeath, Essence economy, large-army arena (target 2000 units) | Closed test with external players |
+| 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Cultivation, Soul), archetypes, equipment | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
 
-## 9. Open Questions Summary
+## 9. Business Model
 
-1. Engine choice (§7.1).
-2. Is world progression gated by Essence, or fully sandboxed (§3)?
-3. Minimum law set for launch (§4.6).
-4. Arena team size and control scheme (§6.1).
-5. Anti-cheat depth for champion snapshots (§6.2).
-6. Art direction: stylised or realistic? Stylised strongly recommended for procedural bodies.
-7. Business model: premium price, with cosmetics only? Avoid pay-for-power given competitive play.
+- **Decided:** premium "box price" on Steam, about $10–20 per copy. Final price depends on product quality and scope.
+- No pay-for-power. Essence is earned only through play.
+- Optional later revenue that does not affect balance: cosmetic packs, soundtrack, expansions that add new law modules.
+- Server costs must stay well below net revenue per copy. This drives the choice of replay verification (§6.2).
+
+## 10. Decision Log
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Engine | Godot 4, with a Rust sim-core |
+| 2 | World progression | Gated: free basic resources; Essence earned by defeating players unlocks extra and new resources |
+| 3 | Launch law set | Planetary and physical controls: temperature, planet and atmosphere composition, gravity, rotation, star distance and orbit, moons (count and orbits) |
+| 4 | Arena team size | Variable, limited only by cost cap; cost scale raised to 1–1000 |
+| 5 | Anti-cheat | Strict; replay verification recommended (§6.2) |
+| 6 | Art direction | Pending: comparing a World of Warcraft-like stylised look against photorealism |
+| 7 | Business model | Box price on Steam, about $10–20 |
+| — | Champion death | Permanent |
+
+## 11. Open Questions
+
+1. Art direction: stylised or photorealistic (§10, row 6). Stylised recommended: procedural bodies of unknown anatomy look uncanny in photorealism, 2000-unit battles need cheap rendering, and Godot's renderer suits stylised art better.
+2. Anti-cheat approach: confirm Option B, replay verification (§6.2).
+3. Godhand mode (physically impossible settings) in ranked worlds (§4.6).
+4. Which metaphysical laws, if any, ship at launch (§4.6).
+5. Maximum arena unit count (§6.1).
+6. Permadeath details: removal from home world, relics, surrender rules (§6.2a).
