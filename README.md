@@ -103,6 +103,8 @@ The arena server verifies champions by replaying your world's history, matches p
 
 During an online match, possession works as offline (WASD, Space, Q, Esc). Speed is fixed by the server, and **Surrender** ends the match at once.
 
+If your connection drops, the arena AI fights for you. Click **Rejoin match** (or find a match again) within 30 seconds to pick up where you left off; after that, it counts as surrender.
+
 ### Command-line tools
 
 ```

@@ -2,7 +2,7 @@
 //! headless player: it evolves a world, binds champions, queues and lets
 //! the arena AI fight, which is handy for testing a server.
 
-use arena_server::server::{start, Config};
+use arena_server::server::{start, Config, RECONNECT_GRACE};
 use arena_server::steam::SteamConfig;
 use net_proto::client::{local_sheet, Client, Login};
 use net_proto::{Auth, ChampionKind, QueueMode, ServerMsg, DEFAULT_PORT};
@@ -78,6 +78,7 @@ fn serve(args: &[String]) {
         allow_accounts: !steam_only,
         steam,
         tls_pem,
+        reconnect_grace: RECONNECT_GRACE,
     })
     .unwrap_or_else(|e| {
         eprintln!("could not start the server: {e}");

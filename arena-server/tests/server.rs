@@ -20,6 +20,12 @@ fn server_paced(data: Option<PathBuf>, tick_interval: Duration) -> SocketAddr {
         .addr
 }
 
+fn server_with_grace(tick_interval: Duration, grace: Duration) -> SocketAddr {
+    let mut config = Config::local("127.0.0.1:0", None, tick_interval);
+    config.reconnect_grace = grace;
+    start(config).unwrap().addr
+}
+
 fn world(seed: u64) -> World {
     let mut w = World::new(seed);
     for a in preset_actions(&w, "frozen_moon").unwrap() {
@@ -321,4 +327,68 @@ fn surrender_and_practice() {
     assert!(fallen.is_empty(), "surrender this early: nobody had fallen yet");
     assert!(!ma.desynced && !mb.desynced);
     assert!(!ma.arena.units.iter().any(|u| u.possessed));
+}
+
+/// Two players queue a ranked match on a paced server; returns both
+/// clients, alice's secret and both match copies.
+fn paced_match(addr: SocketAddr) -> (Client, String, LockstepMatch, Client, LockstepMatch) {
+    let w = world(2);
+    let (mut a, secret) = connect_secret(addr, "gina");
+    let mut b = connect(addr, "hank");
+    let s = biggest_species(&w);
+    let ta: Vec<u64> = (0..3)
+        .map(|_| a.bind(&w, ChampionKind::Species, s).unwrap().unwrap().token)
+        .collect();
+    let tb: Vec<u64> = (0..3)
+        .map(|_| b.bind(&w, ChampionKind::Species, s).unwrap().unwrap().token)
+        .collect();
+    a.queue(QueueMode::Ranked, 1000, ta).unwrap();
+    b.queue(QueueMode::Ranked, 1000, tb).unwrap();
+    let ma = a.wait_for_match().unwrap().unwrap();
+    let mb = b.wait_for_match().unwrap().unwrap();
+    (a, secret, ma, b, mb)
+}
+
+#[test]
+fn a_dropped_player_can_rejoin_the_running_match() {
+    let addr = server_with_grace(Duration::from_millis(20), Duration::from_secs(30));
+    let (a, secret, _ma, mut b, mut mb) = paced_match(addr);
+    // Alice's connection drops mid-match.
+    drop(a);
+    std::thread::sleep(Duration::from_millis(300));
+    let mut l = login(addr, "gina");
+    l.auth = Auth::Account {
+        secret: Some(secret),
+    };
+    let (mut a, welcome) = Client::connect(&l).unwrap();
+    assert!(
+        matches!(welcome, ServerMsg::Welcome { resuming: true, .. }),
+        "{welcome:?}"
+    );
+    // The match start and the catch-up rebuild the arena; then it runs on.
+    let mut ma = a.wait_for_match().unwrap().unwrap();
+    let end_b = std::thread::scope(|s| {
+        let h = s.spawn(|| b.follow(&mut mb).unwrap());
+        a.follow(&mut ma).unwrap();
+        h.join().unwrap()
+    });
+    assert!(!ma.desynced && !mb.desynced, "the rejoined copy matches");
+    assert_eq!(ma.arena.state_hash(), mb.arena.state_hash());
+    let ServerMsg::MatchEnd { surrendered, .. } = end_b else {
+        panic!()
+    };
+    assert_eq!(surrendered, None, "rejoining in time is not surrender");
+}
+
+#[test]
+fn staying_away_too_long_is_surrender() {
+    let addr = server_with_grace(Duration::from_millis(20), Duration::from_millis(400));
+    let (a, _secret, ma, mut b, mut mb) = paced_match(addr);
+    let a_team = ma.team;
+    drop(a);
+    let ServerMsg::MatchEnd { surrendered, .. } = b.follow(&mut mb).unwrap() else {
+        panic!()
+    };
+    assert_eq!(surrendered, Some(a_team));
+    assert!(!mb.desynced);
 }
