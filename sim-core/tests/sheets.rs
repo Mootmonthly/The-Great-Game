@@ -20,7 +20,7 @@ fn run_preset(preset: &str, seed: u64, ticks: u32) -> World {
 fn blank(name: &str, hp: i64, ac: i64, attacks: Vec<Attack>) -> CharacterSheet {
     CharacterSheet {
         name: name.into(),
-        creature_type: "Humanoid",
+        creature_type: "Humanoid".into(),
         size: SizeCategory::Medium,
         alignment: "Neutral".into(),
         abilities: [10; 6],

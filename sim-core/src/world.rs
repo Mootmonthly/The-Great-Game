@@ -398,6 +398,7 @@ impl World {
                 self.planet.axial_tilt_deg = (*degrees).clamp(Fx::ZERO, Fx::from_int(90));
             }
             Action::AddMoon { mass, distance } => self.planet.add_moon(*mass, *distance),
+            Action::ChampionFell { individual } => self.champion_fell(*individual),
             Action::SetVeilLaw { openness } => {
                 self.veil_law = (*openness).clamp(Fx::ZERO, Fx::ONE);
             }

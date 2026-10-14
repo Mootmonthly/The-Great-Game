@@ -14,8 +14,9 @@ use crate::fixed::Fx;
 use crate::individual::Individual;
 use crate::life::{EnergyKind, Species};
 use crate::world::World;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SizeCategory {
     Tiny,
     Small,
@@ -75,7 +76,7 @@ impl SizeCategory {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum DamageType {
     Bludgeoning,
     Piercing,
@@ -117,7 +118,7 @@ impl DamageType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attack {
     pub name: String,
     pub to_hit: i64,
@@ -159,7 +160,7 @@ impl Attack {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Breath {
     pub name: String,
     pub dice: i64,
@@ -196,14 +197,14 @@ pub const INT: usize = 3;
 pub const WIS: usize = 4;
 pub const CHA: usize = 5;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Trait {
     pub name: String,
     pub text: String,
 }
 
 /// How the cost was reached, so the UI can explain it (§5.3).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CostBreakdown {
     /// Hit points adjusted for armour class and resistances.
     pub effective_hp: Fx,
@@ -217,10 +218,10 @@ pub struct CostBreakdown {
     pub cost: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CharacterSheet {
     pub name: String,
-    pub creature_type: &'static str,
+    pub creature_type: String,
     pub size: SizeCategory,
     pub alignment: String,
     /// Indexed by STR, DEX, CON, INT, WIS, CHA.
@@ -727,7 +728,7 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
 
     let mut sheet = CharacterSheet {
         name: ind.map_or_else(|| s.name.clone(), |i| i.title()),
-        creature_type,
+        creature_type: creature_type.to_string(),
         size: category,
         alignment,
         abilities,

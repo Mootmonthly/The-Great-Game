@@ -5,6 +5,8 @@
 #![recursion_limit = "256"]
 
 use godot::prelude::*;
+
+mod net;
 use serde_json::{json, Value};
 use sim_core::presets::{preset_actions, PRESETS};
 use sim_core::world::{index, HEIGHT, WIDTH};
@@ -689,6 +691,22 @@ impl SimWorld {
         }
     }
 
+    /// A champion from this world died in a ranked match: log its death so
+    /// the world replays without it (§6.2a).
+    #[func]
+    fn champion_fell(&mut self, individual: i64) {
+        if individual >= 0 {
+            self.world.apply(Action::ChampionFell {
+                individual: individual as u32,
+            });
+        }
+    }
+
+    #[func]
+    fn seed(&self) -> i64 {
+        self.world.seed as i64
+    }
+
     /// The action log as JSON: everything needed to rebuild this world.
     #[func]
     fn save_log(&self) -> GString {
@@ -822,28 +840,10 @@ impl ArenaSim {
     /// arena clock and result ("a", "b", "draw" or null).
     #[func]
     fn state_json(&self) -> GString {
-        let Some(a) = self.arena.as_ref() else {
-            return GString::from("null");
-        };
-        let units: Vec<Value> = a
-            .units
-            .iter()
-            .map(|u| {
-                json!({
-                    "x": u.pos.x.to_f64(), "z": u.pos.z.to_f64(),
-                    "fx": u.facing.x.to_f64(), "fz": u.facing.z.to_f64(),
-                    "hp": u.hp, "max_hp": u.sheet.hit_points, "alive": u.alive, "team": u.team,
-                    "possessed": u.possessed, "breath_ready": u.breath_ready, "has_breath": u.sheet.breath.is_some(),
-                    "radius": u.radius.to_f64(), "name": u.sheet.name, "size": u.sheet.size.name(),
-                })
-            })
-            .collect();
-        let result = a.result.map(|r| match r {
-            sim_core::arena::ArenaResult::TeamA => "a",
-            sim_core::arena::ArenaResult::TeamB => "b",
-            sim_core::arena::ArenaResult::Draw => "draw",
-        });
-        to_gstring(json!({"time": a.time.to_f64(), "result": result, "units": units}))
+        match self.arena.as_ref() {
+            Some(a) => to_gstring(arena_state(a, 0)),
+            None => GString::from("null"),
+        }
     }
 
     /// Readable log lines for events since the last call.
@@ -853,34 +853,7 @@ impl ArenaSim {
             return GString::from("[]");
         };
         let events = a.take_events();
-        let name = |i: usize| a.units[i].sheet.name.clone();
-        let lines: Vec<String> = events
-            .iter()
-            .filter_map(|e| match e {
-                sim_core::arena::ArenaEvent::Breath {
-                    attacker,
-                    name: breath,
-                    targets,
-                } => Some(format!(
-                    "{} uses {} ({} {}).",
-                    name(*attacker),
-                    breath,
-                    targets.len(),
-                    if targets.len() == 1 {
-                        "target"
-                    } else {
-                        "targets"
-                    }
-                )),
-                sim_core::arena::ArenaEvent::Fell { unit, by } => Some(format!(
-                    "{} [color=#cc6666]falls[/color] to {}.",
-                    name(*unit),
-                    name(*by)
-                )),
-                _ => None,
-            })
-            .collect();
-        to_gstring(json!(lines))
+        to_gstring(json!(event_lines(a, &events)))
     }
 
     /// Number of player commands recorded (they make the match replayable).
@@ -890,4 +863,55 @@ impl ArenaSim {
             .as_ref()
             .map_or(0, |a| a.command_log.len() as i64)
     }
+}
+
+/// Positions, facing, hit points and status of every unit, plus the arena
+/// clock, the result ("a", "b", "draw" or null) and which side is yours.
+fn arena_state(a: &sim_core::arena::Arena, my_team: u8) -> Value {
+    let units: Vec<Value> = a
+        .units
+        .iter()
+        .map(|u| {
+            json!({
+                "x": u.pos.x.to_f64(), "z": u.pos.z.to_f64(),
+                "fx": u.facing.x.to_f64(), "fz": u.facing.z.to_f64(),
+                "hp": u.hp, "max_hp": u.sheet.hit_points, "alive": u.alive, "team": u.team,
+                "possessed": u.possessed, "breath_ready": u.breath_ready, "has_breath": u.sheet.breath.is_some(),
+                "radius": u.radius.to_f64(), "name": u.sheet.name, "size": u.sheet.size.name(),
+            })
+        })
+        .collect();
+    let result = a.result.map(|r| match r {
+        sim_core::arena::ArenaResult::TeamA => "a",
+        sim_core::arena::ArenaResult::TeamB => "b",
+        sim_core::arena::ArenaResult::Draw => "draw",
+    });
+    json!({"time": a.time.to_f64(), "result": result, "units": units, "my_team": my_team})
+}
+
+/// Readable log lines for arena events.
+fn event_lines(a: &sim_core::arena::Arena, events: &[sim_core::arena::ArenaEvent]) -> Vec<String> {
+    let name = |i: usize| a.units[i].sheet.name.clone();
+    events
+        .iter()
+        .filter_map(|e| match e {
+            sim_core::arena::ArenaEvent::Breath {
+                attacker,
+                name: breath,
+                targets,
+            } => Some(format!(
+                "{} uses {} ({} {}).",
+                name(*attacker),
+                breath,
+                targets.len(),
+                if targets.len() == 1 { "target" } else { "targets" }
+            )),
+            sim_core::arena::ArenaEvent::Fell { unit, by } => Some(format!(
+                "{} [color=#cc6666]falls[/color] to {}.",
+                name(*unit),
+                name(*by)
+            )),
+            _ => None,
+        })
+        .collect()
 }

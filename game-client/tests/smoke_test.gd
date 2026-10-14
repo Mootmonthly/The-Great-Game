@@ -121,6 +121,44 @@ func _initialize() -> void:
 	await process_frame
 	check(main.arena == null, "leaving the arena returns to the world")
 
+	# Online arena: a real arena server; this client against a second one.
+	var server_bin := ProjectSettings.globalize_path("res://../target/release/arena-server")
+	if OS.get_name() == "Windows":
+		server_bin += ".exe"
+	if FileAccess.file_exists(server_bin):
+		var data_dir := OS.get_user_data_dir() + "/smoke-server-%d" % int(Time.get_unix_time_from_system())
+		var pid := OS.create_process(server_bin, ["serve", "--port", "7979", "--data", data_dir, "--speed", "0"])
+		await create_timer(1.5).timeout
+		main.open_arena()
+		arena = main.arena
+		arena.my_counts = arena._auto_pick(arena.my_roster)
+		arena.host_edit.text = "127.0.0.1:7979"
+		arena.name_edit.text = "smoke_a"
+		arena.find_online_match()
+		var foe = ClassDB.instantiate("NetClient")
+		foe.connect_to("127.0.0.1", 7979, "smoke_b")
+		var foe_species := -1
+		for sp in JSON.parse_string(sim.species_json(500)):
+			if int(sp["cost"]) <= arena.cap and foe_species < 0:
+				foe_species = int(sp["id"])
+		var started := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - started < 90000 and arena.match_end.is_empty():
+			for m in JSON.parse_string(foe.poll()):
+				if m["type"] == "welcome":
+					foe.bind(sim, "species", foe_species)
+				elif m["type"] == "bound":
+					foe.queue("ranked", arena.cap, PackedInt64Array([int(m["champion"]["token"])]))
+			await process_frame
+		check(arena.online and arena.units.size() >= 2, "online: the server verifies both teams and starts a match")
+		check(not arena.match_end.is_empty() and arena.finished, "online: the match reaches a result in lockstep")
+		check(not arena.match_end.get("desynced", true), "online: client and server arenas stay identical")
+		foe.close_connection()
+		arena.close()
+		await process_frame
+		OS.kill(pid)
+	else:
+		print("skipped online arena check: build arena-server first")
+
 	# Visit a region with life and possess one of its creatures.
 	var cell := Vector2i(-1, -1)
 	for y in sim.height():

@@ -7,7 +7,9 @@
 //! rosters, the seed and the command list, and get the same result.
 
 use crate::fixed::Fx;
+use crate::hash::StateHasher;
 use crate::rng::Rng;
+use serde::{Deserialize, Serialize};
 use crate::sheet::{CharacterSheet, SizeCategory, DEX, WIS};
 
 /// Simulation step: 0.1 s of arena time.
@@ -88,7 +90,7 @@ pub struct ArenaUnit {
     steer: Vec2,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArenaEvent {
     Hit {
         attacker: usize,
@@ -113,7 +115,7 @@ pub enum ArenaEvent {
 }
 
 /// A player command, recorded so the server can replay the match.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArenaCommand {
     /// Take control of a unit, or release it (`None`).
     Possess {
@@ -134,7 +136,7 @@ pub enum ArenaCommand {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArenaResult {
     TeamA,
     TeamB,
@@ -207,6 +209,38 @@ impl Arena {
             command_log: Vec::new(),
             tick: 0,
         }
+    }
+
+    /// Ticks stepped so far.
+    pub fn tick(&self) -> u64 {
+        self.tick
+    }
+
+    /// Ends the match early: `team` gives up and the other side wins.
+    pub fn surrender(&mut self, team: u8) {
+        if self.result.is_none() {
+            self.result = Some(if team == 0 {
+                ArenaResult::TeamB
+            } else {
+                ArenaResult::TeamA
+            });
+        }
+    }
+
+    /// Hash of the match state. Lockstep clients compare it with the
+    /// server's to detect desyncs.
+    pub fn state_hash(&self) -> u64 {
+        let mut h = StateHasher::new();
+        h.u64(self.tick);
+        h.u64(self.rng.state());
+        for u in &self.units {
+            h.i64(u.pos.x.0);
+            h.i64(u.pos.z.0);
+            h.i64(u.hp);
+            h.i64(u.cooldown.0);
+            h.u64(u.alive as u64 | (u.possessed as u64) << 1 | (u.breath_ready as u64) << 2);
+        }
+        h.finish()
     }
 
     /// Events since the last call.
