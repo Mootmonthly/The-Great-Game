@@ -43,14 +43,14 @@
 
     | Item | Price | What it gives |
     |---|---|---|
-    | Heavy metals (e.g. gold, lead, tungsten) | *to set* | A deposit placed in one region of a world |
-    | Rare earths | *to set* | A deposit placed in one region of a world |
-    | Radioactive elements (e.g. uranium, thorium) | *to set* | A deposit placed in one region of a world |
+    | Heavy metals (gold, tungsten) | 1,000 | A deposit placed in one region of a world |
+    | Rare earths | 2,000 | A deposit placed in one region of a world |
+    | Radioactive elements (uranium, thorium) | 3,000 | A deposit placed in one region of a world |
     | Extra moon | 10,000 | One more moon slot for one world (every world has one free slot) |
     | Extra planet | 50,000 | One more home world for the player's army roster |
 
   - Purchases arrive as server-signed grants, like loot. The server checks them when it replays a world log (§6.2), so a world cannot hold more moons or bought elements than its owner paid for. Each extra planet is a separate world with its own seed and log. The server registers each world a player binds champions from, up to their number of planet slots.
-  - Proposed element prices (for the owner to confirm): heavy metals 1,000, rare earths 2,000, radioactive elements 3,000 per deposit.
+  - Element prices (decided): heavy metals 1,000, rare earths 2,000, radioactive elements 3,000 per deposit.
   - **Built:**
     - **Shop elements:** gold and tungsten (heavy metals), rare earths, and uranium and thorium (radioactive). The free tools cannot add them, only remove them. A deposit adds 2 units to each region within 2 of the chosen spot, on the planet or on a moon.
     - **Tungsten** can be forged like iron, so peoples without iron reach the Forging era. It is the best gear material (grade 4).
@@ -708,8 +708,8 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Metaphysical laws (rules) | Built as in §4.6: Arcane Magic (ley-line mana, Spellcasting milestone), Soul Power (souls and rebirth), Daoist Cultivation (nine realms, tribulations); all thin the Veil in their own way. Numbers open to tuning |
 | — | Civilizations and equipment (rules) | Built as in §4.5 and §5.4: peoples found by sapient species, eras limited by materials, magic traditions, culture-driven diplomacy, wars and schisms; gear by body part from local materials. Numbers open to tuning |
 | — | Moons | A player has at most one moon for now; more moons are purchasable with Essence. A moon is its own world: it gets every planet control (temperature, composition, atmosphere, gravity, rotation…) and its own simulated life, while staying a moon of the main planet with all the orbital mechanics that entails |
-| — | Essence economy | 500 Essence per ranked win. War spoils have a pseudo-cost (the fallen champion's cost) and can be sold back to the server 1:1 for Essence, which deletes them. Shop: heavy metals, rare earths and radioactive elements; extra moons 10,000; extra planets 50,000 (§3) |
-| — | Moon orbits | A moon world is never lost to a slider: Natural mode keeps its orbit between the Roche limit and the stable limit, drawing it in if the limit shrinks (Claude's proposal, owner may revise) |
+| — | Essence economy | 500 Essence per ranked win. War spoils have a pseudo-cost (the fallen champion's cost) and can be sold back to the server 1:1 for Essence, which deletes them. Shop: heavy metals 1,000, rare earths 2,000 and radioactive elements 3,000 per deposit; extra moons 10,000; extra planets 50,000 (§3) |
+| — | Moon orbits | A moon world is never lost to a slider: Natural mode keeps its orbit between the Roche limit and the stable limit, drawing it in if the limit shrinks (proposed by Claude, approved by the owner) |
 | — | Ecology | Flora and fauna form a real food chain: plants hold the light niche, animals with nervous systems graze plants instead of photosynthesising, predators eat animals |
 | — | Humanoid sapients | Sapience biases evolution toward a humanoid body plan (two legs, two arms, a head with eyes) in the simulation itself |
 | — | Next work order | Civilizations and equipment together; then re-check cost balance; then the arena revisit, Essence spending, and final art |
@@ -725,4 +725,4 @@ Deferred until the world simulation is complete:
 
 1. Arena match structure: map types, match length, and victory conditions (§6.1). The owner finds the current arena bare-bones; it will be revisited after the online server.
 2. Practice queue details (§6.2a).
-3. **Essence prices for elements:** heavy metals, rare earths and radioactive elements are in the shop (§3); their prices are proposed, not confirmed. Still open: whether unusual molecules, unusual star types or Veil-thinning resources join the shop.
+3. **More shop items:** whether unusual molecules, unusual star types or Veil-thinning resources join the Essence shop (§3).

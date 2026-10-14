@@ -19,7 +19,7 @@ pub const WIN_ESSENCE: u64 = 500;
 pub const DEPOSIT_AMOUNT: Fx = Fx::from_int(2);
 pub const DEPOSIT_RADIUS: u8 = 2;
 
-/// Proposed deposit prices by element class (owner to confirm).
+/// Deposit prices by element class.
 pub fn deposit_price(class: ShopClass) -> u64 {
     match class {
         ShopClass::HeavyMetal => 1_000,
