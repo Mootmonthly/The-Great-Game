@@ -79,6 +79,41 @@ impl Fx {
         Fx(isqrt((self.0 as u128) << FRAC_BITS) as i64)
     }
 
+    /// Base-2 logarithm, piecewise linear between powers of two (error
+    /// below 0.09). Exact integer maths. Non-positive input gives a large
+    /// negative value.
+    pub fn log2(self) -> Fx {
+        if self.0 <= 0 {
+            return Fx::from_int(-64);
+        }
+        let bits = 63 - self.0.leading_zeros() as i64; // position of top bit
+        let whole = bits - FRAC_BITS as i64;
+        let base = 1i64 << bits;
+        let frac = Fx::ratio(self.0 - base, base);
+        Fx::from_int(whole) + frac
+    }
+
+    /// 2 to the power `self`, piecewise linear between integers (error below
+    /// 6%). Exact integer maths.
+    pub fn exp2(self) -> Fx {
+        let whole = self.0 >> FRAC_BITS;
+        let frac = Fx(self.0 & (ONE_RAW - 1));
+        let mantissa = Fx::ONE + frac;
+        if whole >= 0 {
+            Fx(mantissa
+                .0
+                .checked_shl(whole.min(46) as u32)
+                .unwrap_or(i64::MAX))
+        } else {
+            Fx(mantissa.0 >> (-whole).min(63))
+        }
+    }
+
+    /// Rounds to the nearest integer.
+    pub fn round(self) -> i64 {
+        (self.0 + ONE_RAW / 2) >> FRAC_BITS
+    }
+
     pub fn square(self) -> Fx {
         self * self
     }
@@ -177,6 +212,15 @@ mod tests {
         assert_eq!(a + b - b, a);
         assert_eq!(Fx::from_int(9).sqrt(), Fx::from_int(3));
         assert_eq!(Fx::from_int(2).sqrt().0, 92681); // floor(sqrt(2) * 65536)
+    }
+
+    #[test]
+    fn log_and_exp() {
+        assert_eq!(Fx::from_int(8).log2(), Fx::from_int(3));
+        assert_eq!(Fx::ratio(1, 4).log2(), Fx::from_int(-2));
+        assert_eq!(Fx::from_int(3).exp2(), Fx::from_int(8));
+        assert_eq!(Fx::from_int(-1).exp2(), Fx::HALF);
+        assert_eq!(Fx::ratio(5, 2).round(), 3);
     }
 
     #[test]

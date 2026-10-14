@@ -596,8 +596,8 @@ func _refresh_species_list() -> void:
 	var species: Array = JSON.parse_string(sim.species_json(30))
 	var lines := []
 	for s in species:
-		lines.append("[url=s:%d][color=#%s]■[/color] [b]%s[/b][/url] — %s\n    %s · %s · biomass %.0f" % [
-			s["id"], s["color"], s["name"], s["description"], s["body"], s["temperament"], s["biomass"]])
+		lines.append("[url=s:%d][color=#%s]■[/color] [b]%s[/b][/url] — %s · [color=#e8c860]cost %d[/color]\n    %s · %s · biomass %.0f" % [
+			s["id"], s["color"], s["name"], s["description"], s["cost"], s["body"], s["temperament"], s["biomass"]])
 	species_list.text = "\n".join(lines) if lines.size() > 0 else "No life yet. Life needs a backbone element, a liquid medium, and an energy source."
 
 
@@ -622,6 +622,7 @@ func _refresh_species_detail() -> void:
 	text += "\n[b]Temperament[/b] (measured from its brain): %s\n" % d["temperament"]
 	for k in ["aggression", "fear", "curiosity", "sociability"]:
 		text += "  %-14s %s\n" % [k.capitalize(), _bar(tm[k])]
+	text += "\n" + _sheet_text(JSON.parse_string(sim.sheet_json("species", selected_species)))
 	text += "\n[b]Ancestry[/b] (%d descendant species, %d named individuals)\n" % [d["children"], d["individuals"]]
 	if d["ancestors"].size() == 0:
 		text += "  Arose spontaneously from non-living chemistry.\n"
@@ -634,8 +635,8 @@ func _refresh_individuals() -> void:
 	var people: Array = JSON.parse_string(sim.individuals_json(40))
 	var lines := []
 	for p in people:
-		lines.append("[url=i:%d][color=#%s]●[/color] [b]%s[/b][/url] (%s), age %d\n    CHA %d · renown %.1f · %d friends, %d enemies · %s · now: %s" % [
-			p["id"], p["color"] if p["color"] != null else "ffffff", p["title"], p["species"], p["age"],
+		lines.append("[url=i:%d][color=#%s]●[/color] [b]%s[/b][/url] (%s), age %d · [color=#e8c860]cost %s[/color]\n    CHA %d · renown %.1f · %d friends, %d enemies · %s · now: %s" % [
+			p["id"], p["color"] if p["color"] != null else "ffffff", p["title"], p["species"], p["age"], str(int(p["cost"])) if p["cost"] != null else "-",
 			p["charisma"], p["renown"], p["friends"], p["enemies"], p["personality"], p["last_action"] if p["last_action"] != null else "-"])
 	individuals_list.text = "\n".join(lines) if lines.size() > 0 else "No named individuals yet. They appear once a species evolves a nervous system."
 	if selected_individual < 0:
@@ -664,7 +665,43 @@ func _refresh_individuals() -> void:
 	text += "\n[b]Life story[/b]\n"
 	for m in d["memories"]:
 		text += "  Year %d: %s\n" % [m["year"], m["text"]]
+	if d["alive"]:
+		text += "\n" + _sheet_text(JSON.parse_string(sim.sheet_json("individual", selected_individual)))
 	individual_detail.text = text
+
+
+## A character sheet in the style of a tabletop stat block.
+func _sheet_text(sh) -> String:
+	if sh == null:
+		return ""
+	var t := "[bgcolor=#2a2418][color=#e8c860][b]Character sheet[/b]   cost %d / 1000[/color][/bgcolor]\n" % sh["cost"]
+	t += "[i]%s %s, %s[/i]\n" % [sh["size"], sh["type"].to_lower(), sh["alignment"].to_lower()]
+	var sp: Dictionary = sh["speed"]
+	var speeds := ["%d ft." % sp["walk"]]
+	for k in ["swim", "fly", "burrow"]:
+		if sp[k] > 0:
+			speeds.append("%s %d ft." % [k, sp[k]])
+	t += "[b]Armor Class[/b] %d   [b]Hit Points[/b] %d (%dd%d)   [b]Speed[/b] %s\n" % [sh["armor_class"], sh["hit_points"], sh["hit_dice"], sh["hit_die"], ", ".join(speeds)]
+	var scores := []
+	for a in sh["abilities"]:
+		scores.append("[b]%s[/b] %d (%+d)" % [a["name"], a["score"], a["modifier"]])
+	t += "  ".join(scores) + "\n"
+	for k in [["resistances", "Damage Resistances"], ["immunities", "Damage Immunities"], ["vulnerabilities", "Damage Vulnerabilities"]]:
+		if sh[k[0]].size() > 0:
+			t += "[b]%s[/b] %s\n" % [k[1], ", ".join(sh[k[0]])]
+	t += "[b]Senses[/b] %s\n" % ", ".join(sh["senses"])
+	if sh["languages"].size() > 0:
+		t += "[b]Languages[/b] %s\n" % ", ".join(sh["languages"])
+	t += "[b]Proficiency Bonus[/b] %+d\n" % sh["proficiency"]
+	for tr in sh["traits"]:
+		t += "[b][i]%s.[/i][/b] %s\n" % [tr["name"], tr["text"]]
+	t += "[b]Actions[/b]\n"
+	for a in sh["actions"]:
+		t += "  %s\n" % a
+	var c: Dictionary = sh["cost_breakdown"]
+	t += "[color=#999999]Cost: effective HP %.0f × damage per round %.1f → power %.1f (utility +%.0f%%, abilities ×%.2f)[/color]\n" % [
+		c["effective_hp"], c["damage_per_round"], c["power"], c["utility"] * 100.0, c["stats"]]
+	return t
 
 
 func _draw_markers() -> void:
