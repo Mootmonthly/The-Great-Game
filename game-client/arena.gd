@@ -77,6 +77,12 @@ var online_button: Button
 var online_label: Label
 var match_end: Dictionary = {}
 var server_key := ""
+var resuming := false
+var rejoin_button: Button
+## Online, the possessed unit is drawn slightly ahead of the server's
+## position in the direction you steer, so it reacts at once.
+var predicted_offset := Vector3.ZERO
+var prediction_tau := 0.15
 
 var setup_panel: Control
 var roster_label: RichTextLabel
@@ -507,8 +513,17 @@ func _build_battle_ui() -> void:
 		# The server sets the pace online.
 		var give_up := Button.new()
 		give_up.text = "Surrender"
-		give_up.pressed.connect(func(): net.surrender())
+		give_up.pressed.connect(func():
+			if net:
+				net.surrender())
 		row.add_child(give_up)
+		rejoin_button = Button.new()
+		rejoin_button.text = "Rejoin match"
+		rejoin_button.visible = false
+		rejoin_button.pressed.connect(func():
+			rejoin_button.visible = false
+			find_online_match())
+		row.add_child(rejoin_button)
 	else:
 		for sp in [1.0, 2.0, 4.0]:
 			var b := Button.new()
@@ -550,6 +565,10 @@ func _sync() -> void:
 		u.node.visible = u.alive
 		u.node.position = Vector3(d["x"], 0, d["z"])
 		var facing := Vector3(d["fx"], 0, d["fz"])
+		if online and i == possessed:
+			u.node.position += predicted_offset
+			if last_steer.length() > 0.01:
+				facing = Vector3(last_steer.x, 0, last_steer.y)
 		if facing.length() > 0.01:
 			u.node.look_at(u.node.position + facing, Vector3.UP, true)
 		u.label.text = "%s\n%d/%d%s" % [u.name, max(u.hp, 0), u.max_hp, "  ◆" if i == possessed else ""]
@@ -582,6 +601,7 @@ func step(dt: float) -> void:
 	if possessed >= 0:
 		_steer_possessed()
 	if online:
+		_predict(dt)
 		_sync()
 		return
 	tick_budget += dt
@@ -710,17 +730,21 @@ func _poll_net() -> void:
 					cfg.set_value(server_key, "pin", msg["fingerprint"])
 					cfg.save(ONLINE_CFG)
 			"welcome":
+				resuming = msg["resuming"]
 				if msg["secret"] != null:
 					var cfg := _online_cfg()
 					cfg.set_value(server_key, "secret_" + str(msg["account"]), msg["secret"])
 					cfg.save(ONLINE_CFG)
-				online_label.text = "Signed in as %s (rating %.0f). The server is replaying your world to verify your champions…" % [msg["account"], msg["rating"]["rating"]]
-				pending_binds.clear()
-				bound_tokens.clear()
-				for c in my_roster:
-					for k in my_counts.get(c["key"], 0):
-						if net.bind(c["world"], c["kind"], c["id"]):
-							pending_binds.append(c)
+				if resuming:
+					online_label.text = "Rejoining your match…"
+				else:
+					online_label.text = "Signed in as %s (rating %.0f). The server is replaying your world to verify your champions…" % [msg["account"], msg["rating"]["rating"]]
+					pending_binds.clear()
+					bound_tokens.clear()
+					for c in my_roster:
+						for k in my_counts.get(c["key"], 0):
+							if net.bind(c["world"], c["kind"], c["id"]):
+								pending_binds.append(c)
 			"bound":
 				pending_binds.pop_front()
 				bound_tokens.append(int(msg["champion"]["token"]))
@@ -743,7 +767,9 @@ func _poll_net() -> void:
 				online_label.text = "Disconnected: %s" % msg["reason"]
 				online_button.disabled = false
 				if running and not finished:
-					_log("[color=#dd7777]Disconnected: %s[/color]" % msg["reason"])
+					_log("[color=#dd7777]Disconnected: %s. Rejoin within 30 seconds or it counts as surrender.[/color]" % msg["reason"])
+					if rejoin_button:
+						rejoin_button.visible = true
 				net = null
 				return
 
@@ -762,6 +788,15 @@ func _queue_when_bound() -> void:
 ## Builds the scene from the server's rosters; the opponent's champions
 ## arrive with their sheets and appearance.
 func _start_online_battle(msg: Dictionary) -> void:
+	# Rejoining: rebuild the scene from scratch.
+	for u in units:
+		u.node.queue_free()
+	units.clear()
+	if battle_ui:
+		battle_ui.queue_free()
+		battle_ui = null
+	finished = false
+	possessed = -1
 	online = true
 	my_team = int(msg["team"])
 	setup_panel.visible = false
@@ -813,4 +848,17 @@ func _online_cfg() -> ConfigFile:
 func _server_key() -> String:
 	var host := host_edit.text.strip_edges()
 	return host if host.contains(":") else "%s:%d" % [host, DEFAULT_PORT]
+
+
+## Moves the possessed unit's drawn position ahead in the steering
+## direction; the lead fades as the server's position catches up. Display
+## only: the arena itself always follows the server.
+func _predict(dt: float) -> void:
+	if possessed < 0 or state.is_empty():
+		predicted_offset = Vector3.ZERO
+		return
+	var speed: float = state["units"][possessed].get("speed", 1.0)
+	var dir := Vector3(last_steer.x, 0, last_steer.y)
+	predicted_offset += dir * speed * 1.2 * dt
+	predicted_offset *= exp(-dt / prediction_tau)
 

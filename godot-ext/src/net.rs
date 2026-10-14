@@ -208,7 +208,7 @@ impl NetClient {
                             self.log.clear();
                             out.push(serde_json::to_value(&msg).unwrap_or(Value::Null));
                         }
-                        ServerMsg::Tick { .. } | ServerMsg::Hash { .. } => {
+                        ServerMsg::Tick { .. } | ServerMsg::Hash { .. } | ServerMsg::Catchup { .. } => {
                             if let Some(m) = self.current.as_mut() {
                                 m.handle(&msg);
                                 let events = std::mem::take(&mut m.events);

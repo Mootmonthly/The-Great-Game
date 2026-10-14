@@ -150,6 +150,9 @@ pub enum ServerMsg {
         account: String,
         /// A newly issued account secret: keep it to sign in again.
         secret: Option<String>,
+        /// You were in a match that is still running: it resumes now
+        /// (a match start and a catch-up follow).
+        resuming: bool,
         rating: RatingView,
         champions: Vec<ChampionToken>,
     },
@@ -184,6 +187,11 @@ pub enum ServerMsg {
     Tick {
         tick: u64,
         commands: Vec<ArenaCommand>,
+    },
+    /// Rejoining a running match: for each past tick in order, apply its
+    /// commands and step once. Follows the match start.
+    Catchup {
+        ticks: Vec<Vec<ArenaCommand>>,
     },
     /// Server state hash after `tick` steps.
     Hash {

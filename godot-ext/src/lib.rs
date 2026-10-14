@@ -878,6 +878,7 @@ fn arena_state(a: &sim_core::arena::Arena, my_team: u8) -> Value {
                 "hp": u.hp, "max_hp": u.sheet.hit_points, "alive": u.alive, "team": u.team,
                 "possessed": u.possessed, "breath_ready": u.breath_ready, "has_breath": u.sheet.breath.is_some(),
                 "radius": u.radius.to_f64(), "name": u.sheet.name, "size": u.sheet.size.name(),
+                "speed": u.speed.to_f64(),
             })
         })
         .collect();

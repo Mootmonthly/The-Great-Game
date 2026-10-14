@@ -161,6 +161,47 @@ func _initialize() -> void:
 		arena.close()
 		await process_frame
 		OS.kill(pid)
+
+		# Rejoining: a real-time server; drop the connection mid-match and
+		# come back. The arena is rebuilt from the server's history.
+		var pid2 := OS.create_process(server_bin, ["serve", "--port", "7980", "--data", data_dir + "-paced", "--speed", "1"])
+		await create_timer(1.5).timeout
+		DirAccess.remove_absolute(ProjectSettings.globalize_path("user://online.cfg"))
+		main.open_arena()
+		arena = main.arena
+		arena.my_counts = arena._auto_pick(arena.my_roster)
+		arena.host_edit.text = "127.0.0.1:7980"
+		arena.name_edit.text = "smoke_c"
+		arena.find_online_match()
+		var foe2 = ClassDB.instantiate("NetClient")
+		foe2.connect_to("127.0.0.1", 7980, "smoke_d", "", "")
+		started = Time.get_ticks_msec()
+		while Time.get_ticks_msec() - started < 60000 and not arena.online:
+			for m in JSON.parse_string(foe2.poll()):
+				if m["type"] == "welcome":
+					foe2.bind(sim, "species", foe_species)
+				elif m["type"] == "bound":
+					foe2.queue("ranked", arena.cap, PackedInt64Array([int(m["champion"]["token"])]))
+			await process_frame
+		await create_timer(1.0).timeout
+		arena.net.close_connection()
+		await create_timer(0.5).timeout
+		arena.find_online_match()
+		started = Time.get_ticks_msec()
+		while Time.get_ticks_msec() - started < 20000 and not (arena.resuming and arena.units.size() >= 2 and arena.state.get("time", 0.0) > 1.0):
+			foe2.poll()
+			await process_frame
+		check(arena.resuming and arena.units.size() >= 2, "online: a dropped player rejoins the running match")
+		foe2.surrender()
+		started = Time.get_ticks_msec()
+		while Time.get_ticks_msec() - started < 20000 and arena.match_end.is_empty():
+			foe2.poll()
+			await process_frame
+		check(not arena.match_end.is_empty() and not arena.match_end.get("desynced", true), "online: the rejoined arena stays in step and sees the result")
+		foe2.close_connection()
+		arena.close()
+		await process_frame
+		OS.kill(pid2)
 	else:
 		print("skipped online arena check: build arena-server first")
 

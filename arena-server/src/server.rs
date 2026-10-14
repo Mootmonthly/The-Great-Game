@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Most units on one side (§6.1).
 pub const MAX_UNITS: usize = 500;
@@ -45,7 +45,13 @@ pub struct Config {
     /// PEM certificate chain and key. Without them the server makes a
     /// self-signed certificate (kept in `data_dir`).
     pub tls_pem: Option<(PathBuf, PathBuf)>,
+    /// How long a disconnected player may take to rejoin a running match
+    /// before it counts as surrender.
+    pub reconnect_grace: Duration,
 }
+
+/// Default time to rejoin a match after losing the connection.
+pub const RECONNECT_GRACE: Duration = Duration::from_secs(30);
 
 impl Config {
     /// A local server with server accounts and no Steam.
@@ -57,6 +63,7 @@ impl Config {
             allow_accounts: true,
             steam: None,
             tls_pem: None,
+            reconnect_grace: RECONNECT_GRACE,
         }
     }
 }
@@ -91,10 +98,58 @@ struct Waiting {
     tokens: Vec<u64>,
 }
 
-#[derive(Default)]
 struct MatchCtl {
     inbox: Mutex<Vec<(u8, ArenaCommand)>>,
     surrender: [AtomicBool; 2],
+    feed: Mutex<Feed>,
+}
+
+/// The live feed of a match. Ticks are recorded and sent under this lock,
+/// so a player who rejoins gets the full history and then every new tick,
+/// with no gap and no repeat.
+struct Feed {
+    senders: [Option<Sender<ServerMsg>>; 2],
+    starts: [Option<ServerMsg>; 2],
+    history: Vec<Vec<ArenaCommand>>,
+    away_since: [Option<Instant>; 2],
+}
+
+impl MatchCtl {
+    fn send_all(&self, msg: ServerMsg) {
+        let mut feed = self.feed.lock().unwrap();
+        if let ServerMsg::Tick { commands, .. } = &msg {
+            feed.history.push(commands.clone());
+        }
+        for tx in feed.senders.iter().flatten() {
+            let _ = tx.send(msg.clone());
+        }
+    }
+
+    /// The player on `team` lost their connection: the AI takes over their
+    /// units while the grace period runs.
+    fn left(&self, team: u8) {
+        let mut feed = self.feed.lock().unwrap();
+        feed.senders[team as usize] = None;
+        feed.away_since[team as usize] = Some(Instant::now());
+        self.inbox
+            .lock()
+            .unwrap()
+            .push((team, ArenaCommand::Possess { team, unit: None }));
+    }
+
+    /// The player on `team` is back: replay the match so far to them, then
+    /// resume the live feed.
+    fn rejoin(&self, team: u8, tx: &Sender<ServerMsg>) {
+        let mut feed = self.feed.lock().unwrap();
+        if let Some(start) = feed.starts[team as usize].clone() {
+            let _ = tx.send(start);
+        }
+        let _ = tx.send(ServerMsg::Catchup {
+            ticks: feed.history.clone(),
+        });
+        feed.senders[team as usize] = Some(tx.clone());
+        feed.away_since[team as usize] = None;
+    }
 }
 
 /// Bounds how many replays run at once, so verification cannot starve
@@ -284,18 +339,23 @@ fn connection(shared: &Arc<Shared>, stream: TcpStream) -> io::Result<()> {
         }
         let account = account.clone();
         state.online.insert(name.clone(), tx.clone());
+        let resuming = state.playing.contains_key(&name);
         if issued.is_some() {
             shared.save(&state);
         }
         let _ = tx.send(ServerMsg::Welcome {
             account: name.clone(),
             secret: issued,
+            resuming,
             rating: RatingView {
                 rating: account.rating.rating,
                 deviation: account.rating.deviation,
             },
             champions: account.champions.values().map(|c| c.token.clone()).collect(),
         });
+        if let Some((ctl, team)) = state.playing.get(&name) {
+            ctl.rejoin(*team, &tx);
+        }
     }
     let writer_thread = thread::spawn(move || {
         for msg in rx {
@@ -308,13 +368,14 @@ fn connection(shared: &Arc<Shared>, stream: TcpStream) -> io::Result<()> {
 
     let result = serve_client(shared, &name, &tx, &mut reader);
 
-    // Signed out: leave the queue; walking out of a match is surrender.
+    // Signed out: leave the queue. A match keeps running; if the player
+    // does not rejoin within the grace period, it counts as surrender.
     {
         let mut state = shared.state.lock().unwrap();
         state.online.remove(&name);
         leave_queue(&mut state, &name);
         if let Some((ctl, team)) = state.playing.get(&name) {
-            ctl.surrender[*team as usize].store(true, Ordering::SeqCst);
+            ctl.left(*team);
         }
     }
     drop(tx);
@@ -529,7 +590,6 @@ struct MatchInfo {
     players: [String; 2],
     tokens: [Vec<u64>; 2],
     rosters: [Vec<sim_core::sheet::CharacterSheet>; 2],
-    senders: [Option<Sender<ServerMsg>>; 2],
     ctl: Arc<MatchCtl>,
 }
 
@@ -553,36 +613,44 @@ fn start_match(shared: &Arc<Shared>, state: &mut State, a: Waiting, b: Waiting) 
             .collect()
     };
     let looks = [look(state, &a), look(state, &b)];
-    let ctl = Arc::new(MatchCtl::default());
-    state.playing.insert(a.account.clone(), (ctl.clone(), 0));
-    state.playing.insert(b.account.clone(), (ctl.clone(), 1));
     let players = [a.account, b.account];
     let tokens = [a.tokens, b.tokens];
-    for team in 0..2u8 {
-        send(
-            state,
-            &players[team as usize],
-            ServerMsg::MatchStart {
-                match_id: id,
-                seed,
-                mode: a.mode,
-                cap: a.cap,
-                team,
-                players: players.clone(),
-                rosters: rosters.clone(),
-                looks: looks.clone(),
-                tokens: tokens.clone(),
-            },
-        );
+    let starts = [0u8, 1].map(|team| ServerMsg::MatchStart {
+        match_id: id,
+        seed,
+        mode: a.mode,
+        cap: a.cap,
+        team,
+        players: players.clone(),
+        rosters: rosters.clone(),
+        looks: looks.clone(),
+        tokens: tokens.clone(),
+    });
+    let senders = [
+        state.online.get(&players[0]).cloned(),
+        state.online.get(&players[1]).cloned(),
+    ];
+    for (tx, start) in senders.iter().zip(&starts) {
+        if let Some(tx) = tx {
+            let _ = tx.send(start.clone());
+        }
     }
+    let ctl = Arc::new(MatchCtl {
+        inbox: Mutex::new(Vec::new()),
+        surrender: Default::default(),
+        feed: Mutex::new(Feed {
+            senders,
+            starts: starts.map(Some),
+            history: Vec::new(),
+            away_since: [None, None],
+        }),
+    });
+    state.playing.insert(players[0].clone(), (ctl.clone(), 0));
+    state.playing.insert(players[1].clone(), (ctl.clone(), 1));
     let info = MatchInfo {
         id,
         seed,
         mode: a.mode,
-        senders: [
-            state.online.get(&players[0]).cloned(),
-            state.online.get(&players[1]).cloned(),
-        ],
         players,
         tokens,
         rosters,
@@ -609,11 +677,8 @@ fn allowed(arena: &Arena, team: u8, c: &mut ArenaCommand) -> bool {
 
 fn run_match(shared: &Arc<Shared>, info: MatchInfo) {
     let mut arena = Arena::new(info.rosters[0].clone(), info.rosters[1].clone(), info.seed);
-    let broadcast = |msg: ServerMsg| {
-        for tx in info.senders.iter().flatten() {
-            let _ = tx.send(msg.clone());
-        }
-    };
+    let broadcast = |msg: ServerMsg| info.ctl.send_all(msg);
+    let grace = shared.config.reconnect_grace;
     let mut surrendered = None;
     loop {
         if !shared.config.tick_interval.is_zero() {
@@ -621,6 +686,15 @@ fn run_match(shared: &Arc<Shared>, info: MatchInfo) {
         }
         // Surrender is checked before commands, so nothing changes in the
         // arena that the clients do not see.
+        // Gone too long: that is surrender.
+        {
+            let feed = info.ctl.feed.lock().unwrap();
+            for t in 0..2 {
+                if feed.away_since[t].is_some_and(|since| since.elapsed() > grace) {
+                    info.ctl.surrender[t].store(true, Ordering::SeqCst);
+                }
+            }
+        }
         if let Some(t) = (0..2u8).find(|&t| info.ctl.surrender[t as usize].load(Ordering::SeqCst)) {
             surrendered = Some(t);
             arena.surrender(t);
@@ -724,7 +798,8 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
         "commands": digest(&serde_json::to_vec(&arena.command_log).unwrap_or_default()),
     });
     let signature = shared.signer.sign(record.to_string().as_bytes());
-    for (tx, rating) in info.senders.iter().zip(ratings) {
+    let senders = info.ctl.feed.lock().unwrap().senders.clone();
+    for (tx, rating) in senders.iter().zip(ratings) {
         if let Some(tx) = tx {
             let _ = tx.send(ServerMsg::MatchEnd {
                 match_id: info.id,

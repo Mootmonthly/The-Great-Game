@@ -441,7 +441,9 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
   - Each tick the server applies the commands, steps the authoritative arena and broadcasts that tick's commands. Clients step an identical arena.
   - Every 50 ticks the server sends a state hash, and clients flag any desync.
   - The match result and the fallen are decided by the server and signed.
-- **Surrender and disconnects:** surrender ends the match at once; the other side wins, the fallen stay fallen and survivors go home. **Decided:** disconnecting during a match counts as surrender.
+- **Surrender and disconnects:** surrender ends the match at once; the other side wins, the fallen stay fallen and survivors go home. **Decided:** disconnecting during a match counts as surrender, unless the player rejoins within the grace period (30 s).
+  - While a player is away, the arena AI fights for their units.
+  - On rejoining, the server sends the match start and every past tick's commands; the client replays them and carries on in lockstep.
 - **Test tools:** `arena-server bot` is a headless player that evolves a world, binds champions, queues and lets the arena AI fight.
 - **Accounts:**
   - The first sign-in with a new name claims it, and the server issues a secret. The client keeps the secret and must present it to sign in again.
@@ -449,7 +451,8 @@ At a $10–20 box price, Steam's cut leaves about $7–14 per copy and there is 
 - **Encryption:** every connection is TLS 1.3.
   - A hosted server can use a real certificate (for example from Let's Encrypt). Otherwise it creates a self-signed one on first run and prints its fingerprint.
   - Clients accept a certificate a public authority vouches for. Otherwise they pin the fingerprint on first contact and refuse a different certificate later, like SSH.
-- **Not yet:** the Steamworks SDK in the game client (needed to get Steam tickets), reconnecting to a running match, client-side prediction of the possessed unit (commands take one round trip), cloud hosting, and the Essence economy.
+- **Responsiveness:** commands still take one round trip to the server. The possessed unit is drawn slightly ahead in the direction you steer, so it reacts at once; the lead fades as the server's position catches up. This is display only.
+- **Not yet:** the Steamworks SDK in the game client (needed to get Steam tickets), cloud hosting, and the Essence economy.
 
 ### 6.4 Balance Risk
 
@@ -543,7 +546,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Sapience on Earth-like worlds | Almost always, given time; "never sapient" worlds come from unusual player choices (§4.4) |
 | — | Cost formula | Power = √(effective HP × damage per round), cost linear in power; commoner 1, ancient dragon about 310 (§5.3) |
 | — | Natural/Godhand and star types | Built as in §4.6: Natural is the default; Godhand strain thins the air and heats the world; eight star types with light quality, radiation and flares (numbers open to tuning) |
-| — | Online server rules | Species champions are rank and file and can be bound again; named individuals die forever via a ledger of the dead; disconnecting mid-match counts as surrender; an unranked practice queue with no permadeath (§6.2–6.3) |
+| — | Online server rules | Species champions are rank and file and can be bound again; named individuals die forever via a ledger of the dead; disconnecting mid-match counts as surrender unless the player rejoins within 30 s (owner asked for reconnecting); an unranked practice queue with no permadeath (§6.2–6.3) |
 | — | Equipment | Gear attaches by body part, not body type; looted gear is refitted to other body plans at a cost; built in the content phase (§5.4) |
 | — | The Veil | Built as in §4.4a: a Veil law slider (0–100% open), reality strain and many moons thin it; beings from beyond feed on native minds and fade when the Veil is sealed (numbers open to tuning) |
 | — | Extradimensional beings | Included as a possibility, arriving through a thin Veil; extreme physics alone can let them in (§4.4a) |

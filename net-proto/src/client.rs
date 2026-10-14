@@ -230,6 +230,16 @@ impl LockstepMatch {
                 self.arena.step();
                 self.events.extend(self.arena.take_events());
             }
+            ServerMsg::Catchup { ticks } => {
+                for commands in ticks {
+                    for c in commands {
+                        self.arena.command(*c);
+                    }
+                    self.arena.step();
+                }
+                // What happened while away is not replayed in the log.
+                self.arena.take_events();
+            }
             ServerMsg::Hash { tick, hash } => {
                 if *tick == self.arena.tick()
                     && *hash != format!("{:016x}", self.arena.state_hash())
