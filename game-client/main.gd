@@ -7,6 +7,7 @@ extends Control
 const SAVE_PATH := "user://world_log.json"
 const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability"]
 const TOOLS := ["Inspect", "Add substance", "Remove substance", "Heat", "Cool"]
+const TreeView := preload("res://tree_view.gd")
 
 var sim: RefCounted
 var substances: Array = []
@@ -18,13 +19,22 @@ var paint_cooldown := 0.0
 var painting := false
 var refresh_timer := 0.0
 var selected_region := Vector2i(-1, -1)
+var selected_species := -1
+var selected_individual := -1
+var individual_markers: Array = []
 
 var map_rect: TextureRect
 var map_texture: ImageTexture
 var hover_label: Label
 var status_label: RichTextLabel
 var region_label: RichTextLabel
-var species_label: RichTextLabel
+var species_list: RichTextLabel
+var species_detail: RichTextLabel
+var tree_view: Control
+var individuals_list: RichTextLabel
+var individual_detail: RichTextLabel
+var tabs: TabContainer
+var show_individuals: CheckBox
 var seed_box: SpinBox
 var preset_select: OptionButton
 var play_button: Button
@@ -70,17 +80,56 @@ func _build_ui() -> void:
 
 	map_rect = TextureRect.new()
 	map_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	map_rect.size_flags_stretch_ratio = 1.4
 	map_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	map_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	map_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	map_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	map_rect.mouse_filter = Control.MOUSE_FILTER_STOP
 	map_rect.gui_input.connect(_on_map_input)
+	map_rect.draw.connect(_draw_markers)
 	left.add_child(map_rect)
 
 	hover_label = Label.new()
 	hover_label.text = "Hover over the map to see a region. Click to use the selected tool."
 	left.add_child(hover_label)
+
+	tabs = TabContainer.new()
+	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left.add_child(tabs)
+
+	var species_tab := HSplitContainer.new()
+	species_tab.name = "Species"
+	tabs.add_child(species_tab)
+	species_list = _scroll_rich()
+	species_list.meta_clicked.connect(_on_meta)
+	species_tab.add_child(species_list)
+	species_detail = _scroll_rich()
+	species_detail.meta_clicked.connect(_on_meta)
+	species_detail.text = "Click a species to see its body, temperament and ancestry."
+	species_tab.add_child(species_detail)
+
+	var tree_scroll := ScrollContainer.new()
+	tree_scroll.name = "Family tree"
+	tree_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	tabs.add_child(tree_scroll)
+	tree_view = TreeView.new()
+	tree_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tree_view.species_selected.connect(_select_species)
+	tree_scroll.add_child(tree_view)
+
+	var people_tab := HSplitContainer.new()
+	people_tab.name = "Individuals"
+	tabs.add_child(people_tab)
+	individuals_list = _scroll_rich()
+	individuals_list.meta_clicked.connect(_on_meta)
+	people_tab.add_child(individuals_list)
+	individual_detail = _scroll_rich()
+	individual_detail.meta_clicked.connect(_on_meta)
+	individual_detail.text = "Named individuals appear once a species evolves a nervous system. Click one to read its story."
+	people_tab.add_child(individual_detail)
+	# Connected last: adding the first tab already emits tab_changed.
+	tabs.tab_changed.connect(func(_t): _refresh_tabs())
 
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(420, 0)
@@ -92,7 +141,7 @@ func _build_ui() -> void:
 	scroll.add_child(panel)
 
 	var title := Label.new()
-	title.text = "The Great Game — World Viewer (Phase 0)"
+	title.text = "The Great Game — World Viewer (Phase 0.5)"
 	title.add_theme_font_size_override("font_size", 18)
 	panel.add_child(title)
 
@@ -169,6 +218,11 @@ func _build_ui() -> void:
 		overlay_select.add_item("Substance: %s (%s)" % [s["name"], s["formula"]])
 	overlay_select.item_selected.connect(func(_i): _refresh_map())
 	panel.add_child(overlay_select)
+	show_individuals = CheckBox.new()
+	show_individuals.text = "Show named individuals on the map"
+	show_individuals.button_pressed = true
+	show_individuals.toggled.connect(func(_b): map_rect.queue_redraw())
+	panel.add_child(show_individuals)
 
 	# Tools
 	_section(panel, "God tools")
@@ -210,9 +264,6 @@ func _build_ui() -> void:
 	region_label.text = "Use the Inspect tool and click a region."
 	panel.add_child(region_label)
 
-	_section(panel, "Top species")
-	species_label = _rich(320)
-	panel.add_child(species_label)
 
 
 func _section(parent: Control, text: String) -> void:
@@ -228,6 +279,21 @@ func _label(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
 	return l
+
+
+func _scroll_rich() -> RichTextLabel:
+	var r := RichTextLabel.new()
+	r.bbcode_enabled = true
+	r.scroll_active = true
+	r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	r.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	r.custom_minimum_size = Vector2(200, 120)
+	return r
+
+
+func _bar(v: float) -> String:
+	var n := clampi(roundi(v * 10.0), 0, 10)
+	return "▮".repeat(n) + "▯".repeat(10 - n)
 
 
 func _rich(min_height: int) -> RichTextLabel:
@@ -291,6 +357,8 @@ func _new_world() -> void:
 	var preset: String = preset_select.get_item_text(preset_select.selected)
 	sim.new_world(int(seed_box.value), preset)
 	selected_region = Vector2i(-1, -1)
+	selected_species = -1
+	selected_individual = -1
 	region_label.text = "Use the Inspect tool and click a region."
 	_refresh_all()
 
@@ -323,6 +391,7 @@ func _process(delta: float) -> void:
 			if refresh_timer <= 0.0:
 				refresh_timer = 0.5
 				_refresh_text()
+				_refresh_tabs()
 	if painting:
 		paint_cooldown -= delta
 		if paint_cooldown <= 0.0:
@@ -410,6 +479,7 @@ func _apply_tool(cell: Vector2i) -> void:
 func _refresh_all() -> void:
 	_refresh_map()
 	_refresh_text()
+	_refresh_tabs()
 
 
 func _refresh_map() -> void:
@@ -420,6 +490,7 @@ func _refresh_map() -> void:
 		map_rect.texture = map_texture
 	else:
 		map_texture.update(img)
+	map_rect.queue_redraw()
 
 
 func _refresh_text() -> void:
@@ -428,17 +499,10 @@ func _refresh_text() -> void:
 	var atmo := []
 	for a in st["atmosphere"]:
 		atmo.append("%s %.2f" % [a["name"], a["column"]])
-	status_label.text = "[b]Year %d[/b]  (seed %d)\nMean temperature: %.1f K (%.1f °C)\nPressure: %.2f bar   Starlight: %.2f× Earth\nAtmosphere: %s\nSpecies alive: %d   (ever: %d)\n[color=#888888]State hash: %s[/color]" % [
+	status_label.text = "[b]Year %d[/b]  (seed %d)\nMean temperature: %.1f K (%.1f °C)\nPressure: %.2f bar   Starlight: %.2f× Earth\nAtmosphere: %s\nSpecies alive: %d   (ever: %d)   Named individuals: %d\n[color=#888888]State hash: %s[/color]" % [
 		st["year"], st["seed"], st["mean_temperature"], st["mean_temperature"] - 273.15,
 		st["pressure"], st["stellar_flux"], ", ".join(atmo) if atmo.size() > 0 else "none",
-		st["living_species"], st["species_ever"], st["hash"]]
-
-	var species: Array = JSON.parse_string(sim.species_json(12))
-	var lines := []
-	for s in species:
-		lines.append("[color=#%s]■[/color] [b]%s[/b] — %s\n    biomass %.0f, %d regions, size %.2f, likes %.0f K" % [
-			s["color"], s["name"], s["description"], s["biomass"], s["regions"], s["size"], s["temp_opt"]])
-	species_label.text = "\n".join(lines) if lines.size() > 0 else "No life yet. Life needs a backbone element, a liquid medium, and an energy source."
+		st["living_species"], st["species_ever"], st["living_individuals"], st["hash"]]
 
 	if selected_region.x >= 0:
 		_refresh_region()
@@ -463,3 +527,127 @@ func _refresh_region() -> void:
 		var p: Dictionary = pops[i]
 		text += "  • %s — %s (biomass %.1f)\n" % [p["name"], p["description"], p["biomass"]]
 	region_label.text = text
+
+
+# --- Species, family tree and individuals ----------------------------------
+
+func _on_meta(meta) -> void:
+	var m := str(meta)
+	if m.begins_with("s:"):
+		_select_species(int(m.substr(2)))
+		tabs.current_tab = 0
+	elif m.begins_with("i:"):
+		selected_individual = int(m.substr(2))
+		tabs.current_tab = 2
+		_refresh_tabs()
+
+
+func _select_species(id: int) -> void:
+	selected_species = id
+	_refresh_species_detail()
+
+
+func _refresh_tabs() -> void:
+	if sim == null:
+		return
+	match tabs.current_tab:
+		0:
+			_refresh_species_list()
+			_refresh_species_detail()
+		1:
+			tree_view.selected = selected_species
+			tree_view.set_data(JSON.parse_string(sim.tree_json(40)))
+		2:
+			_refresh_individuals()
+	individual_markers = JSON.parse_string(sim.individuals_json(1000))
+	map_rect.queue_redraw()
+
+
+func _refresh_species_list() -> void:
+	var species: Array = JSON.parse_string(sim.species_json(30))
+	var lines := []
+	for s in species:
+		lines.append("[url=s:%d][color=#%s]■[/color] [b]%s[/b][/url] — %s\n    %s · %s · biomass %.0f" % [
+			s["id"], s["color"], s["name"], s["description"], s["body"], s["temperament"], s["biomass"]])
+	species_list.text = "\n".join(lines) if lines.size() > 0 else "No life yet. Life needs a backbone element, a liquid medium, and an energy source."
+
+
+func _refresh_species_detail() -> void:
+	if selected_species < 0:
+		return
+	var d = JSON.parse_string(sim.species_detail_json(selected_species))
+	if d == null:
+		species_detail.text = "That species is no longer on record."
+		return
+	var status := "alive, %d regions, biomass %.0f" % [d["regions"], d["biomass"]] if d["alive"] else "[color=#cc6666]extinct[/color]"
+	var t: Dictionary = d["traits"]
+	var tm: Dictionary = d["temperament_values"]
+	var text := "[color=#%s]■[/color] [b]%s[/b] — %s\n%s · appeared in year %d\n" % [d["color"], d["name"], d["description"], status, d["born_year"]]
+	text += "Life triad: %s backbone, %s medium, %s energy\n" % [d["profile"]["backbone"], d["profile"]["medium"], d["profile"]["energy"]]
+	text += "Size %.2f · prefers %.0f K (±%.0f)\n\n" % [d["size"], d["temp_opt"], d["temp_tol"]]
+	text += "[b]Milestones:[/b] %s\n" % (", ".join(d["milestones"]) if d["milestones"].size() > 0 else "none (single-celled)")
+	text += "[b]Body:[/b] %s\n\n" % d["body"]
+	text += "[b]Traits[/b]\n"
+	for k in ["armor", "speed", "intelligence", "offense", "perception", "photosynthesis"]:
+		text += "  %-14s %s\n" % [k.capitalize(), _bar(t[k])]
+	text += "\n[b]Temperament[/b] (measured from its brain): %s\n" % d["temperament"]
+	for k in ["aggression", "fear", "curiosity", "sociability"]:
+		text += "  %-14s %s\n" % [k.capitalize(), _bar(tm[k])]
+	text += "\n[b]Ancestry[/b] (%d descendant species, %d named individuals)\n" % [d["children"], d["individuals"]]
+	if d["ancestors"].size() == 0:
+		text += "  Arose spontaneously from non-living chemistry.\n"
+	for a in d["ancestors"]:
+		text += "  ↑ [url=s:%d]%s[/url] %s%s\n" % [a["id"], a["name"], a["description"], "" if a["alive"] else " (extinct)"]
+	species_detail.text = text
+
+
+func _refresh_individuals() -> void:
+	var people: Array = JSON.parse_string(sim.individuals_json(40))
+	var lines := []
+	for p in people:
+		lines.append("[url=i:%d][color=#%s]●[/color] [b]%s[/b][/url] (%s), age %d\n    CHA %d · renown %.1f · %d friends, %d enemies · %s · now: %s" % [
+			p["id"], p["color"] if p["color"] != null else "ffffff", p["title"], p["species"], p["age"],
+			p["charisma"], p["renown"], p["friends"], p["enemies"], p["personality"], p["last_action"] if p["last_action"] != null else "-"])
+	individuals_list.text = "\n".join(lines) if lines.size() > 0 else "No named individuals yet. They appear once a species evolves a nervous system."
+	if selected_individual < 0:
+		return
+	var d = JSON.parse_string(sim.individual_json(selected_individual))
+	if d == null:
+		individual_detail.text = "This individual has been forgotten."
+		return
+	var tm: Dictionary = d["temperament_values"]
+	var text := "[b]%s[/b], a [url=s:%d]%s[/url]\n%s\n" % [d["title"], d["species_id"], d["species"], d["species_description"]]
+	if d["alive"]:
+		text += "Age %d of about %d · health %s · at region (%d, %d)\n" % [d["age"], d["lifespan_years"], _bar(d["health"]), d["x"], d["y"]]
+	else:
+		text += "[color=#cc6666]Died at age %d: %s[/color]\n" % [d["age"], d["cause_of_death"]]
+	text += "Charisma preview: [b]%d[/b] · renown %.1f\n\n" % [d["charisma"], d["renown"]]
+	text += "[b]Personality[/b] (its own brain): %s\n" % d["personality"]
+	for k in ["aggression", "fear", "curiosity", "sociability"]:
+		text += "  %-14s %s\n" % [k.capitalize(), _bar(tm[k])]
+	text += "\n[b]Relationships[/b]\n"
+	if d["relations"].size() == 0:
+		text += "  none yet\n"
+	for r in d["relations"]:
+		var a: float = r["affinity"]
+		var mark := "[color=#77dd77]♥[/color]" if a >= 0.5 else ("[color=#dd7777]✖[/color]" if a <= -0.5 else "·")
+		text += "  %s [url=i:%d]%s[/url] %+.2f%s%s\n" % [mark, r["id"], r["name"], a, " (kin)" if r["kin"] else "", "" if r["alive"] else " †"]
+	text += "\n[b]Life story[/b]\n"
+	for m in d["memories"]:
+		text += "  Year %d: %s\n" % [m["year"], m["text"]]
+	individual_detail.text = text
+
+
+func _draw_markers() -> void:
+	if sim == null or not show_individuals.button_pressed:
+		return
+	var g := _map_geometry()
+	var s: float = g["scale"]
+	for p in individual_markers:
+		var centre: Vector2 = g["offset"] + (Vector2(p["x"], p["y"]) + Vector2(0.5, 0.5)) * s
+		var col := Color("#" + p["color"]) if p["color"] != null else Color.WHITE
+		var radius: float = max(2.0, s * 0.22)
+		map_rect.draw_circle(centre, radius + 1.0, Color.BLACK)
+		map_rect.draw_circle(centre, radius, col.lightened(0.3))
+		if int(p["id"]) == selected_individual:
+			map_rect.draw_arc(centre, radius + 4.0, 0, TAU, 16, Color.WHITE, 2.0)

@@ -1,9 +1,9 @@
 # The-Great-Game
 A game in which players cultivate their own world, and then choose champions from its denizens to battle other players.
 
-## Phase 0 prototype: the petri dish
+## Prototype (Phase 0.5): the petri dish, bodies and minds
 
-A first, 2D prototype of the world simulation. Seed a planet with substances, tune its star, gravity and temperature, and watch life emerge and evolve from whatever chemistry the world offers: carbon-water phototrophs on an Earth-like world, carbon-ammonia chemotrophs on a frozen moon, sulfur life in molten sulfur pools, or silicon life swimming in magma.
+A 2D prototype of the world simulation. Seed a planet with substances, tune its star, gravity and temperature, and watch life emerge and evolve from whatever chemistry the world offers: carbon-water life on an Earth-like world, carbon-ammonia life on a frozen moon, sulfur life in molten sulfur pools, or silicon life swimming in magma. Lineages grow from single cells into creatures with eyes, shells, limbs, wings and chemical glands, each with a temperament from its own small neural network. Once nervous systems evolve, named individuals appear, make friends and enemies, and build up life stories.
 
 ### Repository layout
 
@@ -22,6 +22,9 @@ A first, 2D prototype of the world simulation. Seed a planet with substances, tu
 - **Substance cycle:** each substance is solid, liquid or gas depending on local temperature and pressure. Gases rise into a shared atmosphere and fall back as rain or frost in cold regions. Liquids flow downhill into seas. Light gases escape to space from hot, low-gravity worlds.
 - **Life triad:** life can start in a region that has a backbone element stable at the local temperature, a liquid medium, and an energy source (starlight, geothermal heat, or a fuel/oxidizer pair).
 - **Evolution:** species grow, compete with others of similar size, hunt much smaller species, migrate, and split into new species adapted to their region.
+- **Bodies:** each species has a body-part genome (segments, shells, fins, fronds, eyes, jaws, brains, tentacles, limbs, claws, wings, glands). Evolutionary milestones (multicellularity, nervous system, skeleton, glands, limbs, flight, sapience) unlock parts, and some depend on the world: flight needs low enough gravity and a thick enough atmosphere.
+- **Brains:** every species carries a small neural network. Testing it in standard situations gives the species a temperament (aggression, fear, curiosity, sociability), which affects how it hunts, flees, cooperates and spreads.
+- **Named individuals:** up to 300 beings with their own brains, personalities, relationships and memories. They travel, flee, fight and befriend each other; friends mourn and hold grudges. Each shows a Charisma preview for the future character sheet.
 - **Determinism:** the simulation uses only integer (fixed-point) maths and a seeded random generator. A world is fully described by its seed plus the list of player actions. Saving a world saves that list, and loading replays it. This is the basis of server-side anti-cheat.
 
 ### Run the world viewer (Windows)
@@ -34,10 +37,6 @@ A first, 2D prototype of the world simulation. Seed a planet with substances, tu
    ```
    git clone https://github.com/Mootmonthly/The-Great-Game.git
    cd The-Great-Game
-   ```
-   Until the prototype is merged into `main`, also run:
-   ```
-   git checkout claude/phase0-sim-core
    ```
 6. **Build the simulation:**
    ```
@@ -55,7 +54,10 @@ If the viewer says "The simulation extension is not loaded", step 6 did not fini
 
 - **World:** pick a seed and a preset, then click **New world**. `blank` is an empty petri dish with bare rock and no atmosphere.
 - **Time:** **Play** runs the simulation; **Speed** sets seasons per second. **+1 year** and **+10 years** step forward.
-- **View:** switch the map between surface, temperature, life (each colour is a species), viability (where life could exist), and the amount of any single substance.
+- **View:** switch the map between surface, temperature, life (each colour is a species), viability (where life could exist), and the amount of any single substance. Dots on the map are named individuals.
+- **Species tab:** the largest living species. Click one to see its body parts, milestones, traits, temperament and ancestry.
+- **Family tree tab:** one line per species from its first year to extinction (or now), joined to its parent. Click a line to select it.
+- **Individuals tab:** named individuals, most renowned first. Click one for its personality, relationships and life story.
 - **God tools:** pick a tool, then click or drag on the map. **Add substance** and **Remove substance** use the selected substance, amount and radius. **Heat** and **Cool** change local temperature by 10 K per unit of amount. **Inspect** shows a region's chemistry, its best life triad, and the species living there.
 - **Planet:** drag the sliders to change star distance, star luminosity, gravity and global temperature. The change applies when you release the slider.
 - **Save / Load:** saves the world's action log to your Godot user folder and replays it on load. The state hash under the status panel should be identical after loading.
@@ -64,6 +66,7 @@ Things to try:
 - Start `blank`, add Water, Carbon and Nitrogen everywhere with a large radius, and watch where life starts.
 - Move an Earth-like world to 0.5 AU or 3 AU and watch the oceans boil away or freeze.
 - Lower gravity on an Earth-like world and watch large creatures appear.
+- Run the `frozen_moon` preset for a few hundred years: nervous systems evolve quickly there, so named individuals show up early.
 
 ### Command-line tools
 

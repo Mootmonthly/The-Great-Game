@@ -6,6 +6,7 @@
 use crate::action::{Action, ActionLog};
 use crate::fixed::Fx;
 use crate::hash::StateHasher;
+use crate::individual::Individual;
 use crate::life::{RegionLife, Species};
 use crate::rng::Rng;
 use crate::substance::{default_substances, Phase, Substance};
@@ -75,6 +76,9 @@ pub struct World {
     pub mean_temperature: Fx,
     pub species: Vec<Species>,
     pub(crate) next_species_id: u32,
+    /// Named individuals, living and recently dead, in id order.
+    pub individuals: Vec<Individual>,
+    pub(crate) next_individual_id: u32,
     pub(crate) life: Vec<RegionLife>,
     pub(crate) rng: Rng,
     log: ActionLog,
@@ -129,6 +133,8 @@ impl World {
             mean_temperature: Fx::ZERO,
             species: Vec::new(),
             next_species_id: 1,
+            individuals: Vec::new(),
+            next_individual_id: 1,
             life: Vec::new(),
             rng,
             log: ActionLog::new(seed),
@@ -231,6 +237,7 @@ impl World {
         self.update_climate();
         self.update_life_scores();
         self.update_life();
+        self.update_individuals();
         self.tick += 1;
     }
 
@@ -420,6 +427,9 @@ impl World {
         }
         for s in &self.species {
             s.hash_into(&mut h);
+        }
+        for x in &self.individuals {
+            x.hash_into(&mut h);
         }
         h.finish()
     }

@@ -59,6 +59,31 @@ func _initialize() -> void:
 	var hash_after: String = JSON.parse_string(sim.status_json())["hash"]
 	check(hash_before == hash_after, "save and load replays to the same state hash")
 
+	# Species tab and detail.
+	main.tabs.current_tab = 0
+	main._refresh_tabs()
+	var top: Array = JSON.parse_string(sim.species_json(1))
+	main._on_meta("s:%d" % int(top[0]["id"]))
+	check(main.species_detail.text.contains("Temperament"), "species detail shows temperament")
+
+	# Family tree.
+	main.tabs.current_tab = 1
+	main._refresh_tabs()
+	check(main.tree_view.nodes.size() > 0, "family tree has species")
+
+	# Named individuals appear once nervous systems evolve (fast on the frozen moon).
+	main.preset_select.select(2)
+	main._new_world()
+	main._advance(2400)
+	main.tabs.current_tab = 2
+	main._refresh_tabs()
+	var people: Array = JSON.parse_string(sim.individuals_json(5))
+	check(people.size() > 0, "named individuals appear")
+	if people.size() > 0:
+		main._on_meta("i:%d" % int(people[0]["id"]))
+		check(main.individual_detail.text.contains("Life story"), "individual detail shows life story")
+	check(main.individual_markers.size() > 0, "individual markers are drawn on the map")
+
 	main.preset_select.select(4)
 	main._new_world()
 	main._advance(400)

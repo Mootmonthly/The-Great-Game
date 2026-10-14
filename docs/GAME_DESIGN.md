@@ -78,9 +78,25 @@ Each triad combination produces a **Biochemistry Profile**. The profile constrai
 ### 4.4 Evolution
 
 - Unit of simulation is the **species population** in a region (L1), not the individual.
-- Each species has a **genome**: a vector of continuous traits (size, limb count, sensory modes, armour, metabolism, intelligence, reproduction rate, magical affinity, and so on), bounded by its Biochemistry Profile.
-- Each sim-season: fitness is scored against region conditions and competing species; populations grow or shrink; traits mutate; isolated populations speciate.
-- **Body Plan Synthesis:** the trait vector maps to a procedural body plan (skeleton/topology, locomotion, surface material) for rendering and animation.
+- Each species has a **genome**, bounded by its Biochemistry Profile, with three parts:
+  - **Physiology:** size, temperature preference and tolerance, fecundity, metabolism.
+  - **Body-part genome:** a list of parts (segments, shells, fins, fronds, eyes, jaws, brains, tentacles, limbs, claws, wings, glands), each with a count and size. Glands carry a substance from the local chemistry, which later sets their breath weapon or venom. Armour, speed, intelligence and offence are derived from the parts, never set directly.
+  - **Brain genome:** a small neural network (§4.8).
+- **Evolutionary milestones** gate which parts a lineage can grow. Each needs its predecessors plus suitable conditions in the world:
+
+  | Milestone | Requires | Condition | Unlocks |
+  |---|---|---|---|
+  | Multicellularity | — | Dense, well-fed population | Segments, shells, fins, fronds; size above microscopic |
+  | Nervous system | Multicellularity | — | Eyes, jaws, brains, tentacles; behaviour (§4.8) |
+  | Skeleton | Multicellularity | Enough structural material in the local chemistry | Large bodies |
+  | Chemical glands | Multicellularity | A reactive substance in the region | Glands |
+  | Limbs | Skeleton + nervous system | — | Limbs, claws |
+  | Flight | Limbs | Gravity ≤ 2 g, pressure ≥ 0.15 bar | Wings |
+  | Sapience | Nervous system | High intelligence, manipulators (limbs or tentacles), sociable temperament | Named civilisations (later phases) |
+
+- Each sim-season: fitness is scored against region conditions and competing species; populations grow or shrink; species compete within size niches and hunt much smaller species; genomes mutate; populations speciate.
+- Pace (Phase 0.5 prototype, Earth-like world): multicellular life within about 100 years, nervous systems and skeletons within about 300, limbs and flight within about 1,000. Sapience is rare: it appeared in roughly 1 of 3 Earth-like seeds within 1,000 years. Many worlds never reach it.
+- **Body Plan Synthesis:** the body-part genome maps to a procedural body plan (skeleton/topology, locomotion, surface material) for rendering and animation.
 - **Archetype Matcher:** trait vectors near a known fantasy archetype receive that archetype's name, silhouette hints, and signature ability. Example: large + flight + reptilian + exothermic gland → "Dragon" with a breath weapon whose damage type comes from the gland's chemistry. Beings that match no archetype get a generated name. This is how classical monsters and true aliens coexist.
 
 ### 4.5 Sapience and Civilization
@@ -128,6 +144,31 @@ Laws can stack. Their interactions are the main source of emergent variety.
 - Top-down orbital camera with smooth zoom from planet to ground level.
 - Tools: add substance, heat/cool, adjust pressure, adjust orbit/rotation/gravity, add/remove moons, meteor/seed delivery, set law, accelerate time, bless/curse, observe (tracking overlays: population, chemistry, mana, civilizations).
 - **Possession:** select any individual at L2 to drop into L3 first-person control. The creature's actual stats and abilities apply. Possession can be used for exploration, guiding a civilization, or testing a future champion.
+
+### 4.8 Minds: Neural Networks
+
+Every being's behaviour comes from a small neural network in its genome: 8 senses (food, threat, prey, stranger, kin, hunger, injury, bias), 6 hidden neurons, 4 actions (approach, flee, attack, socialise). Brains use fixed-point maths, so they are as deterministic as the rest of the simulation and replay verification still works. One decision costs about 200 multiply-adds; one CPU core manages about 1–2 million per second.
+
+Brains run at several levels, chosen so cost stays bounded:
+
+| Level | What runs | Scale | Where | Status |
+|---|---|---|---|---|
+| 1. Species instincts | Each species' brain is tested once in standard situations. The answers become its temperament (aggression, fear, curiosity, sociability), which drives hunting, fleeing, pack cooperation and migration in the population simulation. | Every species | Main simulation | Phase 0.5 |
+| 2. Named individuals | Persistent beings with a personal variant of their species' brain, a personality, health, renown, relationships and memories. They act every season: travel, flee, fight, befriend. Deaths are mourned, and killers earn grudges. | About 300 now; target 1,000–10,000 | Main simulation | Phase 0.5 (groundwork) |
+| 3. Crowds near the camera | Ordinary creatures around the camera get full brains and act in real time. | About 10,000–50,000 | Display only | Later |
+| 4. Relationships | Bonds between individuals: kinship, trust, rivalry, love, debt. | Thousands of links | Main simulation | Phase 0.5 (affinity and kinship) |
+| 5. Culture | Settlements hold shared values. Ideas (rituals, taboos, crafts, beliefs) spread person to person; each individual's brain decides whether to adopt them. | Per settlement | Main simulation | Later |
+| 6. Religion | Beings explain events they cannot account for. The player's interventions are real, witnessable events, so religions can form around the player. Different cultures may read the same act differently. | Per culture | Main simulation | Later |
+| 7. Arena AI | A champion's personality steers a tactical arena AI: cautious beings keep their distance, loyal ones protect allies. | About 1,000 units per match | Arena server | Later |
+| 8. Language | Made-up languages per culture plus templated speech. An optional AI language model may add flavour lines during possession, as cosmetics only. | — | Display only | Later |
+
+**Camera rule:** anything that affects the world (named individuals, relationships, culture, religion) runs in the main simulation, independent of the camera, so replay verification reproduces it. Crowds near the camera are display only: moving the camera must never change the world.
+
+**Feeding the character sheet (§5):**
+- **Charisma:** sociability, number of friendships, and renown. The prototype shows a CHA preview for named individuals.
+- **Intelligence and Wisdom:** brain size and complexity, plus life experience for named individuals.
+- **Alignment:** personality plus cultural values.
+- **Backstory:** a named champion carries its real relationships, deeds and memories.
 
 ## 5. Character Sheets
 
@@ -199,7 +240,8 @@ Cost   = clamp(round(1 + 999 · (Power / PowerCap)^0.7), 1, 1000)
 - Requires always-online play, even for single-player world building. Steam players often criticise this.
 - God-mode tools feel laggy, because every change waits on the network.
 - Ongoing cost per active player. Rough estimate: 0.25–1 vCPU per running world at about $0.02–0.05 per vCPU-hour, so about $0.005–0.05 per player-hour. A player with 100 hours costs about $0.50–5.00. If worlds keep evolving while the player is offline, cost rises to about $45–440 per world per year. This must be avoided.
-- These numbers are order-of-magnitude assumptions. Prototype measurements in Phase 0 will replace them.
+- These numbers are order-of-magnitude assumptions.
+- **Measured (Phase 0.5 prototype):** a fully populated world costs about 20–30 ms of one CPU core per simulated year, including named individuals. Replaying 1,000 simulated years to verify a champion takes about 20–30 CPU-seconds.
 
 **Option B — deterministic replay verification (decided).** The client runs the world. The server re-runs it to verify.
 
@@ -281,6 +323,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | Phase | Goal | Exit criteria |
 |---|---|---|
 | 0. Prototype: Petri Dish | Godot 4 + Rust sim-core. 2D top-down. 10 substances, temperature, gravity, star distance; life triad; species populations evolve. Determinism test across Windows and Linux | Two seeds with different chemistry produce visibly different life; identical replay hashes on both platforms; measured sim cost per world-hour |
+| 0.5 Prototype: Bodies & Minds | Body-part genomes, evolutionary milestones, brain genomes and temperament, named individuals with relationships, family tree view | Lineages progress from microbes to limbed, winged creatures; individuals form friendships and feuds; replay stays deterministic |
 | 1. Prototype: Sheet & Cost | Genome → 5e sheet → cost. Headless auto-battler between two generated beings | Cost correlates with mock-battle win rate (target r > 0.8) |
 | 2. Vertical Slice | 3D planet view, full planetary controls (rotation, orbit, moons, atmosphere), body plan synthesis, possession, local 1v1 arena with small armies | Playable start-to-arena loop offline |
 | 3. Online Alpha | Dedicated server, replay verification, matchmaking, permadeath, Essence economy, large-army arena (500 units per side) | Closed test with external players |
@@ -308,6 +351,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Champion death | Permanent; winner loots all bodies and gear, loser gets nothing |
 | — | Godhand mode | Allowed in ranked; hard to make viable |
 | — | Surrender | Allowed; fallen champions are looted, survivors return home |
+| — | Evolution model | Body-part genomes gated by evolutionary milestones, with neural-network brains used as far as cost allows (§4.4, §4.8) |
 
 ## 11. Open Questions
 
