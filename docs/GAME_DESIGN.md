@@ -178,6 +178,9 @@ Laws can stack. Their interactions are the main source of emergent variety.
 - Top-down orbital camera with smooth zoom from planet to ground level.
 - Tools: add substance, heat/cool, adjust pressure, adjust orbit/rotation/gravity, add/remove moons, meteor/seed delivery, set law, accelerate time, bless/curse, observe (tracking overlays: population, chemistry, mana, civilizations).
 - **Possession:** select any individual at L2 to drop into L3 first-person control. The creature's actual stats and abilities apply. Possession can be used for exploration, guiding a civilization, or testing a future champion.
+  - **Prototype (Phase 2):** from the region inspector, **Visit this region** builds a ground-level scene from the region's simulated state: terrain with seas sized to its liquids (lava glows on hot worlds, ice whitens cold ones), sky tinted by the atmosphere, and creatures from its populations (more biomass, more creatures; swimmers stay in the water) with its named individuals labelled. Click one to possess it: first-person view from its eyes, WASD to move, drag to look, its character sheet in the HUD. Following the camera rule (§4.8), the visit is display only; a test checks the world's state hash is unchanged.
+
+![Region visit and first-person possession](images/region-visit-possession.png)
 
 ### 4.8 Minds: Neural Networks
 
@@ -403,7 +406,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | 4. Content & Depth | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
 
-**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Remaining: first-person possession inside the world, Natural/Godhand orbital coupling and star types, final art, and moving arena rules into the Rust core for server authority.
+**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. Remaining: Natural/Godhand orbital coupling and star types, final art, and moving arena rules into the Rust core for server authority.
 
 ## 9. Business Model
 

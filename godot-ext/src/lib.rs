@@ -304,6 +304,28 @@ impl SimWorld {
                 .partial_cmp(&a["biomass"].as_f64())
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        // Look of the place, for the local 3D view.
+        let (mut liquid, mut ice, mut liquid_color, mut top) = (0.0, 0.0, None, 0.0);
+        for (sub, a) in w.substances.iter().zip(&r.amounts) {
+            let a = a.to_f64();
+            match sub.phase(r.temperature, w.pressure) {
+                sim_core::substance::Phase::Liquid => {
+                    liquid += a;
+                    if a > top {
+                        top = a;
+                        liquid_color = Some(sub.color);
+                    }
+                }
+                sim_core::substance::Phase::Solid if sub.melt_k < Fx::from_int(400) => ice += a,
+                _ => {}
+            }
+        }
+        let look = w.atmosphere_look();
+        let here: Vec<Value> = w
+            .living_individuals()
+            .filter(|x| x.region == i)
+            .map(|x| json!({"id": x.id, "title": x.title(), "species_id": x.species}))
+            .collect();
         let best = life.best.map(|(p, v)| {
             json!({
                 "backbone": w.elements[p.element as usize],
@@ -314,6 +336,13 @@ impl SimWorld {
         });
         to_gstring(json!({
             "x": x, "y": y,
+            "liquid_amount": liquid,
+            "liquid_color": liquid_color.map(hex),
+            "ice_amount": ice,
+            "sky_color": look.color,
+            "atmosphere": look.thickness,
+            "sunlight": look.sunlight,
+            "individuals_here": here,
             "temperature": r.temperature.to_f64(),
             "elevation": r.elevation.to_f64(),
             "geothermal": r.geothermal.to_f64(),

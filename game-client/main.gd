@@ -11,6 +11,7 @@ const TreeView := preload("res://tree_view.gd")
 const GlobeView := preload("res://globe_view.gd")
 const CreaturePreview := preload("res://creature_preview.gd")
 const Arena := preload("res://arena.gd")
+const LocalView := preload("res://local_view.gd")
 
 var sim: RefCounted
 var substances: Array = []
@@ -341,6 +342,11 @@ func _build_ui() -> void:
 	region_label = _rich(200)
 	region_label.text = "Use the Inspect tool and click a region."
 	panel.add_child(region_label)
+	visit_button = Button.new()
+	visit_button.text = "Visit this region (ground level, possess a creature)"
+	visit_button.disabled = true
+	visit_button.pressed.connect(func(): visit_region(selected_region))
+	panel.add_child(visit_button)
 
 
 
@@ -610,6 +616,7 @@ func _refresh_text() -> void:
 
 
 func _refresh_region() -> void:
+	visit_button.disabled = false
 	var r: Dictionary = JSON.parse_string(sim.region_json(selected_region.x, selected_region.y))
 	var text := "[b]Region (%d, %d)[/b]\n%.1f K (%.1f °C), elevation %.2f, geothermal %.2f\n" % [
 		r["x"], r["y"], r["temperature"], r["temperature"] - 273.15, r["elevation"], r["geothermal"]]
@@ -796,6 +803,19 @@ func _draw_markers() -> void:
 # --- Arena -------------------------------------------------------------------
 
 var arena: Control
+var local_view: Control
+var visit_button: Button
+
+
+func visit_region(cell: Vector2i) -> void:
+	if cell.x < 0:
+		return
+	running = false
+	play_button.text = "Play"
+	local_view = LocalView.new()
+	add_child(local_view)
+	local_view.open(sim, cell)
+	local_view.closed.connect(func(): local_view = null)
 
 
 func open_arena() -> void:
