@@ -555,6 +555,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Cost formula | Power = √(effective HP × damage per round), cost linear in power; commoner 1, ancient dragon about 310 (§5.3) |
 | — | Natural/Godhand and star types | Built as in §4.6: Natural is the default; Godhand strain thins the air and heats the world; eight star types with light quality, radiation and flares (numbers open to tuning) |
 | — | Online server rules | Species champions are rank and file and can be bound again; named individuals die forever via a ledger of the dead; disconnecting mid-match counts as surrender unless the player rejoins within 30 s (owner asked for reconnecting); an unranked practice queue with no permadeath (§6.2–6.3) |
+| — | Classes | Named individuals only, earned from their life story and their world's laws (fighter from victories, wizard needs Arcane Magic, cultivator needs Daoist Cultivation…); not assigned. Built together with the metaphysical laws, before the arena revisit |
 | — | Equipment | Gear attaches by body part, not body type; looted gear is refitted to other body plans at a cost; built in the content phase (§5.4) |
 | — | The Veil | Built as in §4.4a: a Veil law slider (0–100% open), reality strain and many moons thin it; beings from beyond feed on native minds and fade when the Veil is sealed (numbers open to tuning) |
 | — | Extradimensional beings | Included as a possibility, arriving through a thin Veil; extreme physics alone can let them in (§4.4a) |
