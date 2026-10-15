@@ -309,6 +309,17 @@ Not all life has to come from the world's own chemistry. Some beings come from o
   - Viewer: a "Viewing" selector switches every map, list and tool between the planet and each moon. Controls owned by the planet (star, mode, moons) grey out on a moon, and a locked day shows its month. The planet's moon list shows each moon's life and temperature, with an orbit control and a View button.
   - Champions can come from a moon: the arena roster lists them as "(Moon 1)", and the server verifies them by replaying the planet's log and looking in that moon's world.
 - The globe shows the tilt, a spin rate that follows the day length, orbiting moons and rings.
+- **Globe detail (decided, built):** the globe is the main window on the world, so it carries as much of the simulation as it can without costing frame rate:
+  - The lands of each people, tinted in their colour with crisp borders that wander with the terrain; capitals and settlements as pins sized by population; capital labels for the largest peoples; city lights on the night side, brighter with era and population.
+  - Wars as glowing arcs between the capitals at war; the most renowned individuals as glints.
+  - Forests: plant biomass greens and darkens the land in clumps.
+  - The map views (temperature, life, viability, Veil, mana, qi, civilizations, substances) blend over the globe as overlays.
+  - Click a region on the globe to inspect it; hover for a one-line summary.
+  - Moons are textured from their own worlds; focusing a moon shows its planet looming beside it.
+  - Everything is rebuilt once a second from three 1024×512 maps and a few hundred instanced markers, so the cost stays flat as worlds grow.
+  - Settled shallows read as marsh and farmland rather than open sea, and each settlement sits at its own spot in its region, so pins do not form a grid. Capital labels skip capitals too close to a larger one.
+
+![The globe at night: two peoples' lands with borders, settlements, capitals and heroes](images/globe-civilizations.png)
 - **Natural and Godhand modes** (new worlds start in Natural):
   - *Natural:* the planet has a mass and a radius, and gravity = mass / radius². Asking for a gravity changes the planet's mass instead. The star's brightness follows from its type and mass (main-sequence stars: L ∝ M^3.5); asking for a brightness picks the closest mass the star type allows. Year length follows Kepler: √(distance³ / star mass), and long years mean stronger seasons. Moons beyond the stable limit (about 1.95 Earth–Moon distances × distance in AU × ∛(planet mass / star mass)) escape.
   - *Godhand:* gravity, brightness and moons are set freely. The distance from what physics allows is the world's **strain**: |log₂(gravity / natural gravity)| + |log₂(brightness / natural brightness)| + ½ per moon beyond the stable limit, capped at 20. Strain bleeds the atmosphere away (0.4% per point per season, up to 5%) and adds 8 K of heat per point. Switching back to Natural snaps the values back to physics.
@@ -766,6 +777,8 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Moons | A player has at most one moon for now; more moons are purchasable with Essence. A moon is its own world: it gets every planet control (temperature, composition, atmosphere, gravity, rotation…) and its own simulated life, while staying a moon of the main planet with all the orbital mechanics that entails |
 | — | Essence economy | 500 Essence per ranked win. War spoils have a pseudo-cost (the fallen champion's cost) and can be sold back to the server 1:1 for Essence, which deletes them. Shop: heavy metals 1,000, rare earths 2,000 and radioactive elements 3,000 per deposit; extra moons 10,000; extra planets 50,000 (§3) |
 | — | Moon orbits | A moon world is never lost to a slider: Natural mode keeps its orbit between the Roche limit and the stable limit, drawing it in if the limit shrinks (proposed by Claude, approved by the owner) |
+| — | Cities and buildings | Settlements grow through size tiers (camp, village, town, city) and raise buildings by era and materials (huts, walls, forges, temples), shown in the region visit and on the globe; built after gear looting |
+| — | Globe detail | The 3D globe must be informative: it shows each people's lands and borders, settlements and capitals, city lights at night, wars, renowned individuals, forests, the map overlays, and lets the player pick and hover regions; moons are textured from their own worlds. Detail is added only where it costs no performance |
 | — | Refit cost | Refitting looted gear takes grade + 1 years and a Crafting-era people; no Essence (proposed by Claude, owner may revise) |
 | — | Arena rules | Win by wiping out the enemy or holding the central objective alone; procedurally generated biome battlefields from worlds; matches capped at 10 minutes, after which the side with more surviving cost wins (draw within 5%) (§6.1) |
 | — | Ecology | Flora and fauna form a real food chain: plants hold the light niche, animals with nervous systems graze plants instead of photosynthesising, predators eat animals |
