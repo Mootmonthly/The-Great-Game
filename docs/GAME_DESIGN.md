@@ -711,7 +711,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 **Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, reconnects and client-side prediction, permadeath with a ledger of the dead, looting, the Essence economy and shop, and online play from the arena screen. Remaining: the arena revisit (objectives, biome maps, time limit) and large armies (500 units per side); Steam identity in the client (needs the Steamworks SDK and a Steam App ID); cloud hosting (needs a server account; the hosting kit is ready).
 
-**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: archetypes, gear looting and refitting, religions and cults. The cost-balance re-check is done (§5.3).
+**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: gear looting and refitting, religions and cults. Archetypes (§4.4) and the cost-balance re-check (§5.3) are done.
 
 ## 9. Business Model
 
