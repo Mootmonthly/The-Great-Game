@@ -93,7 +93,7 @@ fn sheet_to_json(sh: &sim_core::sheet::CharacterSheet) -> Value {
             "name": b.name, "dice": b.dice, "damage": b.damage.name(), "dc": b.dc,
             "save_ability": b.save_ability, "targets": b.targets,
         })),
-        "class": sh.class, "equipment": sh.equipment,
+        "class": sh.class, "equipment": sh.equipment, "archetype": sh.archetype,
         "regeneration": sh.regeneration, "pack_tactics": sh.pack_tactics,
         "cost": c.cost,
         "cost_breakdown": {
