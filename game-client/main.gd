@@ -6,6 +6,7 @@ extends Control
 
 const SAVE_PATH := "user://world_log.json"
 const BASE_OVERLAYS := ["Surface", "Temperature", "Life", "Viability", "Veil", "Mana", "Qi", "Civilizations"]
+const GLOBE_HINT := "Hover over the globe to see a region; click to select it."
 const TOOLS := ["Inspect", "Add substance", "Remove substance", "Heat", "Cool"]
 const TreeView := preload("res://tree_view.gd")
 const GlobeView := preload("res://globe_view.gd")
@@ -43,6 +44,7 @@ var civ_list: RichTextLabel
 var show_individuals: CheckBox
 var globe_view: SubViewportContainer
 var globe_toggle: CheckButton
+var heroes_toggle: CheckButton
 var globe_timer := 0.0
 var moons_label: RichTextLabel
 var world_select: OptionButton
@@ -122,6 +124,8 @@ func _build_ui() -> void:
 	globe_view.visible = false
 	left.add_child(globe_view)
 	globe_view.setup(sim)
+	globe_view.region_picked.connect(_on_globe_picked)
+	globe_view.region_hovered.connect(_on_globe_hovered)
 
 	hover_label = Label.new()
 	hover_label.text = "Hover over the map to see a region. Click to use the selected tool."
@@ -267,6 +271,11 @@ func _build_ui() -> void:
 	globe_toggle.text = "3D globe (drag to rotate, scroll to zoom)"
 	globe_toggle.toggled.connect(_set_globe)
 	panel.add_child(globe_toggle)
+	heroes_toggle = CheckButton.new()
+	heroes_toggle.text = "Show heroes on the globe"
+	heroes_toggle.button_pressed = true
+	heroes_toggle.toggled.connect(func(on: bool): globe_view.set_show_heroes(on))
+	panel.add_child(heroes_toggle)
 	show_individuals = CheckBox.new()
 	show_individuals.text = "Show named individuals on the map"
 	show_individuals.button_pressed = true
@@ -627,6 +636,17 @@ func _on_map_input(event: InputEvent) -> void:
 			_apply_tool(_region_at(event.position))
 
 
+## A click on the globe selects the region like a click on the 2D map.
+func _on_globe_picked(x: int, y: int) -> void:
+	selected_region = Vector2i(x, y)
+	hover_label.text = sim.region_summary(x, y)
+	_refresh_all()
+
+
+func _on_globe_hovered(x: int, y: int) -> void:
+	hover_label.text = sim.region_summary(x, y) if x >= 0 else GLOBE_HINT
+
+
 func _apply_tool(cell: Vector2i) -> void:
 	if cell.x < 0:
 		return
@@ -690,6 +710,8 @@ func _refresh_map() -> void:
 	else:
 		map_texture.update(img)
 	map_rect.queue_redraw()
+	# The same view is blended over the globe.
+	globe_view.set_overlay(img, overlay_select.selected, overlay_select.get_item_text(overlay_select.selected))
 
 
 func _refresh_text() -> void:
@@ -735,6 +757,7 @@ func _refresh_text() -> void:
 		law_parts.append("Cultivators: %d" % st["cultivators"])
 	laws_label.text = " · ".join(law_parts) if law_parts.size() > 0 else "No metaphysical laws in force."
 	globe_view.set_planet(st)
+	globe_view.set_selected(selected_region)
 
 	if selected_region.x >= 0:
 		_refresh_region()

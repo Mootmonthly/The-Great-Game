@@ -25,6 +25,8 @@ pub struct SimWorld {
     /// for the planet.
     focus: Option<usize>,
     globe: Option<sim_core::globe::GlobeMaps>,
+    /// Maps of a second body (a moon, or the planet seen from its moon).
+    aux_globe: Option<sim_core::globe::GlobeMaps>,
     base: Base<RefCounted>,
 }
 
@@ -35,6 +37,7 @@ impl IRefCounted for SimWorld {
             world: World::new(1),
             focus: None,
             globe: None,
+            aux_globe: None,
             base,
         }
     }
@@ -825,6 +828,103 @@ impl SimWorld {
         self.globe.as_ref().map_or_else(PackedByteArray::new, |g| {
             PackedByteArray::from(g.data.as_slice())
         })
+    }
+
+    /// RGBA8: RGB the colour of the people holding each place, A city
+    /// lights.
+    #[func]
+    fn globe_info(&self) -> PackedByteArray {
+        self.globe.as_ref().map_or_else(PackedByteArray::new, |g| {
+            PackedByteArray::from(g.info.as_slice())
+        })
+    }
+
+    /// Builds the maps of another body: moon `index`, or the planet itself
+    /// for -1 (to show beside a focused moon). Read them with `aux_*`.
+    /// Returns false if there is no such body.
+    #[func]
+    fn build_body_globe(&mut self, index: i64, width: i64, height: i64) -> bool {
+        let body = match usize::try_from(index) {
+            Ok(k) => self.world.moon(k),
+            Err(_) => Some(&self.world),
+        };
+        let Some(body) = body else {
+            return false;
+        };
+        let (w, h) = (width.clamp(16, 4096) as usize, height.clamp(8, 2048) as usize);
+        self.aux_globe = Some(body.globe_maps(w, h));
+        true
+    }
+
+    #[func]
+    fn aux_albedo(&self) -> PackedByteArray {
+        self.aux_globe.as_ref().map_or_else(PackedByteArray::new, |g| PackedByteArray::from(g.albedo.as_slice()))
+    }
+
+    #[func]
+    fn aux_data(&self) -> PackedByteArray {
+        self.aux_globe.as_ref().map_or_else(PackedByteArray::new, |g| PackedByteArray::from(g.data.as_slice()))
+    }
+
+    #[func]
+    fn aux_info(&self) -> PackedByteArray {
+        self.aux_globe.as_ref().map_or_else(PackedByteArray::new, |g| PackedByteArray::from(g.info.as_slice()))
+    }
+
+    /// Marks for the globe of the world in focus: {"marks": [{kind:
+    /// "capital"|"settlement"|"hero", x, y, name, color, size}], "wars":
+    /// [{x1, y1, x2, y2, color_a, color_b}]}. `heroes` is how many of the
+    /// most renowned individuals to include.
+    #[func]
+    fn globe_markers_json(&self, heroes: i64) -> GString {
+        use sim_core::globe::MarkerKind;
+        let (marks, wars) = self.view().globe_markers(heroes.clamp(0, 300) as usize);
+        let marks: Vec<Value> = marks
+            .iter()
+            .map(|m| {
+                json!({
+                    "kind": match m.kind { MarkerKind::Capital => "capital", MarkerKind::Settlement => "settlement", MarkerKind::Hero => "hero" },
+                    "x": m.region % WIDTH, "y": m.region / WIDTH,
+                    "name": m.name, "color": hex(m.color), "size": m.size,
+                })
+            })
+            .collect();
+        let wars: Vec<Value> = wars
+            .iter()
+            .map(|w| {
+                json!({
+                    "x1": w.from % WIDTH, "y1": w.from / WIDTH, "x2": w.to % WIDTH, "y2": w.to / WIDTH,
+                    "color_a": hex(w.color_a), "color_b": hex(w.color_b),
+                })
+            })
+            .collect();
+        to_gstring(json!({"marks": marks, "wars": wars}))
+    }
+
+    /// A one-line summary of a region for hovering: its name on the map,
+    /// whose land it is, what lives there.
+    #[func]
+    fn region_summary(&self, x: i64, y: i64) -> GString {
+        let w = self.view();
+        let i = index(coord(x, WIDTH) as usize, coord(y, HEIGHT) as usize);
+        let r = &w.regions[i];
+        let mut bits = vec![format!("{:.0} K", r.temperature.to_f64())];
+        if let Some(c) = w.living_civs().find(|c| c.settlements.iter().any(|s| s.region == i)) {
+            let s = c.settlements.iter().find(|s| s.region == i).unwrap();
+            bits.push(format!("{} of the {} ({:.1}k)", s.name, c.name, s.population.to_f64()));
+        }
+        if let Some((id, total)) = w.dominant_species(i) {
+            if let Some(sp) = w.species_by_id(id) {
+                bits.push(format!("{} ({:.0} biomass)", sp.name, total.to_f64()));
+            }
+        } else {
+            bits.push("lifeless".into());
+        }
+        let heroes = w.living_individuals().filter(|x| x.region == i).count();
+        if heroes > 0 {
+            bits.push(format!("{heroes} named being{}", if heroes == 1 { "" } else { "s" }));
+        }
+        GString::from(bits.join(" · ").as_str())
     }
 
     #[func]
