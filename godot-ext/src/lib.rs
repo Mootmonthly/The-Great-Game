@@ -509,7 +509,12 @@ impl SimWorld {
             })
         });
         let settlement = w.settlement_at(i).map(|(c, s)| {
-            json!({"name": s.name, "civ": c.name, "civ_id": c.id, "population": s.population.to_f64()})
+            json!({
+                "name": s.name, "civ": c.name, "civ_id": c.id, "population": s.population.to_f64(),
+                "tier": s.tier().name(), "capital": c.capital().is_some_and(|cap| cap.region == s.region),
+                "era": sim_core::civ::ERAS[w.era(c)].0, "color": hex(c.color),
+                "buildings": w.buildings(c, s).iter().map(|b| b.name()).collect::<Vec<_>>(),
+            })
         });
         to_gstring(json!({
             "x": x, "y": y,
@@ -694,6 +699,11 @@ impl SimWorld {
                     "arcana": sim_core::civ::ARCANA[w.arcana_level(c)].0,
                     "settlements": c.settlements.len(),
                     "capital": c.capital().map(|s| s.name.clone()),
+                    "settlements_detail": c.settlements.iter().map(|s| json!({
+                        "name": s.name, "x": s.region % WIDTH, "y": s.region / WIDTH,
+                        "population": s.population.to_f64(), "tier": s.tier().name(),
+                        "buildings": w.buildings(c, s).iter().map(|b| b.name()).collect::<Vec<_>>(),
+                    })).collect::<Vec<_>>(),
                     "population": c.population().to_f64(),
                     "culture": c.culture.describe(),
                     "founded_year": c.founded_tick / tpy,

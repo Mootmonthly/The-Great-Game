@@ -269,6 +269,31 @@ Not all life has to come from the world's own chemistry. Some beings come from o
   - A small settlement is taken over by a winner of the same species, or razed by one of a different species.
   - Individuals in the fighting remember it, which counts towards the Fighter class.
 - **Schisms:** a fractious people (cohesion below 0.4) with 12 or more settlements may split. The far half becomes a new people with a drifted culture and bad blood with the old one.
+- **Cities and buildings (built):**
+  - **Tiers** follow population (thousands): camp below 1, village from 1, town from 4, city from 12, metropolis from 30.
+  - **Buildings** are derived every year from the people's era, the materials and water around the settlement, its culture, its magic and its size, so they need no saved state and replay exactly:
+
+    | Building | Needs |
+    |---|---|
+    | Huts | Everyone |
+    | Longhouse | Tribal, cohesion above 0.4 |
+    | Palisade | Tribal, militarism above 0.5, village or larger |
+    | Workshop | Crafting |
+    | Granary | Crafting, village or larger |
+    | Walls | Crafting, town or larger, militarism above 0.4 or caution above 0.5 |
+    | Forge | Forging, iron or tungsten in the region |
+    | Mine | Crafting, a metal, rare earths or radioactive deposit in the region |
+    | Harbour | Crafting, town or larger, water in or next to the region |
+    | Market | Classical, town or larger, openness above 0.4 |
+    | Library | Classical, city or larger, openness above 0.5 |
+    | Barracks | Forging, town or larger, militarism above 0.55 |
+    | Shrine | Rituals magic, village or larger |
+    | Wizard's tower | Arcane Schools, town or larger |
+    | Aqueduct | Classical, city or larger, water nearby |
+    | Factory | Industrial, city or larger |
+
+  - **Effects:** walls and barracks each add 10% to a people's strength in that settlement; libraries and markets each add 10% to learning, up to 50%.
+  - The viewer shows a settlement's tier and buildings in the region panel and the Civilizations tab; the region visit draws them; the globe sizes its pins by tier.
 
 ### 4.6 Laws of Reality
 

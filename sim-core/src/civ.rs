@@ -97,6 +97,95 @@ pub struct Settlement {
     pub founded_tick: u64,
 }
 
+/// How big a settlement is, from its population (thousands).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Tier {
+    Camp,
+    Village,
+    Town,
+    City,
+    Metropolis,
+}
+
+impl Tier {
+    pub fn of(population: Fx) -> Tier {
+        let p = population.to_f64();
+        if p >= 30.0 {
+            Tier::Metropolis
+        } else if p >= 12.0 {
+            Tier::City
+        } else if p >= 4.0 {
+            Tier::Town
+        } else if p >= 1.0 {
+            Tier::Village
+        } else {
+            Tier::Camp
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Tier::Camp => "Camp",
+            Tier::Village => "Village",
+            Tier::Town => "Town",
+            Tier::City => "City",
+            Tier::Metropolis => "Metropolis",
+        }
+    }
+}
+
+impl Settlement {
+    pub fn tier(&self) -> Tier {
+        Tier::of(self.population)
+    }
+}
+
+/// What a settlement has raised. Buildings follow from the people's era,
+/// the materials and water around the settlement, its culture and its
+/// size, so they need no storage and replay exactly (§4.5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Building {
+    Huts,
+    Longhouse,
+    Palisade,
+    Workshop,
+    Granary,
+    Walls,
+    Forge,
+    Mine,
+    Harbour,
+    Market,
+    Library,
+    Barracks,
+    Shrine,
+    Tower,
+    Aqueduct,
+    Factory,
+}
+
+impl Building {
+    pub fn name(self) -> &'static str {
+        match self {
+            Building::Huts => "Huts",
+            Building::Longhouse => "Longhouse",
+            Building::Palisade => "Palisade",
+            Building::Workshop => "Workshop",
+            Building::Granary => "Granary",
+            Building::Walls => "Walls",
+            Building::Forge => "Forge",
+            Building::Mine => "Mine",
+            Building::Harbour => "Harbour",
+            Building::Market => "Market",
+            Building::Library => "Library",
+            Building::Barracks => "Barracks",
+            Building::Shrine => "Shrine",
+            Building::Tower => "Wizard's tower",
+            Building::Aqueduct => "Aqueduct",
+            Building::Factory => "Factory",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Relation {
     pub other: u32,
@@ -212,6 +301,64 @@ impl World {
         level(&ARCANA, c.arcana)
     }
 
+    /// The buildings of a settlement (§4.5): by era, materials, water,
+    /// culture, magic and size. Derived, never stored.
+    pub fn buildings(&self, c: &Civilization, s: &Settlement) -> Vec<Building> {
+        let era = self.era(c);
+        let tier = s.tier();
+        let culture = c.culture;
+        let arcana = self.arcana_level(c);
+        let here = |key: &str| self.substance_index(key).is_some_and(|k| self.regions[s.region].amounts[k] >= Fx::ratio(2, 10));
+        let water_near = neighbours(s.region).chain(std::iter::once(s.region)).any(|r| self.liquid_total(r) > Fx::ratio(2, 10));
+        let mut out = vec![Building::Huts];
+        if era >= 1 && culture.cohesion > Fx::ratio(4, 10) {
+            out.push(Building::Longhouse);
+        }
+        if era >= 1 && culture.militarism > Fx::HALF && tier >= Tier::Village {
+            out.push(Building::Palisade);
+        }
+        if era >= 2 {
+            out.push(Building::Workshop);
+        }
+        if era >= 2 && tier >= Tier::Village {
+            out.push(Building::Granary);
+        }
+        if era >= 2 && tier >= Tier::Town && (culture.militarism > Fx::ratio(4, 10) || culture.caution > Fx::HALF) {
+            out.push(Building::Walls);
+        }
+        if era >= FORGING && (here("iron") || here("tungsten")) {
+            out.push(Building::Forge);
+        }
+        if era >= 2 && ["iron", "gold", "tungsten", "rare_earths", "uranium", "thorium"].iter().any(|k| here(k)) {
+            out.push(Building::Mine);
+        }
+        if era >= 2 && tier >= Tier::Town && water_near {
+            out.push(Building::Harbour);
+        }
+        if era >= 4 && tier >= Tier::Town && culture.openness > Fx::ratio(4, 10) {
+            out.push(Building::Market);
+        }
+        if era >= 4 && tier >= Tier::City && culture.openness > Fx::HALF {
+            out.push(Building::Library);
+        }
+        if era >= FORGING && tier >= Tier::Town && culture.militarism > Fx::ratio(55, 100) {
+            out.push(Building::Barracks);
+        }
+        if arcana >= 2 && tier >= Tier::Village {
+            out.push(Building::Shrine);
+        }
+        if arcana >= 3 && tier >= Tier::Town {
+            out.push(Building::Tower);
+        }
+        if era >= 4 && tier >= Tier::City && water_near {
+            out.push(Building::Aqueduct);
+        }
+        if era >= 5 && tier >= Tier::City {
+            out.push(Building::Factory);
+        }
+        out
+    }
+
     /// Whether any settlement's region holds a useful amount of a substance.
     pub fn civ_has(&self, c: &Civilization, key: &str) -> bool {
         let Some(s) = self.substance_index(key) else {
@@ -230,7 +377,10 @@ impl World {
         for c in self.living_civs() {
             let bonus = Fx::ONE + Fx::ratio(15, 100) * Fx::from_int(self.era(c) as i64);
             for s in &c.settlements {
-                out[s.region] = Some((c.species, bonus));
+                // Walls and barracks make a settlement harder to take.
+                let b = self.buildings(c, s);
+                let defence = Fx::ratio(10, 100) * Fx::from_int(b.contains(&Building::Walls) as i64 + b.contains(&Building::Barracks) as i64);
+                out[s.region] = Some((c.species, bonus + defence));
             }
         }
         out
@@ -390,10 +540,20 @@ impl World {
         // stone tools to industry takes more than a thousand years.
         let pop = self.civs[k].population();
         let mut learning = pop.sqrt() * (Fx::ratio(3, 10) + culture.openness) * Fx::ratio(1, 10);
-        // Rare earths in their lands speed invention.
+        // Rare earths in their lands speed invention; so do libraries and
+        // markets (a tenth each, up to half again).
         if self.civ_has(&self.civs[k], "rare_earths") {
             learning = learning * Fx::ratio(13, 10);
         }
+        let learned: usize = self.civs[k]
+            .settlements
+            .iter()
+            .map(|s| {
+                let b = self.buildings(&self.civs[k], s);
+                b.contains(&Building::Library) as usize + b.contains(&Building::Market) as usize
+            })
+            .sum();
+        learning = learning * (Fx::ONE + Fx::ratio(learned.min(5) as i64, 10));
         self.civs[k].tech += learning;
         if self.laws.arcane > Fx::ZERO {
             let caster = self
