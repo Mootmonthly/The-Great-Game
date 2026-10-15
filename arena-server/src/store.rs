@@ -54,6 +54,9 @@ pub struct Champion {
     /// What the winner loots if this champion falls.
     #[serde(default)]
     pub remains: Option<Remains>,
+    /// The gear it carries, looted with its remains.
+    #[serde(default)]
+    pub gear: Vec<sim_core::equipment::Item>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

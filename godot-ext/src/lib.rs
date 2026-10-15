@@ -888,6 +888,62 @@ impl SimWorld {
             .map_or(GString::new(), |s| GString::from(s.name.as_str()))
     }
 
+    /// Looted gear in the armoury of the world in focus (§5.4):
+    /// [{id, name, from, made_for, holder, holder_name, ready_year}], where
+    /// ready_year is set while the item is being refitted.
+    #[func]
+    fn armoury_json(&self) -> GString {
+        let w = self.view();
+        let list: Vec<Value> = w
+            .armoury
+            .iter()
+            .map(|l| {
+                let holder = l.holder.and_then(|h| w.individual_by_id(h));
+                json!({
+                    "id": l.id, "name": l.item.describe(), "from": l.from,
+                    "made_for": l.made_for.describe(),
+                    "holder": l.holder, "holder_name": holder.map(|x| x.title()),
+                    "ready_year": l.refit_until.filter(|t| *t > w.tick).map(|t| t / sim_core::world::TICKS_PER_YEAR),
+                })
+            })
+            .collect();
+        to_gstring(json!(list))
+    }
+
+    /// Whether a looted item fits a living named individual as it is.
+    #[func]
+    fn gear_fits(&self, item: i64, individual: i64) -> bool {
+        let w = self.view();
+        let Some(l) = w.armoury.iter().find(|l| l.id as i64 == item) else {
+            return false;
+        };
+        w.individual_by_id(individual as u32)
+            .filter(|x| x.is_alive())
+            .and_then(|x| w.species_by_id(x.species))
+            .is_some_and(|s| l.item.fits(&l.made_for, &sim_core::equipment::BodyPlan::of_species(s)))
+    }
+
+    /// Gives a looted item to a named individual. Returns false if it does
+    /// not fit or is not free.
+    #[func]
+    fn equip(&mut self, item: i64, individual: i64) -> bool {
+        self.act(Action::Equip { item: item as u32, individual: individual as u32 });
+        self.view().armoury.iter().any(|l| l.id as i64 == item && l.holder == Some(individual as u32))
+    }
+
+    #[func]
+    fn unequip(&mut self, item: i64) {
+        self.act(Action::Unequip { item: item as u32 });
+    }
+
+    /// Has the individual's people refit an item to its body (grade + 1
+    /// years; needs a Crafting-era civilization). Returns false if refused.
+    #[func]
+    fn refit(&mut self, item: i64, individual: i64) -> bool {
+        self.act(Action::Refit { item: item as u32, individual: individual as u32 });
+        self.view().armoury.iter().any(|l| l.id as i64 == item && l.holder == Some(individual as u32) && l.refit_until.is_some())
+    }
+
     /// Everything in the Essence shop: [{item, name, price}], where `item`
     /// is the JSON to pass to `ArenaNet.buy`.
     #[func]
