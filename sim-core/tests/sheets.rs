@@ -45,6 +45,7 @@ fn blank(name: &str, hp: i64, ac: i64, attacks: Vec<Attack>) -> CharacterSheet {
         frighten_dc: None,
         class: None,
         equipment: vec![],
+        archetype: None,
         cost: CostBreakdown::default(),
     }
 }

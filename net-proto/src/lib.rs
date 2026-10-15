@@ -75,6 +75,9 @@ pub struct ChampionToken {
     /// The moon of that world it lives on, if any.
     #[serde(default)]
     pub moon: Option<u8>,
+    /// The battlefield biome of its home world (§6.1).
+    #[serde(default)]
+    pub biome: sim_core::arena::Biome,
     /// Species or individual id in its home world.
     pub id: u32,
     pub name: String,
@@ -218,6 +221,9 @@ pub enum ServerMsg {
         cap: i64,
         /// Which side you play: 0 or 1.
         team: u8,
+        /// The battlefield: one side's home biome (§6.1).
+        #[serde(default)]
+        biome: sim_core::arena::Biome,
         players: [String; 2],
         /// Both rosters, in unit order; tokens map units to champions.
         rosters: [Vec<CharacterSheet>; 2],
@@ -246,6 +252,10 @@ pub enum ServerMsg {
         surrendered: Option<u8>,
         /// Champions lost forever (ranked only).
         fallen: Vec<Fallen>,
+        /// How the match was decided: "wipe-out", "objective", "time" or
+        /// "surrender".
+        #[serde(default)]
+        ended_by: Option<String>,
         rating: Option<RatingView>,
         /// Essence earned in this match, and the new balance.
         essence_gained: u64,

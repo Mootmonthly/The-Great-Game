@@ -615,6 +615,7 @@ fn bind(
         kind,
         world_seed: log.seed,
         moon,
+        biome: v.biome,
         id,
         name: v.name,
         cost,
@@ -629,6 +630,7 @@ fn bind(
             token: token.clone(),
             fingerprint: v.fingerprint,
             remains: Some(v.remains),
+            gear: v.gear,
         },
     );
     shared.save(&state);
@@ -723,6 +725,7 @@ struct MatchInfo {
     players: [String; 2],
     tokens: [Vec<u64>; 2],
     rosters: [Vec<sim_core::sheet::CharacterSheet>; 2],
+    biome: sim_core::arena::Biome,
     ctl: Arc<MatchCtl>,
 }
 
@@ -746,6 +749,12 @@ fn start_match(shared: &Arc<Shared>, state: &mut State, a: Waiting, b: Waiting) 
             .collect()
     };
     let looks = [look(state, &a), look(state, &b)];
+    // The battlefield is one side's home biome, by the match seed.
+    let home = |state: &mut State, w: &Waiting| {
+        let acc = state.store.account(&w.account);
+        w.tokens.first().map_or(sim_core::arena::Biome::Plains, |t| acc.champions[t].token.biome)
+    };
+    let biome = if seed.is_multiple_of(2) { home(state, &a) } else { home(state, &b) };
     let players = [a.account, b.account];
     let tokens = [a.tokens, b.tokens];
     let starts = [0u8, 1].map(|team| ServerMsg::MatchStart {
@@ -754,6 +763,7 @@ fn start_match(shared: &Arc<Shared>, state: &mut State, a: Waiting, b: Waiting) 
         mode: a.mode,
         cap: a.cap,
         team,
+        biome,
         players: players.clone(),
         rosters: rosters.clone(),
         looks: looks.clone(),
@@ -787,6 +797,7 @@ fn start_match(shared: &Arc<Shared>, state: &mut State, a: Waiting, b: Waiting) 
         players,
         tokens,
         rosters,
+        biome,
         ctl,
     };
     shared.save(state);
@@ -809,7 +820,7 @@ fn allowed(arena: &Arena, team: u8, c: &mut ArenaCommand) -> bool {
 }
 
 fn run_match(shared: &Arc<Shared>, info: MatchInfo) {
-    let mut arena = Arena::new(info.rosters[0].clone(), info.rosters[1].clone(), info.seed);
+    let mut arena = Arena::on(info.rosters[0].clone(), info.rosters[1].clone(), info.seed, info.biome);
     let broadcast = |msg: ServerMsg| info.ctl.send_all(msg);
     let grace = shared.config.reconnect_grace;
     let mut surrendered = None;
@@ -900,6 +911,7 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
                             remains,
                             biomass: Fx::ONE + Fx::ratio(c.token.cost, 20),
                             value,
+                            gear: c.gear.clone(),
                             signature: String::new(),
                         };
                         grant.signature = shared.signer.sign(&grant.payload());
@@ -961,7 +973,7 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
     let record = serde_json::json!({
         "match_id": info.id, "seed": info.seed, "players": info.players,
         "tokens": info.tokens, "result": result, "surrendered": surrendered,
-        "fallen": fallen, "ticks": arena.tick(), "essence_gained": essence_gained,
+        "fallen": fallen, "ticks": arena.tick(), "ended_by": arena.ended_by, "biome": info.biome, "essence_gained": essence_gained,
         "loot": loot.iter().map(|g| g.id).collect::<Vec<_>>(),
         "commands": digest(&serde_json::to_vec(&arena.command_log).unwrap_or_default()),
     });
@@ -975,6 +987,7 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
                 result,
                 surrendered,
                 fallen: fallen.clone(),
+                ended_by: arena.ended_by.map(str::to_string).or(surrendered.map(|_| "surrender".to_string())),
                 rating,
                 essence_gained: if won { essence_gained } else { 0 },
                 essence: balances[team],

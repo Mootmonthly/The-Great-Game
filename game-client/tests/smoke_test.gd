@@ -218,8 +218,35 @@ func _initialize() -> void:
 	var arena = main.arena
 	check(arena.shop_buttons.size() == 7 and arena.shop_items.size() == 7, "the arena's shop panel lists the 7 shop items")
 	check(arena.my_roster.size() > 0, "arena lists champions from this world")
+	check(arena.battlefield_select != null and arena.battlefield_select.item_count == 3 + 7, "arena has a Battlefield picker (home, rival's home, random, 7 biomes)")
+	var probe = ClassDB.instantiate("ArenaSim")
+	var biomes: Array = JSON.parse_string(probe.biomes_json())
+	check(biomes.size() == 7, "biomes_json has 7 entries")
+	var home: int = probe.home_biome(sim, -1)
+	check(home >= 0 and home < 7, "home_biome returns a valid index")
+	var lava := -1
+	for b in biomes:
+		if b["name"] == "Lava field":
+			lava = int(b["index"])
+	var lsim = ClassDB.instantiate("ArenaSim")
+	var roster: Array = arena.roster_of(sim)
+	for t in 2:
+		lsim.add_unit(sim, roster[0]["kind"], roster[0]["id"], t, -1)
+	lsim.start(5, lava)
+	var lf = JSON.parse_string(lsim.field_json())
+	var has_lava := false
+	for p in lf["patches"]:
+		has_lava = has_lava or p["ground"] == "lava"
+	check(lf["biome"] == "Lava field" and has_lava, "lava field has lava patches")
+	var ls0 = JSON.parse_string(lsim.state_json())
+	check(int(ls0["time_limit"]) == 600 and ls0["hold"].size() == 2, "state has time_limit 600 and a 2-element hold")
+	lsim.step(300)
+	var ls1 = JSON.parse_string(lsim.state_json())
+	check(ls1 != null and ls1["units"].size() == 2 and (ls1["result"] == null or ls1["ended_by"] != null), "state stays valid after stepping; ended_by set when over")
 	arena.use_rival_roster(arena.roster_of(sim))
+	arena.battlefield_select.select(3 + lava)
 	arena._start_battle()
+	check(arena.field.get("biome", "") == "Lava field" and arena.field_radius > 0.0, "the arena renders the chosen battlefield")
 	check(arena.units.size() >= 2, "arena spawns both teams")
 	var steps := 0
 	while not arena.finished and steps < 4000:
@@ -230,6 +257,25 @@ func _initialize() -> void:
 	arena.close()
 	await process_frame
 	check(main.arena == null, "leaving the arena returns to the world")
+
+	# Large army: more than 60 units per side render as MultiMeshes.
+	main.open_arena()
+	arena = main.arena
+	arena.cap = 1000
+	var cheap: Dictionary = arena.my_roster[0]
+	for c in arena.my_roster:
+		if c["cost"] < cheap["cost"]:
+			cheap = c
+	arena.my_counts = {cheap["key"]: 100}
+	arena.use_rival_roster(arena.my_roster)
+	arena.rival_roster = arena.my_roster
+	arena._start_battle()
+	check(arena.units.size() >= 120 and arena.multimeshes[0] != null, "large armies use a MultiMesh per side")
+	for i in 20:
+		arena.step(0.5)
+	check(arena.state["time"] > 0.0 and arena.field_radius > 16.0, "large battle runs and the field grows")
+	arena.close()
+	await process_frame
 
 	# Online arena: a real arena server; this client against a second one.
 	var server_bin := ProjectSettings.globalize_path("res://../target/release/arena-server")

@@ -157,6 +157,32 @@ Each triad combination produces a **Biochemistry Profile**. The profile constrai
 
 ![Procedurally built creatures from three simulated worlds](images/creature-gallery.png)
 - **Archetype Matcher:** trait vectors near a known fantasy archetype receive that archetype's name, silhouette hints, and signature ability. Example: large + flight + reptilian + exothermic gland → "Dragon" with a breath weapon whose damage type comes from the gland's chemistry. Beings that match no archetype get a generated name. This is how classical monsters and true aliens coexist.
+  - **Built (`sim-core/src/archetype.rs`):** archetypes are checked from the most specific to the most general, and the first that fits wins. Its name shows on the sheet ("Archetype: Dragon"), and its signature ability changes the sheet, so the cost follows.
+    - **Monsters:**
+      - Dragon (Frightful Presence)
+      - Phoenix (fire immunity, regeneration)
+      - Wyvern and Giant Spider (venom attacks)
+      - Hydra (a bite per head, regeneration)
+      - Kraken, Sea Serpent and Behemoth (crushing attacks; the Behemoth also resists blunt weapons)
+      - Roc and Griffin (talon or pounce attacks)
+      - Golem (+2 AC, resists weapons)
+      - Basilisk (petrifying gaze, which frightens)
+      - Treant (resists weapons, regenerates, vulnerable to fire)
+      - Beholder (eye rays)
+      - Star Spawn (necrotic touch)
+    - **Peoples:**
+      - Giant (Rock Throw)
+      - Mind Flayer (Mind Blast)
+      - Merfolk (swim speed)
+      - Aarakocra (Dive Strike)
+      - Goblin (+1 AC)
+      - Gnome (resists psychic)
+      - Dwarf (resists poison)
+      - Orc (extra hit points)
+      - Elf (+1 to hit with weapons, darkvision)
+      - Human (no ability yet)
+    - Measured over 3,932 species (4 presets × 3 seeds, year 1000): about 4% match an archetype. The rest stay alien.
+    - Silhouette hints for the final art kit come with the art.
 
 ### 4.4a Extradimensional Beings
 
@@ -468,7 +494,8 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 
 - **Making and using (proposed detail):** only sapient, tool-using civilizations make gear. Passive gear (armour, barding, charms) works on any body it fits. Active gear (held weapons, foci) also needs enough Intelligence to use well.
 - **Unique gear by chemistry:** items carry the substance, damage type and laws of the world that made them. For example, silicon life forges heat-proof crystal blades, and beings from beyond make relics no native can craft.
-- **Refitting looted gear (decided):** looted gear can be refitted to a different body plan at a cost (cost unit to be set: resources, Essence or time). Until refitted, it fits only bodies with the parts it was made for.
+- **Refitting looted gear (decided):** looted gear can be refitted to a different body plan at a cost. Until refitted, it fits only bodies with the parts it was made for.
+  - **Cost unit (built; proposed by Claude, owner may revise):** time and a smith. The wearer's own people refit the item, which takes grade + 1 years (chitin 1 year, iron 4, tungsten 5), and needs a civilization of the Crafting era or later. Beings with no civilization can only use gear that fits them as it is. This keeps refitting offline and in-world; Essence stays the bridge currency for the server.
 - **Timing (decided):** built in the content phase (roadmap phase 4).
 - **Implemented (`sim-core/src/equipment.rs`; numbers proposed):** a civilization from the Tribal era onwards arms every member of its species, both named individuals and rank and file.
   - **Materials:** from the best its lands allow. Iron (grade 3) from Forging. Crystal (grade 2) for silicon life, and obsidian (grade 1) from silicate rock, both from Crafting. Otherwise bone and wood, or chitin (grade 0).
@@ -481,7 +508,14 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
     - Glands (Classical and later): a breath focus, +2d6 breath.
     - Sapient minds (with a Rituals tradition): a spell focus that adds to-hit with spells.
   - **Enchantment:** an Arcane Schools tradition or higher enchants weapons, giving +1 to hit and +2 damage.
-  - Equipment shows on the sheet and changes its cost. Gear carried home as loot and refitting come later.
+  - Equipment shows on the sheet and changes its cost.
+- **Gear looting and refitting (built, `sim-core/src/equipment.rs`):**
+  - **Body plans:** every item is made for a body plan: size category, and the counts of limbs, tentacles, wings, jaws and glands, plus sapience. Armour fits only the same plan. Other gear needs the part it attaches to (hands need two limbs, blades two tentacles, fang caps a jaw, wing blades wings, breath foci a gland, spell foci a sapient mind) on a body of the same size.
+  - **Looting:** when a champion falls in a ranked match, its gear travels with its remains in the signed loot grant. Brought home, the gear goes into the world's **armoury** (each world, planet or moon, has one).
+  - **Equipping:** a named individual may take an item that fits from the armoury, carry it into the arena, and return it. Species units are rank and file and use only their people's gear.
+  - **Refitting:** as above. While an item is being refitted the individual carries it but gains nothing from it.
+  - **Death:** an individual who dies at home drops its gear back into the armoury. One who falls in the arena loses it to the winner.
+  - **Viewer:** the Individuals tab lists the armoury with equip, return and refit controls (client work follows the globe update).
 
 ### 5.5 Classes (decided: earned by named individuals)
 
@@ -515,6 +549,20 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 - **Victory (decided):** a side wins by wiping out the enemy army, or by holding the central objective (a shrine) alone for a set time. The objective stops small, fast armies from kiting forever.
 - **Maps (decided):** procedurally generated biome battlefields whose terrain and hazards come from a world's biome (ocean, lava field, ice, forest and so on), so aquatic, flying and fire-resistant creatures matter.
 - **Match length (decided):** at most 10 minutes. At time-out, the side with more surviving cost wins; within 5% it is a draw.
+- **Built (`sim-core/src/arena.rs`):**
+  - **Shrine:** radius 3 at the centre; 60 s held alone wins. AI units go to contest it while the enemy holds it.
+  - **Battlefields:** seven biomes: open field, plains, forest, archipelago, ice field, lava field, rocky desert.
+  - **Terrain:**
+    - Water slows walkers to 40%.
+    - Ice slows walkers to 70%.
+    - Trees give +2 AC and slow large walkers.
+    - Lava burns walkers for 2d6 fire each round.
+    - Rock is impassable to walkers.
+    - Fliers ignore ground terrain, and swimmers ignore water. AI walkers steer around rock and around lava they would burn in.
+  - **Home biome:** a world's biome comes from its climate: molten worlds get lava, frozen worlds ice, sea worlds archipelagos, dry worlds rocky desert, plant-rich worlds forest, otherwise plains. Online, the server picks one side's home biome for each match.
+  - **Field size:** fields grow with army size, to radius 16 + about 1.6 × √(units).
+  - **Performance:** a spatial grid keeps 500 v 500 at about 4 ms per tick.
+  - **Client:** a Battlefield picker, terrain and shrine drawing, a HUD with time left, shrine progress and surviving cost, and instanced capsules for sides of more than 60 units.
 - **Decided: team size is variable.** The only limit is the total cost cap. Example with a 1000 cap: one player brings 1000 one-cost chumps; the other brings a single 1000-cost neutron-star dragon. Both are legal.
 - **Cost cap:** fixed per queue. Default queue: 1000. Suggested extra queues: skirmish (250), duel (1 champion, 1000 cap), unlimited casual.
 - **Control scheme (proposed):** armies of any size need two control layers:
@@ -694,9 +742,9 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 **Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons (now worlds of their own) and rings; procedural creature models from body-part genomes, with upright humanoids and rooted plants; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules run in the deterministic Rust core with replayable command logs. Natural/Godhand modes and star types are done. Remaining: final art (needs an artist; the procedural shapes are placeholders).
 
-**Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, reconnects and client-side prediction, permadeath with a ledger of the dead, looting, the Essence economy and shop, and online play from the arena screen. Remaining: the arena revisit (objectives, biome maps, time limit) and large armies (500 units per side); Steam identity in the client (needs the Steamworks SDK and a Steam App ID); cloud hosting (needs a server account; the hosting kit is ready).
+**Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, reconnects and client-side prediction, permadeath with a ledger of the dead, looting, the Essence economy and shop, and online play from the arena screen, the arena revisit (shrine objective, biome battlefields, 10-minute limit) and armies of 500 a side. Remaining: Steam identity in the client (needs the Steamworks SDK and a Steam App ID); cloud hosting (needs a server account; the hosting kit is ready).
 
-**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: archetypes, gear looting and refitting, religions and cults. The cost-balance re-check is done (§5.3).
+**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: religions and cults. Archetypes (§4.4), gear looting and refitting (§5.4) and the cost-balance re-check (§5.3) are done.
 
 ## 9. Business Model
 
@@ -731,6 +779,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Moon orbits | A moon world is never lost to a slider: Natural mode keeps its orbit between the Roche limit and the stable limit, drawing it in if the limit shrinks (proposed by Claude, approved by the owner) |
 | — | Cities and buildings | Settlements grow through size tiers (camp, village, town, city) and raise buildings by era and materials (huts, walls, forges, temples), shown in the region visit and on the globe; built after gear looting |
 | — | Globe detail | The 3D globe must be informative: it shows each people's lands and borders, settlements and capitals, city lights at night, wars, renowned individuals, forests, the map overlays, and lets the player pick and hover regions; moons are textured from their own worlds. Detail is added only where it costs no performance |
+| — | Refit cost | Refitting looted gear takes grade + 1 years and a Crafting-era people; no Essence (proposed by Claude, owner may revise) |
 | — | Arena rules | Win by wiping out the enemy or holding the central objective alone; procedurally generated biome battlefields from worlds; matches capped at 10 minutes, after which the side with more surviving cost wins (draw within 5%) (§6.1) |
 | — | Ecology | Flora and fauna form a real food chain: plants hold the light niche, animals with nervous systems graze plants instead of photosynthesising, predators eat animals |
 | — | Humanoid sapients | Sapience biases evolution toward a humanoid body plan (two legs, two arms, a head with eyes) in the simulation itself |
