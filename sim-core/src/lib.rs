@@ -5,6 +5,7 @@
 //! docs/GAME_DESIGN.md §7.
 
 pub mod action;
+pub mod archetype;
 pub mod arena;
 pub mod battle;
 pub mod body;
