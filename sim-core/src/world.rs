@@ -860,7 +860,7 @@ impl World {
         self.flow_liquids();
     }
 
-    fn liquid_total(&self, i: usize) -> Fx {
+    pub(crate) fn liquid_total(&self, i: usize) -> Fx {
         let r = &self.regions[i];
         let mut total = Fx::ZERO;
         for (s, sub) in self.substances.iter().enumerate() {
