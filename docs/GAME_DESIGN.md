@@ -157,6 +157,32 @@ Each triad combination produces a **Biochemistry Profile**. The profile constrai
 
 ![Procedurally built creatures from three simulated worlds](images/creature-gallery.png)
 - **Archetype Matcher:** trait vectors near a known fantasy archetype receive that archetype's name, silhouette hints, and signature ability. Example: large + flight + reptilian + exothermic gland → "Dragon" with a breath weapon whose damage type comes from the gland's chemistry. Beings that match no archetype get a generated name. This is how classical monsters and true aliens coexist.
+  - **Built (`sim-core/src/archetype.rs`):** archetypes are checked from the most specific to the most general, and the first that fits wins. Its name shows on the sheet ("Archetype: Dragon"), and its signature ability changes the sheet, so the cost follows.
+    - **Monsters:**
+      - Dragon (Frightful Presence)
+      - Phoenix (fire immunity, regeneration)
+      - Wyvern and Giant Spider (venom attacks)
+      - Hydra (a bite per head, regeneration)
+      - Kraken, Sea Serpent and Behemoth (crushing attacks; the Behemoth also resists blunt weapons)
+      - Roc and Griffin (talon or pounce attacks)
+      - Golem (+2 AC, resists weapons)
+      - Basilisk (petrifying gaze, which frightens)
+      - Treant (resists weapons, regenerates, vulnerable to fire)
+      - Beholder (eye rays)
+      - Star Spawn (necrotic touch)
+    - **Peoples:**
+      - Giant (Rock Throw)
+      - Mind Flayer (Mind Blast)
+      - Merfolk (swim speed)
+      - Aarakocra (Dive Strike)
+      - Goblin (+1 AC)
+      - Gnome (resists psychic)
+      - Dwarf (resists poison)
+      - Orc (extra hit points)
+      - Elf (+1 to hit with weapons, darkvision)
+      - Human (no ability yet)
+    - Measured over 3,932 species (4 presets × 3 seeds, year 1000): about 4% match an archetype. The rest stay alien.
+    - Silhouette hints for the final art kit come with the art.
 
 ### 4.4a Extradimensional Beings
 
@@ -699,7 +725,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 **Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, reconnects and client-side prediction, permadeath with a ledger of the dead, looting, the Essence economy and shop, and online play from the arena screen, the arena revisit (shrine objective, biome battlefields, 10-minute limit) and armies of 500 a side. Remaining: Steam identity in the client (needs the Steamworks SDK and a Steam App ID); cloud hosting (needs a server account; the hosting kit is ready).
 
-**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: archetypes, gear looting and refitting, religions and cults. The cost-balance re-check is done (§5.3).
+**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: gear looting and refitting, religions and cults. Archetypes (§4.4) and the cost-balance re-check (§5.3) are done.
 
 ## 9. Business Model
 

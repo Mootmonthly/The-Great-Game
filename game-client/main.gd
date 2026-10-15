@@ -1036,6 +1036,8 @@ func _sheet_text(sh) -> String:
 		return ""
 	var t := "[bgcolor=#2a2418][color=#e8c860][b]Character sheet[/b]   cost %d / 1000[/color][/bgcolor]\n" % sh["cost"]
 	t += "[i]%s %s, %s[/i]\n" % [sh["size"], sh["type"].to_lower(), sh["alignment"].to_lower()]
+	if sh.get("archetype") != null:
+		t += "[color=#e8c860]Archetype: [b]%s[/b][/color]\n" % sh["archetype"]
 	if sh["class"] != null:
 		t += "[b]%s[/b]\n" % sh["class"]
 	var sp: Dictionary = sh["speed"]

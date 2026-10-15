@@ -260,6 +260,9 @@ pub struct CharacterSheet {
     /// Gear from the being's civilization, described.
     #[serde(default)]
     pub equipment: Vec<String>,
+    /// The fantasy archetype it matches, if any (§4.4), e.g. "Dragon".
+    #[serde(default)]
+    pub archetype: Option<String>,
     pub cost: CostBreakdown,
 }
 
@@ -1059,8 +1062,10 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         frighten_dc: otherworldly.then(|| 8 + proficiency + modifier(charisma)),
         class: class.map(|c| format!("{} {level}", c.name())),
         equipment: gear.iter().map(|g| g.describe()).collect(),
+        archetype: None,
         cost: CostBreakdown::default(),
     };
+    crate::archetype::apply(world, s, &mut sheet);
     sheet.cost = cost(&sheet);
     sheet
 }
