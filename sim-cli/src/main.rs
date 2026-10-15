@@ -431,6 +431,7 @@ fn balance(years: u64) -> i32 {
     use sim_core::battle::win_rate;
     use sim_core::sheet::{species_sheet, CharacterSheet};
     let mut pool: Vec<CharacterSheet> = Vec::new();
+    let mut heroes = 0usize;
     for preset in ["earthlike", "frozen_moon", "sulfur_world", "magma_world"] {
         for seed in 1..=2 {
             let mut w = start(preset, seed).expect("preset exists");
@@ -438,10 +439,17 @@ fn balance(years: u64) -> i32 {
                 ticks: (years * sim_core::world::TICKS_PER_YEAR) as u32,
             });
             pool.extend(w.living_species().map(|s| species_sheet(&w, s)));
+            // Named individuals carry classes and their people's gear.
+            let before = pool.len();
+            pool.extend(
+                w.living_individuals()
+                    .filter_map(|x| sim_core::sheet::individual_sheet(&w, x)),
+            );
+            heroes += pool.len() - before;
         }
     }
     println!(
-        "{} species sheets from 4 presets × 2 seeds at year {years}",
+        "{} sheets ({heroes} named individuals) from 4 presets × 2 seeds at year {years}",
         pool.len()
     );
     let mut buckets = [0usize; 6];
@@ -535,6 +543,74 @@ fn balance(years: u64) -> i32 {
     if !army_rates.is_empty() {
         let mean = army_rates.iter().sum::<f64>() / army_rates.len() as f64;
         println!("armies of n cheap units vs one unit of n× the cost: army win rate {:.0}% over {} match-ups (50% = fair)", mean * 100.0, army_rates.len());
+    }
+
+    // The same checks in the real-time arena (§6.1a), where movement,
+    // reach and area attacks matter.
+    let arena_rate = |a: &[&CharacterSheet], b: &[&CharacterSheet], games: u64, seed: u64| -> f64 {
+        let mut won = 0.0;
+        for g in 0..games {
+            let mut m = sim_core::arena::Arena::new(
+                a.iter().map(|s| (*s).clone()).collect(),
+                b.iter().map(|s| (*s).clone()).collect(),
+                seed * 31 + g,
+            );
+            // Ten minutes of arena time at most.
+            for _ in 0..6000 {
+                if m.result.is_some() {
+                    break;
+                }
+                m.step();
+            }
+            won += match m.result {
+                Some(sim_core::arena::ArenaResult::TeamA) => 1.0,
+                Some(sim_core::arena::ArenaResult::TeamB) => 0.0,
+                _ => 0.5,
+            };
+        }
+        won / games as f64
+    };
+    let mut a_costs = Vec::new();
+    let mut a_rates = Vec::new();
+    for (i, a) in sample.iter().enumerate().step_by(2) {
+        let mut total = 0.0;
+        let opponents = 10;
+        for k in 0..opponents {
+            let b = sample[rng.below(sample.len() as u64) as usize];
+            total += arena_rate(&[*a], &[b], 2, (i * 100 + k) as u64);
+        }
+        a_costs.push(a.cost.cost as f64);
+        a_rates.push(total / opponents as f64);
+    }
+    println!(
+        "arena duels: {} beings × 10 opponents × 2 games; Spearman cost vs win rate {:.3}",
+        a_costs.len(),
+        pearson(&ranks(&a_costs), &ranks(&a_rates))
+    );
+    let mut arena_armies = Vec::new();
+    for k in 0..400 {
+        let x = sample[rng.below(sample.len() as u64) as usize];
+        let n = 3 + rng.below(8) as i64;
+        let target = x.cost.cost * n;
+        if !(3..=40).contains(&x.cost.cost) {
+            continue;
+        }
+        let Some(y) = sample
+            .iter()
+            .filter(|y| (y.cost.cost - target).abs() * 10 <= target)
+            .min_by_key(|y| (y.cost.cost - target).abs())
+        else {
+            continue;
+        };
+        let army: Vec<&CharacterSheet> = (0..n).map(|_| x).collect();
+        arena_armies.push(arena_rate(&army, &[*y], 2, 300_000 + k));
+        if arena_armies.len() >= 30 {
+            break;
+        }
+    }
+    if !arena_armies.is_empty() {
+        let mean = arena_armies.iter().sum::<f64>() / arena_armies.len() as f64;
+        println!("arena armies of n cheap units vs one of n× the cost: army win rate {:.0}% over {} match-ups", mean * 100.0, arena_armies.len());
     }
     0
 }
