@@ -495,7 +495,10 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 
 ### 6.1 Mode
 
-- **Format:** 1v1 player matches at launch. Map types, match length, and victory conditions are deferred until the world simulation is complete.
+- **Format:** 1v1 player matches at launch.
+- **Victory (decided):** a side wins by wiping out the enemy army, or by holding the central objective (a shrine) alone for a set time. The objective stops small, fast armies from kiting forever.
+- **Maps (decided):** procedurally generated biome battlefields whose terrain and hazards come from a world's biome (ocean, lava field, ice, forest and so on), so aquatic, flying and fire-resistant creatures matter.
+- **Match length (decided):** at most 10 minutes. At time-out, the side with more surviving cost wins; within 5% it is a draw.
 - **Decided: team size is variable.** The only limit is the total cost cap. Example with a 1000 cap: one player brings 1000 one-cost chumps; the other brings a single 1000-cost neutron-star dragon. Both are legal.
 - **Cost cap:** fixed per queue. Default queue: 1000. Suggested extra queues: skirmish (250), duel (1 champion, 1000 cap), unlimited casual.
 - **Control scheme (proposed):** armies of any size need two control layers:
@@ -673,9 +676,9 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | 4. Content & Depth (started) | Civilizations, metaphysical laws (Arcane Magic, Soul Power, Daoist Cultivation), the Veil and extradimensional beings, archetypes, equipment, loot | Sapient civs emerge in some fraction of worlds |
 | 5. Early Access | Steam store page, Workshop, ranked seasons | Steam Early Access launch |
 
-**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons and rings; procedural creature models from body-part genomes; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules now run in the deterministic Rust core with replayable command logs. Natural/Godhand modes and star types are done. A prototype of the Veil and extradimensional beings (§4.4a, planned for phase 4) was pulled forward. Remaining: final art and the network layer.
+**Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons (now worlds of their own) and rings; procedural creature models from body-part genomes, with upright humanoids and rooted plants; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules run in the deterministic Rust core with replayable command logs. Natural/Godhand modes and star types are done. Remaining: final art (needs an artist; the procedural shapes are placeholders).
 
-**Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, permadeath with a ledger of the dead, and online play from the arena screen. Remaining: Steam identity, cloud hosting, reconnects, client-side prediction, the Essence economy and looting, and large-army arena work (500 units per side).
+**Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, reconnects and client-side prediction, permadeath with a ledger of the dead, looting, the Essence economy and shop, and online play from the arena screen. Remaining: the arena revisit (objectives, biome maps, time limit) and large armies (500 units per side); Steam identity in the client (needs the Steamworks SDK and a Steam App ID); cloud hosting (needs a server account; the hosting kit is ready).
 
 **Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: archetypes, gear looting and refitting, and a cost-balance re-check.
 
@@ -710,6 +713,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Moons | A player has at most one moon for now; more moons are purchasable with Essence. A moon is its own world: it gets every planet control (temperature, composition, atmosphere, gravity, rotation…) and its own simulated life, while staying a moon of the main planet with all the orbital mechanics that entails |
 | — | Essence economy | 500 Essence per ranked win. War spoils have a pseudo-cost (the fallen champion's cost) and can be sold back to the server 1:1 for Essence, which deletes them. Shop: heavy metals 1,000, rare earths 2,000 and radioactive elements 3,000 per deposit; extra moons 10,000; extra planets 50,000 (§3) |
 | — | Moon orbits | A moon world is never lost to a slider: Natural mode keeps its orbit between the Roche limit and the stable limit, drawing it in if the limit shrinks (proposed by Claude, approved by the owner) |
+| — | Arena rules | Win by wiping out the enemy or holding the central objective alone; procedurally generated biome battlefields from worlds; matches capped at 10 minutes, after which the side with more surviving cost wins (draw within 5%) (§6.1) |
 | — | Ecology | Flora and fauna form a real food chain: plants hold the light niche, animals with nervous systems graze plants instead of photosynthesising, predators eat animals |
 | — | Humanoid sapients | Sapience biases evolution toward a humanoid body plan (two legs, two arms, a head with eyes) in the simulation itself |
 | — | Next work order | Civilizations and equipment together; then re-check cost balance; then the arena revisit, Essence spending, and final art |
@@ -723,6 +727,5 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 Deferred until the world simulation is complete:
 
-1. Arena match structure: map types, match length, and victory conditions (§6.1). The owner finds the current arena bare-bones; it will be revisited after the online server.
 2. Practice queue details (§6.2a).
 3. **More shop items:** whether unusual molecules, unusual star types or Veil-thinning resources join the Essence shop (§3).
