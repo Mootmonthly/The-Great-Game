@@ -82,6 +82,12 @@ pub enum Action {
         x: u16,
         y: u16,
     },
+    /// A named individual takes a looted item from the armoury (§5.4).
+    Equip { item: u32, individual: u32 },
+    /// A looted item goes back to the armoury.
+    Unequip { item: u32 },
+    /// The individual's people refit a looted item to its body.
+    Refit { item: u32, individual: u32 },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
