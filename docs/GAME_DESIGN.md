@@ -235,7 +235,8 @@ Not all life has to come from the world's own chemistry. Some beings come from o
 - **Home advantage:** a people is stronger where it has settled, +15% per era.
 - **Diplomacy:**
   - Opinion between peoples within 3 regions of each other drifts with how alike their cultures are. It drifts lower between different species and between cautious peoples.
-  - War breaks out when opinion falls below −0.4 and either side is warlike.
+  - War can break out when opinion falls below −0.4 and the more martial side's militarism is above 0.35. Each year the chance is 10% × that militarism, so martial peoples fight often and peaceful ones never start a war. Wars end within 10 years.
+  - Measured (Earth-like, 8 seeds, year 1000): every seed with more than one people had wars. Before this tuning, only 2 of 8 did: neighbours came to hate each other but rarely reached the old militarism threshold of 0.55.
   - Peace comes after at most 10 years, or earlier by chance.
 - **War:** each year, the stronger side wins a battle; strength is population × era × militarism, with luck.
   - The loser's settlement nearest the winner loses 40% of its people.
@@ -430,7 +431,11 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 - **Measured against the auto-battler** (`sim-cli balance`: 3,500+ evolved species from 4 presets × 2 seeds, 155 sampled across the cost range):
   - Rank correlation between cost and win rate: **0.93** (Phase 1 target: above 0.8).
   - In pairs with at least a 1.5× cost gap, the more expensive side won **99%** of match-ups.
-  - Armies of n cheap units against one unit costing n× as much: the army wins about **55%** (50% is perfectly fair). Large single-target hitters waste damage on small targets (overkill), which the formula does not yet model. Tune when arena rules exist.
+  - Armies of n cheap units against one unit costing n× as much: the army wins about **55%** (50% is perfectly fair). Large single-target hitters waste damage on small targets (overkill), which the formula does not yet model.
+- **Re-check with classes, equipment and civilizations (Phase 4):** 3,832 sheets, 1,260 of them named individuals with classes and gear, from 4 presets × 2 seeds at year 800.
+  - Auto-battler: rank correlation **0.955**. The pricier side won **98%** of pairs with a ≥ 1.5× gap. Armies won **54%**.
+  - Real-time arena (`sim-cli balance` now runs it too): rank correlation **0.89** in duels. Armies of cheap units won **57%** of 30 match-ups, within noise of fair, so the cost formula stays as it is.
+  - No evolved being costs over 100 by year 800. The 101–1000 range is reached by laws, equipment and extreme worlds, and is not yet covered by evolved samples.
 - Ability scores may exceed the 5e cap of 30 for extreme beings. The cost formula stays monotonic beyond that range.
 - Equipment adds power by the same offence/defence evaluation and is part of the champion's locked loadout (later phase).
 - The sheet UI shows the cost breakdown (effective HP, damage per round, power, utility, abilities) so players understand why a being costs what it costs.
@@ -680,7 +685,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 **Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, reconnects and client-side prediction, permadeath with a ledger of the dead, looting, the Essence economy and shop, and online play from the arena screen. Remaining: the arena revisit (objectives, biome maps, time limit) and large armies (500 units per side); Steam identity in the client (needs the Steamworks SDK and a Steam App ID); cloud hosting (needs a server account; the hosting kit is ready).
 
-**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: archetypes, gear looting and refitting, and a cost-balance re-check.
+**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: archetypes, gear looting and refitting, religions and cults. The cost-balance re-check is done (§5.3).
 
 ## 9. Business Model
 
