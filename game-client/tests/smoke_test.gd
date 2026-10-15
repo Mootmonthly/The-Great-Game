@@ -86,6 +86,39 @@ func _initialize() -> void:
 	var planet: Dictionary = JSON.parse_string(sim.status_json())
 	check(planet["moons"].size() == 1 and planet["rings"] > 0.0, "moons can be added; a moon inside the Roche limit becomes rings")
 	check(main.globe_view.moon_nodes.size() == 1 and main.globe_view.rings.visible, "globe shows moons and rings")
+	check(main.globe_view.moon_materials[0].get_shader_parameter("albedo_map") != null, "moons are textured with their own maps")
+
+	# Regions map onto the sphere and back; the mapping matches the mesh's UVs.
+	var gv = main.globe_view
+	var round_trip := true
+	for cell in [Vector2i(0, 0), Vector2i(31, 15), Vector2i(63, 31), Vector2i(10, 3)]:
+		round_trip = round_trip and gv.point_to_region(gv.region_to_point(cell.x, cell.y, 1.3)) == cell
+	check(round_trip, "region_to_point and point_to_region round-trip")
+	var arrays: Array = (gv.planet.mesh as SphereMesh).get_mesh_arrays()
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+	var uv_ok := true
+	for k in range(0, verts.size(), 997):
+		var fx := fposmod(uvs[k].x * 64.0, 1.0)
+		var fy := fposmod(uvs[k].y * 32.0, 1.0)
+		# Skip vertices on a cell border, where rounding decides.
+		if fx < 0.05 or fx > 0.95 or fy < 0.05 or fy > 0.95 or uvs[k].y < 0.02 or uvs[k].y > 0.98:
+			continue
+		var cell: Vector2i = gv.point_to_region(verts[k])
+		uv_ok = uv_ok and cell.x == clampi(int(uvs[k].x * 64.0), 0, 63) and cell.y == clampi(int(uvs[k].y * 32.0), 0, 31)
+	check(uv_ok, "point_to_region agrees with the sphere mesh's UVs")
+
+	# The map view drives the globe's overlay.
+	main.overlay_select.select(1)
+	main._refresh_map()
+	check(gv.planet_material.get_shader_parameter("overlay_mix") > 0.0, "a map view is blended over the globe")
+	main.overlay_select.select(0)
+	main._refresh_map()
+	check(gv.planet_material.get_shader_parameter("overlay_mix") == 0.0, "the surface view shows no overlay")
+	gv.size = Vector2(800, 600)
+	var picked: Vector2i = gv.pick_region_at(gv.size * 0.5)
+	check(picked.x >= 0 and picked.x < 64 and picked.y >= 0 and picked.y < 32, "the centre of the globe picks a region")
+	check(gv.pick_region_at(Vector2(2, 2)).x == -1, "a click beside the planet picks nothing")
 	main.globe_toggle.button_pressed = false
 
 	# Moons are worlds of their own.
@@ -111,8 +144,10 @@ func _initialize() -> void:
 	check(int(sim.focused_moon()) == 0 and main.planet_sliders["star_mass"]["slider"].editable == false, "the selector focuses the moon and greys out star controls")
 	check(not main.planet_sliders["day_length"]["slider"].editable and main.tidal_lock_label.visible, "a tidally locked moon cannot set its day length")
 	check(main.moon_info_label.visible and main.moon_info_label.text.contains("Eclipses"), "the moon info block is shown")
+	check(main.globe_view.host_planet.visible and main.globe_view.moon_nodes.is_empty(), "a focused moon shows its host planet and no moons")
 	main.world_select.item_selected.emit(0)
 	check(int(sim.focused_moon()) == -1 and main.planet_sliders["star_mass"]["slider"].editable, "the selector returns to the planet")
+	check(not main.globe_view.host_planet.visible and main.globe_view.moon_nodes[0].visible, "the host planet is hidden again")
 
 	# Species tab and detail.
 	main.tabs.current_tab = 0
@@ -418,5 +453,37 @@ func _initialize() -> void:
 	var slots_before := int(JSON.parse_string(sim.moons_json())["slots"])
 	check(sim.apply_purchase('{"id":1,"account":"me","item":{"kind":"moon_slot"},"signature":""}', 0, 0), "a moon slot purchase is accepted")
 	check(int(JSON.parse_string(sim.moons_json())["slots"]) == slots_before + 1, "a bought moon slot adds a moon slot")
+
+
+	# Settlements and heroes on the globe.
+	main.preset_select.select(1)
+	main._new_world()
+	main._advance(4800)
+	main.globe_toggle.button_pressed = true
+	await process_frame
+	main.globe_view.refresh()
+	var marks: Array = JSON.parse_string(sim.globe_markers_json(20))["marks"]
+	var places := 0
+	var hero_marks := 0
+	for m in marks:
+		if m["kind"] == "hero":
+			hero_marks += 1
+		else:
+			places += 1
+	print("globe marks: ", places, " places, ", hero_marks, " heroes, ", JSON.parse_string(sim.status_json())["civilizations"], " civilizations")
+	check(places > 0, "an earthlike world has settlements after 1200 years")
+	check(main.globe_view.settlement_marks.multimesh.instance_count == places, "the globe has one pin per settlement")
+	check(main.globe_view.hero_marks.multimesh.instance_count == hero_marks, "the globe has one glint per hero")
+	main.heroes_toggle.button_pressed = false
+	check(main.globe_view.hero_marks.multimesh.instance_count == 0, "heroes can be hidden on the globe")
+	main.heroes_toggle.button_pressed = true
+	main.globe_view.set_selected(Vector2i(5, 5))
+	check(main.globe_view.select_ring.visible, "the selected region is ringed")
+	var clicked: Array = []
+	main.globe_view.region_picked.connect(func(x, y): clicked.append(Vector2i(x, y)))
+	main.globe_view.pivot.rotation = Vector3.ZERO
+	main.globe_view.region_picked.emit(7, 7)
+	main.globe_toggle.button_pressed = false
+	check(main.selected_region == Vector2i(7, 7), "a pick on the globe selects the region")
 
 	finish()

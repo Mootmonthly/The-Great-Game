@@ -4,6 +4,8 @@
 //! height, ice, glow and atmosphere settings. Display only: this never feeds
 //! back into the simulation, so it may use floating point.
 
+use crate::body;
+use crate::civ::ERAS;
 use crate::substance::Phase;
 use crate::world::{World, HEIGHT, REGION_COUNT, WIDTH};
 
@@ -15,6 +17,38 @@ pub struct GlobeMaps {
     pub albedo: Vec<u8>,
     /// R: surface height. G: ice. B: glow (lava). A: liquid depth.
     pub data: Vec<u8>,
+    /// RGB: the colour of the people whose land this is, scaled by how
+    /// firmly it is held (black outside any territory). A: city lights
+    /// (seen on the night side).
+    pub info: Vec<u8>,
+}
+
+/// A mark on the globe: a settlement, a renowned individual, or a war.
+#[derive(Clone, Debug)]
+pub struct Marker {
+    pub kind: MarkerKind,
+    /// Region index.
+    pub region: usize,
+    pub name: String,
+    pub color: [u8; 3],
+    /// Settlement population (thousands), or renown.
+    pub size: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarkerKind {
+    Capital,
+    Settlement,
+    Hero,
+}
+
+/// A war, drawn as an arc between two capitals.
+#[derive(Clone, Debug)]
+pub struct WarArc {
+    pub from: usize,
+    pub to: usize,
+    pub color_a: [u8; 3],
+    pub color_b: [u8; 3],
 }
 
 /// Look of the atmosphere and clouds.
@@ -41,6 +75,13 @@ struct Cell {
     life_color: [f64; 3],
     liquid_color: [f64; 3],
     glow: f64,
+    /// Plant biomass: forests darken and green the land.
+    plants: f64,
+    /// Whose land this is: colour premultiplied by hold (0 or 1).
+    civ_color: [f64; 3],
+    civ: f64,
+    /// City lights by population and era.
+    lights: f64,
 }
 
 fn hash(x: i64, y: i64, seed: u64) -> f64 {
@@ -96,10 +137,43 @@ fn rgb(c: [u8; 3]) -> [f64; 3] {
 }
 
 impl World {
+    /// Per-region territory: (civ colour, city lights) for settled regions.
+    fn territory(&self) -> Vec<Option<([f64; 3], f64)>> {
+        let mut out = vec![None; REGION_COUNT];
+        for c in self.living_civs() {
+            let era = self.era(c);
+            let era_light = [0.08, 0.2, 0.35, 0.5, 0.7, 1.0][era.min(5)];
+            for (k, s) in c.settlements.iter().enumerate() {
+                let pop = (s.population.to_f64() / 20.0).min(1.0);
+                let capital = if k == 0 { 1.3 } else { 1.0 };
+                out[s.region] = Some((rgb(c.color), (pop * era_light * capital).min(1.0)));
+            }
+        }
+        out
+    }
+
     fn globe_cells(&self) -> Vec<Cell> {
+        let territory = self.territory();
+        let plants: Vec<f64> = (0..REGION_COUNT)
+            .map(|i| {
+                self.regions[i]
+                    .populations
+                    .iter()
+                    .filter(|p| {
+                        self.species_by_id(p.species)
+                            .is_some_and(|s| s.has(body::MULTICELLULAR) && !s.has(body::NERVOUS))
+                    })
+                    .map(|p| p.biomass.to_f64())
+                    .sum()
+            })
+            .collect();
         (0..REGION_COUNT)
             .map(|i| {
                 let r = &self.regions[i];
+                let (civ_color, civ, lights) = match territory[i] {
+                    Some((c, l)) => (c, 1.0, l),
+                    None => ([0.0; 3], 0.0, 0.0),
+                };
                 let mut liquid = 0.0;
                 let mut liquid_color = [0.15, 0.35, 0.75];
                 let mut ice = 0.0;
@@ -139,6 +213,10 @@ impl World {
                     life_color,
                     liquid_color,
                     glow: (glow / 2.0).min(1.0),
+                    plants: plants[i],
+                    civ_color,
+                    civ,
+                    lights,
                 }
             })
             .collect()
@@ -149,6 +227,7 @@ impl World {
         let cells = self.globe_cells();
         let mut albedo = Vec::with_capacity(w * h * 4);
         let mut data = Vec::with_capacity(w * h * 4);
+        let mut info = Vec::with_capacity(w * h * 4);
         let seed = self.seed;
         for py in 0..h {
             for px in 0..w {
@@ -181,11 +260,26 @@ impl World {
                 let elevation = lerp(&|c| c.elevation) + detail * 0.18;
                 let surface = lerp(&|c| c.surface);
                 let depth = surface - elevation;
-                let is_liquid = depth > 0.004;
+                // Peoples live on the wet lowlands their kind needs; there the
+                // shallows read as marsh and farmland, not open sea.
+                let settled = lerp(&|c| c.civ);
+                let is_liquid = depth > 0.004 + 0.16 * settled;
                 let temperature = lerp(&|c| c.temperature);
                 let ice = (lerp(&|c| c.ice) + detail * 0.6).max(0.0);
                 let life = lerp(&|c| c.life);
                 let glow = lerp(&|c| c.glow);
+                let plants = lerp(&|c| c.plants);
+                // Borders wander with the terrain noise.
+                let civ = (lerp(&|c| c.civ) + detail * 0.5).clamp(0.0, 1.0);
+                let hold = ((civ - 0.4) * 5.0).clamp(0.0, 1.0);
+                let civ_color = {
+                    let c = lerp3(&|c| c.civ_color);
+                    let m = c[0].max(c[1]).max(c[2]).max(1e-6);
+                    [c[0] / m, c[1] / m, c[2] / m]
+                };
+                // Lights cluster into towns.
+                let clumps = (fbm(u * 6.0, v * 6.0, seed + 7) * 2.0 + 0.6).clamp(0.0, 1.0);
+                let lights = lerp(&|c| c.lights) * clumps;
 
                 let mut color;
                 let mut lava = 0.0;
@@ -217,6 +311,13 @@ impl World {
                         let tint = mix3(lerp3(&|c| c.life_color), [0.3, 0.62, 0.25], 0.5);
                         color = mix3(color, tint, (life / 25.0).min(0.75));
                     }
+                    // Forests: plant biomass greens and darkens the land in
+                    // clumps, denser where the plants are.
+                    if plants > 2.0 && temperature < 700.0 {
+                        let woods = (fbm(u * 4.0, v * 4.0, seed + 31) * 2.0 + plants / 40.0).clamp(0.0, 1.0);
+                        let forest = mix3([0.2, 0.42, 0.16], [0.1, 0.3, 0.12], woods);
+                        color = mix3(color, forest, (plants / 30.0).min(0.8) * woods);
+                    }
                 }
                 let ice_amount = if ice > 0.25 {
                     ((ice - 0.25) * 2.0).min(1.0)
@@ -242,6 +343,13 @@ impl World {
                     (lava.clamp(0.0, 1.0) * 255.0) as u8,
                     (depth.clamp(0.0, 1.0) * 255.0) as u8,
                 ]);
+                let land_hold = if is_liquid { hold * 0.35 } else { hold };
+                info.extend_from_slice(&[
+                    (civ_color[0] * land_hold * 255.0) as u8,
+                    (civ_color[1] * land_hold * 255.0) as u8,
+                    (civ_color[2] * land_hold * 255.0) as u8,
+                    (if is_liquid { 0.0 } else { lights.clamp(0.0, 1.0) } * 255.0) as u8,
+                ]);
             }
         }
         GlobeMaps {
@@ -249,7 +357,52 @@ impl World {
             height: h,
             albedo,
             data,
+            info,
         }
+    }
+
+    /// Marks for the globe: every settlement (capitals first), the most
+    /// renowned individuals, and the wars between living peoples.
+    pub fn globe_markers(&self, heroes: usize) -> (Vec<Marker>, Vec<WarArc>) {
+        let mut marks = Vec::new();
+        let mut wars = Vec::new();
+        let civs: Vec<_> = self.living_civs().collect();
+        for c in &civs {
+            for (k, s) in c.settlements.iter().enumerate() {
+                marks.push(Marker {
+                    kind: if k == 0 { MarkerKind::Capital } else { MarkerKind::Settlement },
+                    region: s.region,
+                    name: if k == 0 { format!("{} ({}, {})", s.name, c.name, ERAS[self.era(c)].0) } else { s.name.clone() },
+                    color: c.color,
+                    size: s.population.to_f64(),
+                });
+            }
+            for r in c.relations.iter().filter(|r| r.at_war && r.other > c.id) {
+                if let (Some(a), Some(o)) = (c.capital(), civs.iter().find(|o| o.id == r.other)) {
+                    if let Some(b) = o.capital() {
+                        wars.push(WarArc {
+                            from: a.region,
+                            to: b.region,
+                            color_a: c.color,
+                            color_b: o.color,
+                        });
+                    }
+                }
+            }
+        }
+        let mut famous: Vec<_> = self.living_individuals().collect();
+        famous.sort_by(|a, b| b.renown.cmp(&a.renown).then(a.id.cmp(&b.id)));
+        for x in famous.into_iter().take(heroes) {
+            let color = self.species_by_id(x.species).map_or([255, 220, 120], |s| s.color);
+            marks.push(Marker {
+                kind: MarkerKind::Hero,
+                region: x.region,
+                name: x.title(),
+                color,
+                size: x.renown.to_f64(),
+            });
+        }
+        (marks, wars)
     }
 
     pub fn atmosphere_look(&self) -> AtmosphereLook {
