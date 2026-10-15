@@ -16,8 +16,11 @@ signal closed
 
 const CreatureBuilder := preload("res://creature_builder.gd")
 const ARENA_RADIUS := 16.0
+## Sides with more units than this are drawn as simple shapes (one
+## MultiMesh per side) instead of full creature models.
+const SIMPLE_ABOVE := 60
 const CAPS := [25, 50, 100, 250, 1000]
-const MAX_UNITS_PER_SIDE := 40
+const MAX_UNITS_PER_SIDE := 500
 const SIZE_SCALE := {"Tiny": 0.8, "Small": 1.1, "Medium": 1.5, "Large": 2.2, "Huge": 3.2, "Gargantuan": 4.5}
 const RIVAL_PRESETS := ["earthlike", "frozen_moon", "sulfur_world"]
 const DEFAULT_PORT := 7878
@@ -40,6 +43,10 @@ class Unit:
 	var hp := 0
 	var max_hp := 0
 	var radius := 0.5
+	## Drawn as an instance of its side's MultiMesh rather than a model.
+	var simple := false
+	var mm_index := -1
+	var color := Color.WHITE
 
 
 var sim: RefCounted
@@ -121,6 +128,20 @@ var viewport: SubViewport
 var world: Node3D
 var camera: Camera3D
 var cam_yaw := 0.6
+var cam_zoom := 1.0
+## The battlefield (ground, patches, shrine) is rebuilt for every match.
+var field_root: Node3D
+var field: Dictionary = {}
+var field_radius := ARENA_RADIUS
+var shrine_ring_mat: StandardMaterial3D
+var shrine_pillar_mat: StandardMaterial3D
+var shrine_tint := -2
+var multimeshes: Array = [null, null]
+var possess_marker: MeshInstance3D
+var battlefield_select: OptionButton
+var biomes: Array = []
+var probe: RefCounted
+var _simple_count := [0, 0]
 
 
 func open(world_sim: RefCounted) -> void:
@@ -173,42 +194,156 @@ func _build_scene() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-55, 30, 0)
 	world.add_child(sun)
-	var floor_mesh := CylinderMesh.new()
-	floor_mesh.top_radius = ARENA_RADIUS + 2.0
-	floor_mesh.bottom_radius = ARENA_RADIUS + 2.5
-	floor_mesh.height = 0.6
-	floor_mesh.radial_segments = 64
-	var floor_node := MeshInstance3D.new()
-	floor_node.mesh = floor_mesh
-	floor_node.position.y = -0.3
-	var fm := ShaderMaterial.new()
-	fm.shader = preload("res://shaders/creature.gdshader")
-	fm.set_shader_parameter("base_color", Color(0.55, 0.47, 0.36))
-	floor_node.material_override = fm
-	world.add_child(floor_node)
-	# A ring of pillars marks the edge.
-	for i in 16:
-		var a := TAU * i / 16.0
-		var pillar := MeshInstance3D.new()
-		var pm := CylinderMesh.new()
-		pm.top_radius = 0.35
-		pm.bottom_radius = 0.45
-		pm.height = 3.0
-		pillar.mesh = pm
-		var mat := ShaderMaterial.new()
-		mat.shader = preload("res://shaders/creature.gdshader")
-		mat.set_shader_parameter("base_color", Color(0.7, 0.66, 0.6))
-		pillar.material_override = mat
-		pillar.position = Vector3(cos(a) * (ARENA_RADIUS + 1.2), 1.5, sin(a) * (ARENA_RADIUS + 1.2))
-		world.add_child(pillar)
+	_build_field({})
 	camera = Camera3D.new()
 	camera.fov = 50.0
 	world.add_child(camera)
 	_overview_camera()
 
 
+const GROUND_COLORS := {
+	"Open field": Color(0.55, 0.47, 0.36), "Plains": Color(0.42, 0.55, 0.28), "Forest": Color(0.3, 0.42, 0.22),
+	"Archipelago": Color(0.8, 0.74, 0.5), "Ice field": Color(0.82, 0.88, 0.92), "Lava field": Color(0.22, 0.18, 0.17),
+	"Rocky desert": Color(0.7, 0.55, 0.35),
+}
+
+
+func _toon(color: Color) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = preload("res://shaders/creature.gdshader")
+	m.set_shader_parameter("base_color", color)
+	return m
+
+
+func _flat(color: Color, alpha := 1.0, glow := 0.0) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(color, alpha)
+	m.roughness = 1.0
+	if alpha < 1.0:
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	if glow > 0.0:
+		m.emission_enabled = true
+		m.emission = color
+		m.emission_energy_multiplier = glow
+	return m
+
+
+func _disc(parent: Node3D, pos: Vector3, radius: float, height: float, mat: Material, top_scale := 1.0) -> MeshInstance3D:
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius * top_scale
+	mesh.bottom_radius = radius
+	mesh.height = height
+	mesh.radial_segments = 32
+	mesh.rings = 1
+	var n := MeshInstance3D.new()
+	n.mesh = mesh
+	n.material_override = mat
+	n.position = pos + Vector3(0, height * 0.5, 0)
+	parent.add_child(n)
+	return n
+
+
+## Ground disc, edge pillars, terrain patches and the shrine for `f` (the
+## field_json of a match; empty for the default open arena).
+func _build_field(f: Dictionary) -> void:
+	if field_root:
+		field_root.queue_free()
+	field_root = Node3D.new()
+	world.add_child(field_root)
+	field = f
+	field_radius = float(f.get("radius", ARENA_RADIUS))
+	var r := field_radius
+	var floor_mesh := CylinderMesh.new()
+	floor_mesh.top_radius = r + 2.0
+	floor_mesh.bottom_radius = r + 2.5
+	floor_mesh.height = 0.6
+	floor_mesh.radial_segments = 96
+	var floor_node := MeshInstance3D.new()
+	floor_node.mesh = floor_mesh
+	floor_node.position.y = -0.3
+	floor_node.material_override = _toon(GROUND_COLORS.get(str(f.get("biome", "Open field")), GROUND_COLORS["Open field"]))
+	field_root.add_child(floor_node)
+	# A ring of pillars marks the edge.
+	var pillars := 16 if r < 24.0 else 32
+	for i in pillars:
+		var a := TAU * i / pillars
+		var p := Vector3(cos(a) * (r + 1.2), 0, sin(a) * (r + 1.2))
+		var pillar := _disc(field_root, p, 0.45, 3.0, _toon(Color(0.7, 0.66, 0.6)), 0.78)
+		pillar.name = "Pillar%d" % i
+	for patch in f.get("patches", []):
+		_build_patch(patch)
+	# The central shrine.
+	var orad := float(f.get("objective_radius", 3.0))
+	shrine_ring_mat = _flat(Color(0.8, 0.8, 0.75), 0.9)
+	shrine_ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var ring := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = orad - 0.12
+	torus.outer_radius = orad + 0.12
+	torus.rings = 48
+	ring.mesh = torus
+	ring.material_override = shrine_ring_mat
+	ring.position.y = 0.1
+	field_root.add_child(ring)
+	shrine_pillar_mat = _flat(Color(0.8, 0.8, 0.75), 1.0, 0.4)
+	_disc(field_root, Vector3.ZERO, 0.4, 1.8, shrine_pillar_mat, 0.6)
+	shrine_tint = -2
+	if camera:
+		_overview_camera()
+
+
+func _build_patch(patch: Dictionary) -> void:
+	var pos := Vector3(float(patch["x"]), 0, float(patch["z"]))
+	var pr := float(patch["radius"])
+	match str(patch["ground"]):
+		"water":
+			_disc(field_root, pos + Vector3(0, 0.03, 0), pr, 0.04, _flat(Color(0.2, 0.45, 0.9), 0.55))
+		"lava":
+			_disc(field_root, pos + Vector3(0, 0.04, 0), pr, 0.05, _flat(Color(1.0, 0.45, 0.05), 1.0, 2.0))
+		"ice":
+			_disc(field_root, pos + Vector3(0, 0.03, 0), pr, 0.04, _flat(Color(0.85, 0.94, 1.0), 0.9))
+		"trees":
+			_disc(field_root, pos + Vector3(0, 0.02, 0), pr, 0.03, _flat(Color(0.1, 0.28, 0.1)))
+			var trng := RandomNumberGenerator.new()
+			trng.seed = hash(Vector2(pos.x, pos.z)) + 7
+			var trunk_mat := _toon(Color(0.4, 0.27, 0.15))
+			var leaf_mat := _toon(Color(0.12, 0.38, 0.14))
+			for i in clampi(int(pr * pr * 0.35), 3, 24):
+				var ang := trng.randf() * TAU
+				var dist := sqrt(trng.randf()) * pr * 0.9
+				var tp := pos + Vector3(cos(ang) * dist, 0, sin(ang) * dist)
+				var h := 1.4 + trng.randf() * 0.8
+				_disc(field_root, tp, 0.12, h * 0.4, trunk_mat)
+				var cone := CylinderMesh.new()
+				cone.top_radius = 0.0
+				cone.bottom_radius = 0.55 + trng.randf() * 0.2
+				cone.height = h
+				cone.radial_segments = 8
+				var cn := MeshInstance3D.new()
+				cn.mesh = cone
+				cn.material_override = leaf_mat
+				cn.position = tp + Vector3(0, h * 0.4 + h * 0.5, 0)
+				field_root.add_child(cn)
+		"rock":
+			_disc(field_root, pos, pr, 1.6, _toon(Color(0.5, 0.5, 0.52)), 0.85)
+
+
+## Tints the shrine with the colour of the side holding it.
+func _tint_shrine(holder: int) -> void:
+	if holder == shrine_tint or shrine_ring_mat == null:
+		return
+	shrine_tint = holder
+	var c := Color(0.8, 0.8, 0.75)
+	if holder >= 0:
+		c = Color(0.35, 0.7, 1.0) if holder == my_team else Color(1.0, 0.4, 0.35)
+	shrine_ring_mat.albedo_color = Color(c, 0.9)
+	shrine_pillar_mat.albedo_color = c
+	shrine_pillar_mat.emission = c
+
+
 func _overview_camera() -> void:
-	camera.position = Vector3(sin(cam_yaw) * 21.0, 14.0, cos(cam_yaw) * 21.0)
+	var k := field_radius / ARENA_RADIUS * cam_zoom
+	camera.position = Vector3(sin(cam_yaw) * 21.0 * k, 14.0 * k, cos(cam_yaw) * 21.0 * k)
 	camera.look_at(Vector3.ZERO, Vector3.UP)
 
 
@@ -238,6 +373,10 @@ func _build_setup() -> void:
 		_auto_pick_rival()
 		_refresh_setup())
 	row.add_child(cap_select)
+	row.add_child(_label("Battlefield"))
+	battlefield_select = OptionButton.new()
+	row.add_child(battlefield_select)
+	_refresh_battlefields()
 	var auto := Button.new()
 	auto.text = "Auto-pick my team"
 	auto.pressed.connect(func():
@@ -347,6 +486,43 @@ func _build_shop(v: Control) -> void:
 	spoil_boxes.append(spoil_box)
 	purchase_box = VBoxContainer.new()
 	box.add_child(purchase_box)
+
+
+## Fills the Battlefield picker; keeps the selection across refreshes.
+func _refresh_battlefields() -> void:
+	if probe == null:
+		probe = ClassDB.instantiate("ArenaSim")
+		biomes = JSON.parse_string(probe.biomes_json())
+	var keep := battlefield_select.selected
+	battlefield_select.clear()
+	battlefield_select.add_item("Home: %s" % _biome_name(probe.home_biome(sim, -1)))
+	if rival_ready and rival:
+		battlefield_select.add_item("Rival's home: %s" % _biome_name(probe.home_biome(rival, -1)))
+	else:
+		battlefield_select.add_item("Rival's home: (rival evolving)")
+	battlefield_select.add_item("Random")
+	for b in biomes:
+		battlefield_select.add_item(str(b["name"]))
+	battlefield_select.select(maxi(keep, 0))
+
+
+func _biome_name(index: int) -> String:
+	for b in biomes:
+		if int(b["index"]) == index:
+			return str(b["name"])
+	return "Open field"
+
+
+## The biome index picked in the Battlefield box.
+func _chosen_biome() -> int:
+	var sel := battlefield_select.selected
+	if sel == 0:
+		return probe.home_biome(sim, -1)
+	if sel == 1:
+		return probe.home_biome(rival, -1) if rival_ready and rival else 0
+	if sel == 2:
+		return biomes[rng.randi() % biomes.size()]["index"]
+	return int(biomes[sel - 3]["index"])
 
 
 func _label(text: String) -> Label:
@@ -503,6 +679,7 @@ func _process(delta: float) -> void:
 		if rival_ticks_left == 0:
 			rival_roster = roster_of(rival)
 			rival_ready = true
+			_refresh_battlefields()
 			_refresh_setup()
 	if net:
 		_poll_net()
@@ -519,16 +696,27 @@ func use_rival_roster(roster: Array, preset := "test") -> void:
 	rival.set_meta("preset", preset)
 	rival_roster = roster
 	rival_ready = true
+	_refresh_battlefields()
 	_refresh_setup()
 
 
 # --- Battle -----------------------------------------------------------------
 
-func _spawn(entry: Dictionary, team: int) -> void:
+func _spawn(entry: Dictionary, team: int, simple := false) -> void:
 	var u := Unit.new()
 	u.team = team
 	u.name = entry["name"]
 	var size: String = entry["sheet"]["size"]
+	if simple:
+		# Large armies: a bare position holder; the side's MultiMesh draws it.
+		u.simple = true
+		u.color = Color.html("#" + str(entry["detail"]["color"]).trim_prefix("#")).lerp(Color(0.35, 0.7, 1.0) if team == my_team else Color(1.0, 0.4, 0.35), 0.35)
+		u.node = Node3D.new()
+		world.add_child(u.node)
+		u.mm_index = _simple_count[team]
+		_simple_count[team] += 1
+		units.append(u)
+		return
 	var model := CreatureBuilder.build(entry["detail"])
 	var box := CreatureBuilder.bounds(model)
 	var extent: float = max(box.size.x, max(box.size.y, box.size.z))
@@ -563,18 +751,74 @@ func _spawn(entry: Dictionary, team: int) -> void:
 	units.append(u)
 
 
+## Removes the previous match's units and simple-shape instances.
+func _clear_units() -> void:
+	for u in units:
+		u.node.queue_free()
+	units.clear()
+	for i in 2:
+		if multimeshes[i]:
+			multimeshes[i].queue_free()
+			multimeshes[i] = null
+	_simple_count = [0, 0]
+	if possess_marker:
+		possess_marker.queue_free()
+		possess_marker = null
+
+
+## One MultiMeshInstance3D per side with `count` capsule instances.
+func _make_multimesh(team: int, count: int) -> void:
+	var mesh := CapsuleMesh.new()
+	mesh.radius = 0.5
+	mesh.height = 1.8
+	mesh.radial_segments = 8
+	mesh.rings = 3
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 1.0
+	mesh.material = mat
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = mesh
+	mm.instance_count = count
+	var inst := MultiMeshInstance3D.new()
+	inst.multimesh = mm
+	inst.custom_aabb = AABB(Vector3(-200, -5, -200), Vector3(400, 20, 400))
+	world.add_child(inst)
+	multimeshes[team] = inst
+
+
+## Sets up the field and the unit models once a match's roster is known.
+func _begin_scene(f: Dictionary, counts: Array) -> void:
+	_build_field(f)
+	for t in 2:
+		if counts[t] > SIMPLE_ABOVE:
+			_make_multimesh(t, counts[t])
+
+
 func _start_battle() -> void:
 	setup_panel.visible = false
+	_clear_units()
+	finished = false
+	possessed = -1
 	arena_sim = ClassDB.instantiate("ArenaSim")
 	var rival_counts := _auto_pick(rival_roster)
 	# Units are added in the same order as their scene nodes, so index i in
 	# the simulation is units[i] here.
+	var added := []
 	for pair in [[my_roster, my_counts, 0], [rival_roster, rival_counts, 1]]:
 		for c in pair[0]:
 			for k in pair[1].get(c["key"], 0):
 				if arena_sim.add_unit(c["world"], c["kind"], c["id"], pair[2], c.get("moon", -1)):
-					_spawn(c, pair[2])
-	arena_sim.start(rng.randi())
+					added.append([c, pair[2]])
+	arena_sim.start(rng.randi(), _chosen_biome())
+	var counts := [0, 0]
+	for e in added:
+		counts[e[1]] += 1
+	_begin_scene(JSON.parse_string(arena_sim.field_json()), counts)
+	for e in added:
+		_spawn(e[0], e[1], counts[e[1]] > SIMPLE_ABOVE)
 	_build_battle_ui()
 	running = true
 	_sync()
@@ -633,46 +877,116 @@ func _log(text: String) -> void:
 		log_label.text = "\n".join(log_lines)
 
 
+func _mmss(t: float) -> String:
+	var n := maxi(int(ceil(t)), 0)
+	return "%d:%02d" % [n / 60, n % 60]
+
+
+## Why the match ended, from `ended_by`.
+func _decided_by(mine: float, theirs: float) -> String:
+	match str(state.get("ended_by")):
+		"wipe-out":
+			return "by wiping out the enemy"
+		"objective":
+			return "by holding the shrine for %d s" % int(state.get("hold_time", 60))
+		"time":
+			return "on time: surviving cost %d vs %d" % [int(mine), int(theirs)]
+		"surrender":
+			return "by surrender"
+	return ""
+
+
 ## Copies the simulation state onto the scene.
 func _sync() -> void:
 	state = JSON.parse_string(arena_sim.state_json())
 	var su: Array = state["units"]
+	var alive_n := [0, 0]
+	var mm_dirty := [false, false]
 	for i in units.size():
 		var u: Unit = units[i]
 		var d: Dictionary = su[i]
 		u.alive = d["alive"]
 		u.hp = int(d["hp"])
 		u.max_hp = int(d["max_hp"])
-		u.node.visible = u.alive
+		u.radius = float(d["radius"])
+		var is_mine: bool = u.team == my_team
+		alive_n[0 if is_mine else 1] += 1 if u.alive else 0
 		u.node.position = Vector3(d["x"], 0, d["z"])
 		var facing := Vector3(d["fx"], 0, d["fz"])
 		if online and i == possessed:
 			u.node.position += predicted_offset
 			if last_steer.length() > 0.01:
 				facing = Vector3(last_steer.x, 0, last_steer.y)
+		if u.simple:
+			var mm: MultiMesh = multimeshes[u.team].multimesh
+			var sc := maxf(u.radius, 0.3) * 2.0
+			if u.alive:
+				var basis := Basis.looking_at(facing, Vector3.UP, true) if facing.length() > 0.01 else Basis()
+				mm.set_instance_transform(u.mm_index, Transform3D(basis.scaled(Vector3.ONE * sc), u.node.position + Vector3(0, 0.9 * sc, 0)))
+			else:
+				mm.set_instance_transform(u.mm_index, Transform3D(Basis().scaled(Vector3.ZERO), u.node.position))
+			mm.set_instance_color(u.mm_index, u.color)
+			continue
+		u.node.visible = u.alive
 		if facing.length() > 0.01:
 			u.node.look_at(u.node.position + facing, Vector3.UP, true)
 		u.label.text = "%s\n%d/%d%s" % [u.name, max(u.hp, 0), u.max_hp, "  ◆" if i == possessed else ""]
 	if possessed >= 0 and not units[possessed].alive:
 		possessed = -1
+	_update_possess_marker()
 	for line in JSON.parse_string(arena_sim.events_json()):
 		_log(line)
-	var a := units.filter(func(u): return u.alive and u.team == my_team).size()
-	var b := units.filter(func(u): return u.alive and u.team != my_team).size()
+	var other := 1 - my_team
+	var hold: Array = state.get("hold", [0.0, 0.0])
+	var hold_time := float(state.get("hold_time", 60.0))
+	var cost: Array = state.get("surviving_cost", [0, 0])
+	_tint_shrine(my_team if float(hold[my_team]) > 0.0 else (other if float(hold[other]) > 0.0 else -1))
 	if status_label:
-		status_label.text = "Your team: %d standing   ·   Rival: %d standing" % [a, b]
+		var shrine := "Shrine: unheld"
+		if float(hold[my_team]) > 0.0:
+			shrine = "Shrine: You %d/%d s" % [int(hold[my_team]), int(hold_time)]
+		elif float(hold[other]) > 0.0:
+			shrine = "Shrine: Rival %d/%d s" % [int(hold[other]), int(hold_time)]
+		status_label.text = "Your team: %d standing (cost %d)   ·   Rival: %d standing (cost %d)\nTime left %s   ·   %s" % [
+			alive_n[0], int(cost[my_team]), alive_n[1], int(cost[other]),
+			_mmss(float(state.get("time_limit", 600.0)) - float(state["time"])), shrine]
 	var result = state["result"]
 	if result != null and not finished:
 		finished = true
 		var won: bool = result == ("a" if my_team == 0 else "b")
 		var text := "[b][color=#77dd77]Victory![/color][/b]" if won else ("[b]Draw.[/b]" if result == "draw" else "[b][color=#dd7777]Defeat.[/color][/b]")
+		var why := _decided_by(float(cost[my_team]), float(cost[other]))
+		if why != "":
+			text += " Decided %s." % why
 		if online:
 			_log(text)
 		else:
 			var fallen := units.filter(func(u): return not u.alive and u.team == my_team).size()
 			_log("%s %d of your champions fell. (Online, in ranked matches, they would be lost forever.)" % [text, fallen])
 		if status_label:
-			status_label.text = "Victory!" if won else ("Draw." if result == "draw" else "Defeat.")
+			status_label.text = ("Victory!" if won else ("Draw." if result == "draw" else "Defeat.")) + ("\nDecided %s." % why if why != "" else "")
+
+
+## Simple-shape units have no label or model, so the possessed one gets a ring.
+func _update_possess_marker() -> void:
+	var u: Unit = units[possessed] if possessed >= 0 and possessed < units.size() else null
+	if u == null or not u.simple or not u.alive:
+		if possess_marker:
+			possess_marker.visible = false
+		return
+	if possess_marker == null:
+		possess_marker = MeshInstance3D.new()
+		var torus := TorusMesh.new()
+		torus.inner_radius = 0.9
+		torus.outer_radius = 1.1
+		possess_marker.mesh = torus
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = Color(1.0, 0.9, 0.3)
+		possess_marker.material_override = mat
+		world.add_child(possess_marker)
+	possess_marker.visible = true
+	possess_marker.position = u.node.position + Vector3(0, 0.08, 0)
 
 
 ## Advances the battle by `dt` seconds of arena time.
@@ -742,6 +1056,10 @@ func _on_view_input(event: InputEvent) -> void:
 		dragging = event.pressed
 		if event.pressed and running:
 			_pick_unit(event.position)
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_UP:
+		cam_zoom = clampf(cam_zoom * 0.9, 0.4, 1.8)
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		cam_zoom = clampf(cam_zoom / 0.9, 0.4, 1.8)
 	elif event is InputEventMouseMotion and dragging and possessed < 0:
 		cam_yaw -= event.relative.x * 0.005
 
@@ -771,7 +1089,7 @@ func _update_camera(delta: float) -> void:
 	if possessed >= 0 and units[possessed].alive:
 		var target: Vector3 = units[possessed].node.position
 		var back := Basis(Vector3.UP, cam_yaw) * Vector3(0, 0, 1)
-		var want := target + back * 9.0 + Vector3(0, 6.0, 0)
+		var want := target + (back * 9.0 + Vector3(0, 6.0, 0)) * cam_zoom
 		camera.position = camera.position.lerp(want, clampf(delta * 4.0, 0.0, 1.0))
 		camera.look_at(target + Vector3(0, 0.8, 0), Vector3.UP)
 	else:
@@ -910,9 +1228,7 @@ func _queue_when_bound() -> void:
 ## arrive with their sheets and appearance.
 func _start_online_battle(msg: Dictionary) -> void:
 	# Rejoining: rebuild the scene from scratch.
-	for u in units:
-		u.node.queue_free()
-	units.clear()
+	_clear_units()
 	if battle_ui:
 		battle_ui.queue_free()
 		battle_ui = null
@@ -922,6 +1238,10 @@ func _start_online_battle(msg: Dictionary) -> void:
 	my_team = int(msg["team"])
 	setup_panel.visible = false
 	arena_sim = net
+	var counts := [0, 0]
+	for team in 2:
+		counts[team] = msg["rosters"][team].size()
+	_begin_scene(JSON.parse_string(net.field_json()), counts)
 	for team in 2:
 		var sheets: Array = msg["rosters"][team]
 		var looks: Array = msg["looks"][team]
@@ -931,7 +1251,7 @@ func _start_online_battle(msg: Dictionary) -> void:
 			for p in look["parts"]:
 				parts.append({"part": p["part"], "count": p["count"], "size": float(p["size_milli"]) / 1000.0})
 			var detail := {"parts": parts, "color": look["color"], "otherworldly": look["otherworldly"]}
-			_spawn({"name": sheets[i]["name"], "sheet": {"size": sheets[i]["size"]}, "detail": detail}, team)
+			_spawn({"name": sheets[i]["name"], "sheet": {"size": sheets[i]["size"]}, "detail": detail}, team, counts[team] > SIMPLE_ABOVE)
 	_build_battle_ui()
 	running = true
 	_sync()

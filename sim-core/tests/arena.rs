@@ -105,3 +105,119 @@ fn possessed_units_follow_steering_and_matches_replay() {
             .collect::<Vec<_>>()
     );
 }
+
+mod revisit {
+    //! The arena revisit (§6.1): objective, time limit, biome battlefields,
+    //! large armies.
+    use super::*;
+    use sim_core::arena::{Battlefield, Biome, Ground, Vec2, HOLD_TIME, OBJECTIVE_RADIUS, TIME_LIMIT};
+
+    fn pair() -> (CharacterSheet, CharacterSheet) {
+        let pool = sheets("frozen_moon", 1, 2400);
+        (pool[0].clone(), pool[pool.len() - 1].clone())
+    }
+
+    /// Both sides possessed and standing still, at chosen spots.
+    fn standoff(a: CharacterSheet, b: CharacterSheet, pa: Vec2, pb: Vec2) -> Arena {
+        let mut ar = Arena::new(vec![a], vec![b], 3);
+        ar.units[0].pos = pa;
+        ar.units[1].pos = pb;
+        ar.command(ArenaCommand::Possess { team: 0, unit: Some(0) });
+        ar.command(ArenaCommand::Possess { team: 1, unit: Some(1) });
+        ar
+    }
+
+    #[test]
+    fn holding_the_shrine_alone_wins() {
+        let (a, b) = pair();
+        let far = Vec2::new(Fx::ZERO, Fx::from_int(14));
+        let mut ar = standoff(a, b, Vec2::default(), far);
+        run(&mut ar);
+        assert_eq!(ar.result, Some(ArenaResult::TeamA));
+        assert_eq!(ar.ended_by, Some("objective"));
+        assert!(ar.time >= HOLD_TIME && ar.time < HOLD_TIME + Fx::ONE);
+    }
+
+    #[test]
+    fn at_time_out_the_costlier_survivors_win() {
+        let (rich, poor) = pair();
+        assert!(rich.cost.cost * 20 > poor.cost.cost * 21);
+        let (pa, pb) = (Vec2::new(Fx::ZERO, -Fx::from_int(14)), Vec2::new(Fx::ZERO, Fx::from_int(14)));
+        let mut ar = standoff(rich.clone(), poor, pa, pb);
+        run(&mut ar);
+        assert_eq!(ar.result, Some(ArenaResult::TeamA));
+        assert_eq!(ar.ended_by, Some("time"));
+        assert!(ar.time >= TIME_LIMIT);
+        let mut even = standoff(rich.clone(), rich, pa, pb);
+        run(&mut even);
+        assert_eq!(even.result, Some(ArenaResult::Draw));
+    }
+
+    #[test]
+    fn battlefields_follow_their_biome() {
+        for biome in Biome::ALL {
+            let f = Battlefield::generate(biome, 7, 40);
+            assert_eq!(f, Battlefield::generate(biome, 7, 40), "deterministic");
+            assert_eq!(f.patches.is_empty(), biome == Biome::Open, "{biome:?}");
+            for p in &f.patches {
+                assert!(p.center.length() > p.radius + OBJECTIVE_RADIUS, "the shrine stays clear");
+            }
+        }
+        let lava = Battlefield::generate(Biome::Lava, 7, 40);
+        assert!(lava.patches.iter().any(|p| p.ground == Ground::Lava));
+        let sea = Battlefield::generate(Biome::Ocean, 7, 40);
+        assert!(sea.patches.iter().all(|p| p.ground == Ground::Water));
+        assert!(Battlefield::radius_for(1000) > Battlefield::radius_for(40) * Fx::from_int(2));
+    }
+
+    #[test]
+    fn lava_burns_walkers_and_biomes_replay() {
+        let pool = sheets("frozen_moon", 1, 2400);
+        let lava = Battlefield::generate(Biome::Lava, 11, 2);
+        let pool_spot = lava.patches.iter().find(|p| p.ground == Ground::Lava).unwrap().center;
+        let walker = pool.iter().find(|s| s.speed_fly == 0).unwrap().clone();
+        let mut ar = Arena::on(vec![walker.clone()], vec![walker], 11, Biome::Lava);
+        ar.units[0].pos = pool_spot;
+        ar.command(ArenaCommand::Possess { team: 0, unit: Some(0) });
+        let hp = ar.units[0].hp;
+        for _ in 0..40 {
+            ar.step();
+        }
+        assert!(ar.units[0].hp < hp, "standing in lava burns");
+
+        let a = pool[0..3].to_vec();
+        let b = pool[3..6].to_vec();
+        let mut live = Arena::on(a.clone(), b.clone(), 4, Biome::Forest);
+        run(&mut live);
+        let again = Arena::replay_on(a, b, 4, Biome::Forest, &live.command_log);
+        assert_eq!(again.state_hash(), live.state_hash());
+        assert_eq!(again.result, live.result);
+    }
+
+    #[test]
+    fn armies_of_five_hundred_a_side_finish() {
+        let pool = sheets("earthlike", 2, 1600);
+        let cheap: Vec<CharacterSheet> = pool.iter().rev().take(5).cloned().collect();
+        let side = |k: usize| (0..500).map(|i| cheap[(i + k) % cheap.len()].clone()).collect::<Vec<_>>();
+        let mut ar = Arena::on(side(0), side(2), 1, Biome::Plains);
+        let start = std::time::Instant::now();
+        run(&mut ar);
+        assert!(ar.result.is_some());
+        eprintln!("500 v 500: {:?} in {:.1?} ({} ticks)", ar.ended_by, start.elapsed(), ar.tick());
+    }
+
+    #[test]
+    fn worlds_choose_their_battlefield() {
+        let biome = |p: &str| {
+            let mut w = World::new(1);
+            for a in preset_actions(&w, p).unwrap() {
+                w.apply(a);
+            }
+            w.apply(Action::Tick { ticks: 200 });
+            w.arena_biome()
+        };
+        assert_eq!(biome("magma_world"), Biome::Lava);
+        assert_eq!(biome("frozen_moon"), Biome::Ice);
+        assert!(matches!(biome("earthlike"), Biome::Plains | Biome::Forest | Biome::Ocean), "{:?}", biome("earthlike"));
+    }
+}

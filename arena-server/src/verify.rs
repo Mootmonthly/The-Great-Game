@@ -34,6 +34,8 @@ pub struct Verified {
     pub loot: Vec<u64>,
     /// Shop grants used in this world's history.
     pub purchases: Vec<u64>,
+    /// The champion's home battlefield (§6.1).
+    pub biome: sim_core::arena::Biome,
 }
 
 /// Checks every loot grant in the log: signed by this server, granted to
@@ -278,6 +280,7 @@ pub fn verify_with(
         remains,
         loot,
         purchases,
+        biome: world.arena_biome(),
     })
 }
 
