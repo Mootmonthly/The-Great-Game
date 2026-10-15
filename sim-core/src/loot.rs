@@ -35,6 +35,9 @@ pub struct LootGrant {
     /// the server pays this much Essence (§3).
     #[serde(default)]
     pub value: u64,
+    /// The gear it carried, for the winner's armoury (§5.4).
+    #[serde(default)]
+    pub gear: Vec<crate::equipment::Item>,
     /// Server signature (hex) over the grant with this field empty.
     pub signature: String,
 }
@@ -88,5 +91,8 @@ impl World {
             species: id,
             biomass,
         });
+        // Its gear, made for its body.
+        let plan = crate::equipment::BodyPlan::of(&r.genome.body, r.genome.size, r.genome.milestones);
+        self.store_loot(&grant.gear, &grant.from, plan);
     }
 }

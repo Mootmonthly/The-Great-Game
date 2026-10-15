@@ -263,6 +263,11 @@ pub struct World {
     /// Civilizations, living and fallen (§4.5).
     #[serde(default)]
     pub civs: Vec<crate::civ::Civilization>,
+    /// Gear looted from fallen champions (§5.4).
+    #[serde(default)]
+    pub armoury: Vec<crate::equipment::Looted>,
+    #[serde(default)]
+    pub(crate) next_item_id: u32,
     #[serde(default)]
     pub(crate) next_civ_id: u32,
     /// The worlds of this planet's moons, in the order of `planet.moons`.
@@ -288,7 +293,7 @@ fn elements_of(substances: &[Substance]) -> Vec<String> {
 
 /// Bumped whenever the world's stored form or rules change, so old
 /// snapshots are not trusted.
-const SNAPSHOT_VERSION: u32 = 5;
+const SNAPSHOT_VERSION: u32 = 6;
 
 #[derive(Serialize)]
 struct SnapshotRef<'a> {
@@ -390,6 +395,8 @@ impl World {
             laws: crate::laws::Laws::default(),
             souls: Vec::new(),
             civs: Vec::new(),
+            armoury: Vec::new(),
+            next_item_id: 0,
             next_civ_id: 1,
             moon_worlds: Vec::new(),
             moons_made: 0,
@@ -540,6 +547,9 @@ impl World {
                         | Action::ChampionFell { .. }
                         | Action::Loot { .. }
                         | Action::Purchase { .. }
+                        | Action::Equip { .. }
+                        | Action::Unequip { .. }
+                        | Action::Refit { .. }
                 );
                 if let (true, Some(m)) = (allowed, self.moon_worlds.get_mut(*moon as usize)) {
                     m.apply((**action).clone());
@@ -548,6 +558,9 @@ impl World {
             Action::ChampionFell { individual } => self.champion_fell(*individual),
             Action::Loot { grant, x, y } => self.apply_loot(grant, *x, *y),
             Action::Purchase { grant, x, y } => self.apply_purchase(grant, *x, *y),
+            Action::Equip { item, individual } => self.equip(*item, *individual),
+            Action::Unequip { item } => self.unequip(*item),
+            Action::Refit { item, individual } => self.refit(*item, *individual),
             Action::SetLaw { law, value } => self.set_law(*law, *value),
             Action::SetVeilLaw { openness } => {
                 self.veil_law = (*openness).clamp(Fx::ZERO, Fx::ONE);
@@ -991,6 +1004,11 @@ impl World {
         }
         for x in &self.individuals {
             x.hash_into(&mut h);
+        }
+        for l in &self.armoury {
+            h.u64(l.id as u64 | (l.holder.unwrap_or(u32::MAX) as u64) << 32);
+            h.u64(l.refit_until.unwrap_or(u64::MAX));
+            h.bytes(l.item.name.as_bytes());
         }
         h.finish()
     }

@@ -519,7 +519,7 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
     // A phase membrane leaves part of the body elsewhere: harder to hit.
     let phased = if b.count(PartKind::PhaseMembrane) > 0 { 2 } else { 0 };
     // A civilization arms its people (§5.4).
-    let gear = crate::equipment::loadout(world, s);
+    let gear = crate::equipment::gear_of(world, s, ind);
     let gear_armor: i64 = gear.iter().map(|g| g.armor).sum();
     let armor_class = (10
         + modifier(dexterity)

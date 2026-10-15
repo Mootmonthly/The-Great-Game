@@ -630,6 +630,7 @@ fn bind(
             token: token.clone(),
             fingerprint: v.fingerprint,
             remains: Some(v.remains),
+            gear: v.gear,
         },
     );
     shared.save(&state);
@@ -910,6 +911,7 @@ fn finish(shared: &Shared, info: &MatchInfo, arena: &Arena, surrendered: Option<
                             remains,
                             biomass: Fx::ONE + Fx::ratio(c.token.cost, 20),
                             value,
+                            gear: c.gear.clone(),
                             signature: String::new(),
                         };
                         grant.signature = shared.signer.sign(&grant.payload());

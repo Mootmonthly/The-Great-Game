@@ -36,6 +36,8 @@ pub struct Verified {
     pub purchases: Vec<u64>,
     /// The champion's home battlefield (§6.1).
     pub biome: sim_core::arena::Biome,
+    /// The gear it carries, looted by the winner if it falls (§5.4).
+    pub gear: Vec<sim_core::equipment::Item>,
 }
 
 /// Checks every loot grant in the log: signed by this server, granted to
@@ -265,6 +267,10 @@ pub fn verify_with(
         ChampionKind::Individual => world.individual_by_id(id).map_or(0, |i| i.species),
     };
     let s = world.species_by_id(species_id).ok_or("being has no species")?;
+    let gear = match kind {
+        ChampionKind::Species => sim_core::equipment::gear_of(world, s, None),
+        ChampionKind::Individual => sim_core::equipment::gear_of(world, s, world.individual_by_id(id)),
+    };
     let remains = Remains {
         name: s.name.clone(),
         profile: s.profile,
@@ -281,6 +287,7 @@ pub fn verify_with(
         loot,
         purchases,
         biome: world.arena_biome(),
+        gear,
     })
 }
 

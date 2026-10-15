@@ -352,6 +352,7 @@ impl World {
     pub(crate) fn champion_fell(&mut self, id: u32) {
         if let Ok(k) = self.individuals.binary_search_by_key(&id, |x| x.id) {
             if self.individuals[k].is_alive() {
+                self.lose_gear(id);
                 self.kill_individual(k, "fell in the arena".into(), None);
             }
         }
@@ -375,6 +376,8 @@ impl World {
         let id = self.individuals[k].id;
         self.individuals[k].death_tick = Some(tick);
         self.individuals[k].cause_of_death = Some(cause);
+        let dead = self.individuals[k].id;
+        self.drop_gear(dead);
         self.soul_departs(k);
         // Friends mourn, and hold a grudge against the killer.
         let friends: Vec<u32> = self.individuals[k]

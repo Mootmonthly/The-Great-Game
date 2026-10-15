@@ -508,7 +508,8 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 
 - **Making and using (proposed detail):** only sapient, tool-using civilizations make gear. Passive gear (armour, barding, charms) works on any body it fits. Active gear (held weapons, foci) also needs enough Intelligence to use well.
 - **Unique gear by chemistry:** items carry the substance, damage type and laws of the world that made them. For example, silicon life forges heat-proof crystal blades, and beings from beyond make relics no native can craft.
-- **Refitting looted gear (decided):** looted gear can be refitted to a different body plan at a cost (cost unit to be set: resources, Essence or time). Until refitted, it fits only bodies with the parts it was made for.
+- **Refitting looted gear (decided):** looted gear can be refitted to a different body plan at a cost. Until refitted, it fits only bodies with the parts it was made for.
+  - **Cost unit (built; proposed by Claude, owner may revise):** time and a smith. The wearer's own people refit the item, which takes grade + 1 years (chitin 1 year, iron 4, tungsten 5), and needs a civilization of the Crafting era or later. Beings with no civilization can only use gear that fits them as it is. This keeps refitting offline and in-world; Essence stays the bridge currency for the server.
 - **Timing (decided):** built in the content phase (roadmap phase 4).
 - **Implemented (`sim-core/src/equipment.rs`; numbers proposed):** a civilization from the Tribal era onwards arms every member of its species, both named individuals and rank and file.
   - **Materials:** from the best its lands allow. Iron (grade 3) from Forging. Crystal (grade 2) for silicon life, and obsidian (grade 1) from silicate rock, both from Crafting. Otherwise bone and wood, or chitin (grade 0).
@@ -521,7 +522,14 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
     - Glands (Classical and later): a breath focus, +2d6 breath.
     - Sapient minds (with a Rituals tradition): a spell focus that adds to-hit with spells.
   - **Enchantment:** an Arcane Schools tradition or higher enchants weapons, giving +1 to hit and +2 damage.
-  - Equipment shows on the sheet and changes its cost. Gear carried home as loot and refitting come later.
+  - Equipment shows on the sheet and changes its cost.
+- **Gear looting and refitting (built, `sim-core/src/equipment.rs`):**
+  - **Body plans:** every item is made for a body plan: size category, and the counts of limbs, tentacles, wings, jaws and glands, plus sapience. Armour fits only the same plan. Other gear needs the part it attaches to (hands need two limbs, blades two tentacles, fang caps a jaw, wing blades wings, breath foci a gland, spell foci a sapient mind) on a body of the same size.
+  - **Looting:** when a champion falls in a ranked match, its gear travels with its remains in the signed loot grant. Brought home, the gear goes into the world's **armoury** (each world, planet or moon, has one).
+  - **Equipping:** a named individual may take an item that fits from the armoury, carry it into the arena, and return it. Species units are rank and file and use only their people's gear.
+  - **Refitting:** as above. While an item is being refitted the individual carries it but gains nothing from it.
+  - **Death:** an individual who dies at home drops its gear back into the armoury. One who falls in the arena loses it to the winner.
+  - **Viewer:** the Individuals tab lists the armoury with equip, return and refit controls (client work follows the globe update).
 
 ### 5.5 Classes (decided: earned by named individuals)
 
@@ -750,7 +758,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 **Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, reconnects and client-side prediction, permadeath with a ledger of the dead, looting, the Essence economy and shop, and online play from the arena screen, the arena revisit (shrine objective, biome battlefields, 10-minute limit) and armies of 500 a side. Remaining: Steam identity in the client (needs the Steamworks SDK and a Steam App ID); cloud hosting (needs a server account; the hosting kit is ready).
 
-**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: gear looting and refitting, religions and cults. Archetypes (§4.4) and the cost-balance re-check (§5.3) are done.
+**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: religions and cults. Archetypes (§4.4), gear looting and refitting (§5.4) and the cost-balance re-check (§5.3) are done.
 
 ## 9. Business Model
 
@@ -783,6 +791,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Moons | A player has at most one moon for now; more moons are purchasable with Essence. A moon is its own world: it gets every planet control (temperature, composition, atmosphere, gravity, rotation…) and its own simulated life, while staying a moon of the main planet with all the orbital mechanics that entails |
 | — | Essence economy | 500 Essence per ranked win. War spoils have a pseudo-cost (the fallen champion's cost) and can be sold back to the server 1:1 for Essence, which deletes them. Shop: heavy metals 1,000, rare earths 2,000 and radioactive elements 3,000 per deposit; extra moons 10,000; extra planets 50,000 (§3) |
 | — | Moon orbits | A moon world is never lost to a slider: Natural mode keeps its orbit between the Roche limit and the stable limit, drawing it in if the limit shrinks (proposed by Claude, approved by the owner) |
+| — | Refit cost | Refitting looted gear takes grade + 1 years and a Crafting-era people; no Essence (proposed by Claude, owner may revise) |
 | — | Arena rules | Win by wiping out the enemy or holding the central objective alone; procedurally generated biome battlefields from worlds; matches capped at 10 minutes, after which the side with more surviving cost wins (draw within 5%) (§6.1) |
 | — | Ecology | Flora and fauna form a real food chain: plants hold the light niche, animals with nervous systems graze plants instead of photosynthesising, predators eat animals |
 | — | Humanoid sapients | Sapience biases evolution toward a humanoid body plan (two legs, two arms, a head with eyes) in the simulation itself |
