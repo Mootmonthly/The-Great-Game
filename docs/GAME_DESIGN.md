@@ -504,6 +504,20 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 - **Victory (decided):** a side wins by wiping out the enemy army, or by holding the central objective (a shrine) alone for a set time. The objective stops small, fast armies from kiting forever.
 - **Maps (decided):** procedurally generated biome battlefields whose terrain and hazards come from a world's biome (ocean, lava field, ice, forest and so on), so aquatic, flying and fire-resistant creatures matter.
 - **Match length (decided):** at most 10 minutes. At time-out, the side with more surviving cost wins; within 5% it is a draw.
+- **Built (`sim-core/src/arena.rs`):**
+  - **Shrine:** radius 3 at the centre; 60 s held alone wins. AI units go to contest it while the enemy holds it.
+  - **Battlefields:** seven biomes: open field, plains, forest, archipelago, ice field, lava field, rocky desert.
+  - **Terrain:**
+    - Water slows walkers to 40%.
+    - Ice slows walkers to 70%.
+    - Trees give +2 AC and slow large walkers.
+    - Lava burns walkers for 2d6 fire each round.
+    - Rock is impassable to walkers.
+    - Fliers ignore ground terrain, and swimmers ignore water. AI walkers steer around rock and around lava they would burn in.
+  - **Home biome:** a world's biome comes from its climate: molten worlds get lava, frozen worlds ice, sea worlds archipelagos, dry worlds rocky desert, plant-rich worlds forest, otherwise plains. Online, the server picks one side's home biome for each match.
+  - **Field size:** fields grow with army size, to radius 16 + about 1.6 × √(units).
+  - **Performance:** a spatial grid keeps 500 v 500 at about 4 ms per tick.
+  - **Client:** a Battlefield picker, terrain and shrine drawing, a HUD with time left, shrine progress and surviving cost, and instanced capsules for sides of more than 60 units.
 - **Decided: team size is variable.** The only limit is the total cost cap. Example with a 1000 cap: one player brings 1000 one-cost chumps; the other brings a single 1000-cost neutron-star dragon. Both are legal.
 - **Cost cap:** fixed per queue. Default queue: 1000. Suggested extra queues: skirmish (250), duel (1 champion, 1000 cap), unlimited casual.
 - **Control scheme (proposed):** armies of any size need two control layers:
@@ -683,7 +697,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 **Phase 2 status:** done: stylised 3D globe; day length, axial tilt, moons (now worlds of their own) and rings; procedural creature models from body-part genomes, with upright humanoids and rooted plants; local arena with cost-capped teams, real-time 5e-style combat and possession of a unit. Region visits with first-person possession are also done. The arena's rules run in the deterministic Rust core with replayable command logs. Natural/Godhand modes and star types are done. Remaining: final art (needs an artist; the procedural shapes are placeholders).
 
-**Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, reconnects and client-side prediction, permadeath with a ledger of the dead, looting, the Essence economy and shop, and online play from the arena screen. Remaining: the arena revisit (objectives, biome maps, time limit) and large armies (500 units per side); Steam identity in the client (needs the Steamworks SDK and a Steam App ID); cloud hosting (needs a server account; the hosting kit is ready).
+**Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, reconnects and client-side prediction, permadeath with a ledger of the dead, looting, the Essence economy and shop, and online play from the arena screen, the arena revisit (shrine objective, biome battlefields, 10-minute limit) and armies of 500 a side. Remaining: Steam identity in the client (needs the Steamworks SDK and a Steam App ID); cloud hosting (needs a server account; the hosting kit is ready).
 
 **Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: archetypes, gear looting and refitting, religions and cults. The cost-balance re-check is done (§5.3).
 

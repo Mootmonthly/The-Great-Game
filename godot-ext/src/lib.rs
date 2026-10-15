@@ -1092,10 +1092,35 @@ impl ArenaSim {
         }
     }
 
+    /// Starts the match on a battlefield of biome `biome` (an index into
+    /// `biomes_json`; 0 is the open field).
     #[func]
-    fn start(&mut self, seed: i64) {
+    fn start(&mut self, seed: i64, biome: i64) {
         let [a, b] = std::mem::take(&mut self.teams);
-        self.arena = Some(sim_core::arena::Arena::new(a, b, seed as u64));
+        let biome = sim_core::arena::Biome::ALL
+            .get(biome.max(0) as usize)
+            .copied()
+            .unwrap_or_default();
+        self.arena = Some(sim_core::arena::Arena::on(a, b, seed as u64, biome));
+    }
+
+    /// The battlefield biomes, by index: [{index, name}].
+    #[func]
+    fn biomes_json(&self) -> GString {
+        to_gstring(json!(sim_core::arena::Biome::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, b)| json!({"index": i, "name": b.name()}))
+            .collect::<Vec<_>>()))
+    }
+
+    /// The battlefield: biome, radius, shrine and terrain patches.
+    #[func]
+    fn field_json(&self) -> GString {
+        match self.arena.as_ref() {
+            Some(a) => to_gstring(field_value(a)),
+            None => GString::from("null"),
+        }
     }
 
     /// Advances `ticks` steps of 0.1 s.
@@ -1168,6 +1193,19 @@ impl ArenaSim {
         to_gstring(json!(event_lines(a, &events)))
     }
 
+    /// The battlefield biome index of `world` (or its moon `moon`, -1 for
+    /// the planet): where its champions fight at home.
+    #[func]
+    fn home_biome(&self, world: Gd<SimWorld>, moon: i64) -> i64 {
+        let planet = world.bind();
+        let w = match usize::try_from(moon) {
+            Ok(k) => planet.world.moon(k).unwrap_or(&planet.world),
+            Err(_) => &planet.world,
+        };
+        let b = w.arena_biome();
+        sim_core::arena::Biome::ALL.iter().position(|x| *x == b).unwrap_or(0) as i64
+    }
+
     /// Number of player commands recorded (they make the match replayable).
     #[func]
     fn command_count(&self) -> i64 {
@@ -1199,7 +1237,35 @@ fn arena_state(a: &sim_core::arena::Arena, my_team: u8) -> Value {
         sim_core::arena::ArenaResult::TeamB => "b",
         sim_core::arena::ArenaResult::Draw => "draw",
     });
-    json!({"time": a.time.to_f64(), "result": result, "units": units, "my_team": my_team})
+    json!({
+        "time": a.time.to_f64(), "result": result, "units": units, "my_team": my_team,
+        "time_limit": sim_core::arena::TIME_LIMIT.to_f64(),
+        "hold": [a.hold[0].to_f64(), a.hold[1].to_f64()],
+        "hold_time": sim_core::arena::HOLD_TIME.to_f64(),
+        "ended_by": a.ended_by,
+        "surviving_cost": [a.surviving_cost(0), a.surviving_cost(1)],
+    })
+}
+
+/// The battlefield of a match, for rendering.
+pub(crate) fn field_value(a: &sim_core::arena::Arena) -> Value {
+    let patches: Vec<Value> = a
+        .field
+        .patches
+        .iter()
+        .map(|p| {
+            json!({
+                "ground": format!("{:?}", p.ground).to_lowercase(),
+                "x": p.center.x.to_f64(), "z": p.center.z.to_f64(), "radius": p.radius.to_f64(),
+            })
+        })
+        .collect();
+    json!({
+        "biome": a.field.biome.name(),
+        "radius": a.field.radius.to_f64(),
+        "objective_radius": sim_core::arena::OBJECTIVE_RADIUS.to_f64(),
+        "patches": patches,
+    })
 }
 
 /// Readable log lines for arena events.

@@ -317,6 +317,14 @@ impl NetClient {
     // The same rendering interface as `ArenaSim`.
 
     #[func]
+    fn field_json(&self) -> GString {
+        match &self.current {
+            Some(m) => to_gstring(crate::field_value(&m.arena)),
+            None => GString::from("null"),
+        }
+    }
+
+    #[func]
     fn state_json(&self) -> GString {
         match &self.current {
             Some(m) => to_gstring(arena_state(&m.arena, m.team)),
