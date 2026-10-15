@@ -477,10 +477,12 @@ impl World {
                 self.civs[b].relation_mut(ida).opinion = opinion;
                 let at_war = self.civs[a].at_war_with(idb);
                 let warlike = ca.militarism.max(cb.militarism);
+                // Hatred breeds war; how often depends on how warlike the
+                // more martial side is. Truly peaceful peoples never start one.
                 if !at_war
                     && opinion < -Fx::ratio(4, 10)
-                    && warlike > Fx::ratio(55, 100)
-                    && self.rng.chance(Fx::ratio(3, 10))
+                    && warlike > Fx::ratio(35, 100)
+                    && self.rng.chance(warlike * Fx::ratio(1, 10))
                 {
                     for (k, other) in [(a, idb), (b, ida)] {
                         let r = self.civs[k].relation_mut(other);
