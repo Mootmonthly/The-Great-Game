@@ -158,6 +158,7 @@ pub enum Building {
     Library,
     Barracks,
     Shrine,
+    Temple,
     Tower,
     Aqueduct,
     Factory,
@@ -179,6 +180,7 @@ impl Building {
             Building::Library => "Library",
             Building::Barracks => "Barracks",
             Building::Shrine => "Shrine",
+            Building::Temple => "Temple",
             Building::Tower => "Wizard's tower",
             Building::Aqueduct => "Aqueduct",
             Building::Factory => "Factory",
@@ -212,6 +214,14 @@ pub struct Civilization {
     pub relations: Vec<Relation>,
     pub battles_won: u32,
     pub battles_lost: u32,
+    /// The religion it holds, if any (§4.8).
+    #[serde(default)]
+    pub faith: Option<u32>,
+    /// Wonder and fear at the player's works, towards a faith in the Maker.
+    #[serde(default)]
+    pub awe: Fx,
+    #[serde(default)]
+    pub dread: Fx,
 }
 
 fn level(table: &[(&str, i64)], points: Fx) -> usize {
@@ -347,6 +357,10 @@ impl World {
         if arcana >= 2 && tier >= Tier::Village {
             out.push(Building::Shrine);
         }
+        // A people with a faith raises temples to it (§4.8).
+        if c.faith.is_some() && era >= 1 && tier >= Tier::Town {
+            out.push(Building::Temple);
+        }
         if arcana >= 3 && tier >= Tier::Town {
             out.push(Building::Tower);
         }
@@ -410,6 +424,7 @@ impl World {
                 self.grow_civilization(k);
             }
         }
+        self.update_religions();
         self.diplomacy();
         self.wars();
     }
@@ -485,6 +500,9 @@ impl World {
             relations: Vec::new(),
             battles_won: 0,
             battles_lost: 0,
+            faith: None,
+            awe: Fx::ZERO,
+            dread: Fx::ZERO,
         });
         id
     }
@@ -570,8 +588,14 @@ impl World {
 
         // Schism: a sprawling, fractious people splits in two.
         let n = self.civs[k].settlements.len();
+        // A shared faith holds a people together; a cult tears at it.
+        let faith_bond = match self.faith_character(k) {
+            Some(crate::religion::Character::Cult) => -Fx::ratio(1, 10),
+            Some(_) => Fx::ratio(15, 100),
+            None => Fx::ZERO,
+        };
         if n >= 12
-            && culture.cohesion < Fx::ratio(4, 10)
+            && culture.cohesion + faith_bond < Fx::ratio(4, 10)
             && self.rng.chance(Fx::ratio(5, 100))
         {
             let capital = self.civs[k].settlements[0].region;
@@ -624,9 +648,16 @@ impl World {
                 }
                 let (ca, cb) = (self.civs[a].culture, self.civs[b].culture);
                 let kin = self.civs[a].species == self.civs[b].species;
+                // Shared faith warms relations; rival faiths sour them.
+                let faith = match (self.civs[a].faith, self.civs[b].faith) {
+                    (Some(x), Some(y)) if x == y => Fx::ratio(4, 100),
+                    (Some(_), Some(_)) => -Fx::ratio(3, 100),
+                    _ => Fx::ZERO,
+                };
                 let drift = (ca.similarity(&cb) - Fx::HALF) * Fx::ratio(1, 10)
                     - if kin { Fx::ZERO } else { Fx::ratio(5, 100) }
-                    - (ca.caution + cb.caution) * Fx::ratio(2, 100);
+                    - (ca.caution + cb.caution) * Fx::ratio(2, 100)
+                    + faith;
                 let (ida, idb) = (self.civs[a].id, self.civs[b].id);
                 let tick = self.tick;
                 let opinion = {
@@ -636,7 +667,9 @@ impl World {
                 };
                 self.civs[b].relation_mut(ida).opinion = opinion;
                 let at_war = self.civs[a].at_war_with(idb);
-                let warlike = ca.militarism.max(cb.militarism);
+                // Wrathful faiths go to war more readily.
+                let zeal = |k: usize| if self.faith_character(k) == Some(crate::religion::Character::Wrathful) { Fx::ratio(1, 10) } else { Fx::ZERO };
+                let warlike = (ca.militarism + zeal(a)).max(cb.militarism + zeal(b));
                 // Hatred breeds war; how often depends on how warlike the
                 // more martial side is. Truly peaceful peoples never start one.
                 if !at_war

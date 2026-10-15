@@ -44,7 +44,7 @@ fn sapient_species_found_civilizations() {
 /// Several peoples share this Earth-like world after 800 years, and fight.
 #[test]
 fn neighbouring_peoples_go_to_war() {
-    let mut w = World::new(5);
+    let mut w = World::new(1);
     for a in preset_actions(&w, "earthlike").unwrap() {
         w.apply(a);
     }

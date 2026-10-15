@@ -235,7 +235,8 @@ Not all life has to come from the world's own chemistry. Some beings come from o
     - Higher Intelligence and Charisma than native creatures. They float, with walk and fly speeds.
   - *Viewer:* Veil overlay, Veil law slider, Veil readout, violet sky tint on the globe, and floating models with tendrils, voids and a shimmering membrane.
   - *Also thinning (with the metaphysical laws, §4.6):* ley-line convergence (Arcane Magic), mass deaths releasing souls (Soul Power) and cultivation breakthroughs (Daoist Cultivation).
-  - *Not yet:* worship (religions, §4.8 level 6), cults, and Essence-unlocked Veil resources.
+  - Worship: cults around beings from beyond thin the Veil where they live (§4.8).
+  - *Not yet:* Essence-unlocked Veil resources.
 
 ### 4.5 Sapience and Civilization
 
@@ -288,6 +289,7 @@ Not all life has to come from the world's own chemistry. Some beings come from o
     | Library | Classical, city or larger, openness above 0.5 |
     | Barracks | Forging, town or larger, militarism above 0.55 |
     | Shrine | Rituals magic, village or larger |
+    | Temple | A faith (§4.8), Tribal, town or larger |
     | Wizard's tower | Arcane Schools, town or larger |
     | Aqueduct | Classical, city or larger, water nearby |
     | Factory | Industrial, city or larger |
@@ -415,9 +417,25 @@ Brains run at several levels, chosen so cost stays bounded:
 | 3. Crowds near the camera | Ordinary creatures around the camera get full brains and act in real time. | About 10,000–50,000 | Display only | Later |
 | 4. Relationships | Bonds between individuals: kinship, trust, rivalry, love, debt. | Thousands of links | Main simulation | Phase 0.5 (affinity and kinship) |
 | 5. Culture | Settlements hold shared values. Ideas (rituals, taboos, crafts, beliefs) spread person to person; each individual's brain decides whether to adopt them. | Per settlement | Main simulation | Later |
-| 6. Religion | Beings explain events they cannot account for. The player's interventions are real, witnessable events, so religions can form around the player. Different cultures may read the same act differently. | Per culture | Main simulation | Later |
+| 6. Religion | Beings explain events they cannot account for. The player's interventions are real, witnessable events, so religions can form around the player. Different cultures may read the same act differently. | Per culture | Main simulation | Built (below) |
 | 7. Arena AI | A champion's personality steers a tactical arena AI: cautious beings keep their distance, loyal ones protect allies. | About 1,000 units per match | Arena server | Later |
 | 8. Language | Made-up languages per culture plus templated speech. An optional AI language model may add flavour lines during possession, as cosmetics only. | — | Display only | Later |
+
+**Religions and cults (built, `sim-core/src/religion.rs`; numbers proposed, open to tuning):**
+- **Miracles:** the player's god tools are events peoples witness. Adding substances to a settled region, or to the whole world, is a gift (awe). Taking substances away, a fierce heat or cold (more than 20 K per touch), or a large change of global heat is a terror (dread). Gentle warming or cooling is a small blessing.
+- **Culture reads them:** cautious peoples feel more dread and less awe; open peoples feel more awe.
+- **Faith in the Maker:** a people whose awe plus dread reaches 1 founds a faith in the player. It is a giving faith if awe is greater, a fearful one if dread is. Awe and dread fade by 5% a year.
+- **Faiths of their own:** a people from the Tribal era on that has seen no miracles may find a god in its world (5% a year): the ancestors under Soul Power, the spirits of the ley lines under Arcane Magic, the flow of qi under Cultivation, otherwise the sky. Wary peoples (caution above 0.6) hold fearful faiths.
+- **Cults:** a people with a settlement within 3 regions of a being from beyond may fall into its cult (10% a year), even if it holds another faith.
+- **Spread:** a faith passes to a faithless neighbour within 3 regions who thinks well of its believers (10% a year), or converts one of another faith (2%).
+- **Effects:**
+  - A shared faith warms relations by 0.04 a year; rival faiths sour them by 0.03.
+  - A faith binds a people together (+0.15 cohesion against schism); a cult tears at it (−0.1).
+  - Fearful faiths go to war more readily (+0.1 militarism for the war roll).
+  - Cultists thin the Veil by 0.2 where they live (§4.4a: worship can call things in).
+  - Peoples with a faith raise temples in their towns.
+- Measured (Earth-like, 8 seeds, year 1000, no miracles): every people found a faith of its own; wars still broke out in 7 of 8 seeds.
+- The viewer shows each people's faith in the Civilizations tab, and lists the world's religions.
 
 **Camera rule:** anything that affects the world (named individuals, relationships, culture, religion) runs in the main simulation, independent of the camera, so replay verification reproduces it. Crowds near the camera are display only: moving the camera must never change the world.
 
@@ -758,7 +776,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 
 **Phase 3 status:** done: dedicated server with replay verification, signed champion tokens, ranked and practice queues with Glicko-2 matchmaking, lockstep online matches, reconnects and client-side prediction, permadeath with a ledger of the dead, looting, the Essence economy and shop, and online play from the arena screen, the arena revisit (shrine objective, biome battlefields, 10-minute limit) and armies of 500 a side. Remaining: Steam identity in the client (needs the Steamworks SDK and a Steam App ID); cloud hosting (needs a server account; the hosting kit is ready).
 
-**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Remaining: religions and cults. Archetypes (§4.4), gear looting and refitting (§5.4) and the cost-balance re-check (§5.3) are done.
+**Phase 4 status:** started: the three launch metaphysical laws (§4.6), earned classes for named individuals (§5.5), the Veil with beings from beyond (§4.4a), civilizations (§4.5) and equipment made by them (§5.4). Done: archetypes (§4.4), gear looting and refitting (§5.4), religions and cults (§4.8), cities and buildings (§4.5) and the cost-balance re-check (§5.3).
 
 ## 9. Business Model
 

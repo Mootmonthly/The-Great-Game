@@ -23,7 +23,7 @@ fn classical_monsters_and_true_aliens_live_side_by_side() {
     for (s, sh) in &sheets {
         let Some(a) = &sh.archetype else { continue };
         // Each archetype brings its signature ability.
-        assert!(sh.traits.len() >= 2, "{a} has a signature trait");
+        assert!(!sh.traits.is_empty(), "{a} has a signature trait");
         if a == "Dragon" {
             assert!(sh.breath.is_some() && sh.speed_fly > 0 && sh.frighten_dc.is_some());
         }

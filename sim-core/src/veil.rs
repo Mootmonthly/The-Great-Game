@@ -78,10 +78,12 @@ impl World {
     /// Moves each region's Veil toward its target strength.
     pub(crate) fn update_veil(&mut self) {
         let thinning = self.veil_thinning();
-        for i in 0..REGION_COUNT {
+        let cults = self.cult_thinning();
+        for (i, cult) in cults.iter().enumerate() {
             // Fault lines: from 0.7× to 1.3× the planet-wide thinning.
             let local = thinning * (Fx::ratio(7, 10) + fault(self.seed, i) * Fx::ratio(6, 10))
-                + self.law_thinning(i);
+                + self.law_thinning(i)
+                + *cult;
             let held_open = if self.entity_biomass(i) > Fx::ZERO {
                 Fx::ratio(1, 10)
             } else {
