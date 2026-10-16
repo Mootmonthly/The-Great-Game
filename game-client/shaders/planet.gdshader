@@ -1,6 +1,8 @@
 // Stylised planet surface: toon lighting, height-based normals, shiny seas,
 // glowing lava, the lands of each people with their borders, city lights on
 // the night side, and an optional data overlay (temperature, life, mana…).
+// Eclipses: bodies between a point and the sun (moons over the planet,
+// the planet over its moons) cast soft shadows.
 // Maps come from the simulation (sim-core/src/globe.rs).
 shader_type spatial;
 
@@ -19,10 +21,34 @@ uniform float height_scale = 0.035;
 uniform float bump_strength = 6.0;
 uniform vec3 rim_color : source_color = vec3(0.5, 0.7, 1.0);
 uniform float rim_strength = 0.25;
+// Shadow casters in world space: xyz centre, w radius. Up to 13 (12 moons
+// and the planet).
+uniform int caster_count = 0;
+uniform vec4 casters[13];
+// Direction towards the sun, world space.
+uniform vec3 sun_dir_world = vec3(0.0, 0.0, 1.0);
 
 varying float v_height;
 varying float v_liquid;
 varying float v_lights;
+varying vec3 v_world;
+
+// How much sunlight reaches world point p past the casters: 1 lit, about
+// 0.12 in full shadow, soft at the edge.
+float eclipse(vec3 p) {
+	float lit = 1.0;
+	for (int k = 0; k < caster_count; k++) {
+		vec3 d = casters[k].xyz - p;
+		float t = dot(d, sun_dir_world);
+		if (t <= 0.0) {
+			continue;
+		}
+		float miss = length(d - sun_dir_world * t);
+		float r = casters[k].w;
+		lit *= mix(0.12, 1.0, smoothstep(r * 0.8, r * 1.15, miss));
+	}
+	return lit;
+}
 
 void vertex() {
 	float h = textureLod(data_map, UV, 0.0).r;
@@ -30,6 +56,7 @@ void vertex() {
 	// Seas stay flat at their surface; land rises with elevation.
 	v_height = h;
 	VERTEX += NORMAL * h * height_scale * (1.0 - 0.6 * liquid);
+	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
 void fragment() {
@@ -76,11 +103,12 @@ void fragment() {
 void light() {
 	float ndl = dot(NORMAL, LIGHT);
 	float band = smoothstep(-0.02, 0.06, ndl) * 0.65 + smoothstep(0.35, 0.45, ndl) * 0.35;
-	DIFFUSE_LIGHT += band * ATTENUATION * LIGHT_COLOR / PI;
+	float shade = eclipse(v_world);
+	DIFFUSE_LIGHT += band * shade * ATTENUATION * LIGHT_COLOR / PI;
 	vec3 h = normalize(LIGHT + VIEW);
 	float glint = smoothstep(0.994, 0.999, dot(NORMAL, h)) * v_liquid;
-	SPECULAR_LIGHT += glint * ATTENUATION * LIGHT_COLOR * 0.15;
-	// City lights come out on the night side.
-	float night = smoothstep(0.08, -0.12, ndl);
+	SPECULAR_LIGHT += glint * shade * ATTENUATION * LIGHT_COLOR * 0.15;
+	// City lights come out on the night side, and in an eclipse's shadow.
+	float night = max(smoothstep(0.08, -0.12, ndl), (1.0 - shade) * step(0.0, ndl));
 	DIFFUSE_LIGHT += vec3(1.0, 0.82, 0.5) * v_lights * night * 1.6;
 }

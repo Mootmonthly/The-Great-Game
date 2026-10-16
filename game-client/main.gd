@@ -41,6 +41,9 @@ var individuals_list: RichTextLabel
 var individual_detail: RichTextLabel
 var tabs: TabContainer
 var civ_list: RichTextLabel
+var armoury_box: VBoxContainer
+var armoury_key := ""
+var armoury_note: Label
 var show_individuals: CheckBox
 var globe_view: SubViewportContainer
 var globe_toggle: CheckButton
@@ -171,7 +174,19 @@ func _build_ui() -> void:
 	individual_detail = _scroll_rich()
 	individual_detail.meta_clicked.connect(_on_meta)
 	individual_detail.text = "Named individuals appear once a species evolves a nervous system. Click one to read its story."
-	people_tab.add_child(individual_detail)
+	var people_right := VSplitContainer.new()
+	people_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	people_tab.add_child(people_right)
+	people_right.add_child(individual_detail)
+	var armoury_scroll := ScrollContainer.new()
+	armoury_scroll.name = "Armoury"
+	armoury_scroll.custom_minimum_size = Vector2(200, 110)
+	armoury_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	armoury_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	people_right.add_child(armoury_scroll)
+	armoury_box = VBoxContainer.new()
+	armoury_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	armoury_scroll.add_child(armoury_box)
 
 	civ_list = _scroll_rich()
 	civ_list.name = "Civilizations"
@@ -681,6 +696,7 @@ func _set_focus(k: int) -> void:
 	# Species and individual ids belong to one world.
 	selected_species = -1
 	selected_individual = -1
+	armoury_key = ""
 	species_detail.text = "Click a species to see its body, temperament and ancestry."
 	individual_detail.text = "Named individuals appear once a species evolves a nervous system. Click one to read its story."
 	creature_preview.visible = false
@@ -892,7 +908,12 @@ func _refresh_region() -> void:
 		text += "  • %s — %s (biomass %.1f)\n" % [p["name"], p["description"], p["biomass"]]
 	if r["settlement"] != null:
 		var st: Dictionary = r["settlement"]
-		text += "Settlement: %s of %s (population %.1f thousand)\n" % [st["name"], st["civ"], st["population"]]
+		text += "[color=#%s]●[/color] [b]%s[/b] — %s%s of the %s (%s), %.1fk\n" % [
+			st.get("color", "ffffff"), st["name"], "capital " if st.get("capital", false) else "",
+			str(st.get("tier", "settlement")), st["civ"], st.get("era", "?"), st["population"]]
+		var bl: Array = st.get("buildings", [])
+		if bl.size() > 0:
+			text += "    Buildings: %s\n" % ", ".join(bl)
 	region_label.text = text
 
 
@@ -990,6 +1011,22 @@ func _refresh_civilizations() -> void:
 		if c["capital"] != null:
 			b += ", capital %s" % c["capital"]
 		b += " · population %.0f thousand\n    %s" % [c["population"], c["culture"]]
+		if c.get("faith") != null:
+			b += "\n    [color=#d8b0f0]Faith: %s — %s[/color]" % [c["faith"]["name"], c["faith"]["describe"]]
+		else:
+			b += "\n    No faith yet"
+			if float(c.get("awe", 0.0)) > 0.1 or float(c.get("dread", 0.0)) > 0.1:
+				b += " [color=#999999](awe %.1f, dread %.1f)[/color]" % [float(c.get("awe", 0.0)), float(c.get("dread", 0.0))]
+		var detail: Array = c.get("settlements_detail", [])
+		if detail.size() > 0 and not fallen:
+			detail = detail.duplicate()
+			detail.sort_custom(func(a, b2): return float(a["population"]) > float(b2["population"]))
+			b += "\n    [b]Settlements[/b]"
+			for d in detail.slice(0, 15):
+				var bl: Array = d.get("buildings", [])
+				b += "\n      %s, %s, %.1fk%s" % [d["name"], d["tier"], d["population"], (" — " + ", ".join(bl)) if bl.size() > 0 else ""]
+			if detail.size() > 15:
+				b += "\n      and %d more" % (detail.size() - 15)
 		if c["wars"].size() > 0:
 			b += "\n    [color=#dd7777]At war with %s[/color]" % ", ".join(c["wars"])
 		if c["allies"].size() > 0:
@@ -1000,7 +1037,17 @@ func _refresh_civilizations() -> void:
 		if c["parent"] != null:
 			b += " (broke away from %s)" % c["parent"]
 		blocks.append("[color=#888888]%s[/color]" % b if fallen else b)
-	civ_list.text = "\n\n".join(blocks) if blocks.size() > 0 else "No civilizations yet. They arise once a thinking species settles down."
+	var text := "\n\n".join(blocks) if blocks.size() > 0 else "No civilizations yet. They arise once a thinking species settles down."
+	var religions = JSON.parse_string(sim.religions_json())
+	if religions is Array and religions.size() > 0:
+		text += "\n\n[b]Religions[/b]"
+		for r in religions:
+			var col := "c28cf0" if r["character"] == "Cult" else "d8c890"
+			var followers: Array = r["followers"]
+			text += "\n[color=#%s]✦ [b]%s[/b][/color] — %s · %s, founded in year %d\n    %s\n    Followers: %s" % [
+				col, r["name"], r["deity"], str(r["character"]).to_lower(), r["founded_year"], r["describe"],
+				", ".join(followers) if followers.size() > 0 else "none"]
+	civ_list.text = text
 
 
 func _refresh_individuals() -> void:
@@ -1011,6 +1058,7 @@ func _refresh_individuals() -> void:
 			p["id"], p["color"] if p["color"] != null else "ffffff", p["title"], p["species"], (", " + p["class"]) if p["class"] != null else "", p["age"], str(int(p["cost"])) if p["cost"] != null else "-",
 			p["charisma"], p["renown"], p["friends"], p["enemies"], p["personality"], p["last_action"] if p["last_action"] != null else "-"])
 	individuals_list.text = "\n".join(lines) if lines.size() > 0 else "No named individuals yet. They appear once a species evolves a nervous system."
+	_refresh_armoury()
 	if selected_individual < 0:
 		return
 	var d = JSON.parse_string(sim.individual_json(selected_individual))
@@ -1051,6 +1099,85 @@ func _refresh_individuals() -> void:
 	if d["alive"]:
 		text += "\n" + _sheet_text(JSON.parse_string(sim.sheet_json("individual", selected_individual)))
 	individual_detail.text = text
+
+
+## The armoury section under the individual's sheet. Rebuilt only when the
+## armoury or the selection changes, so buttons stay clickable.
+func _refresh_armoury() -> void:
+	var raw: String = sim.armoury_json()
+	var who := -1
+	var who_name := ""
+	if selected_individual >= 0:
+		var d = JSON.parse_string(sim.individual_json(selected_individual))
+		if d != null and d["alive"]:
+			who = selected_individual
+			who_name = str(d["title"])
+	var key := "%s|%d" % [raw, who]
+	if key == armoury_key:
+		return
+	armoury_key = key
+	for c in armoury_box.get_children():
+		c.queue_free()
+	var head := Label.new()
+	head.text = "Armoury (looted gear)"
+	head.add_theme_font_size_override("font_size", 15)
+	head.add_theme_color_override("font_color", Color(0.9, 0.8, 0.5))
+	armoury_box.add_child(head)
+	var items = JSON.parse_string(raw)
+	if not items is Array or items.size() == 0:
+		armoury_box.add_child(_label("No looted gear yet: win ranked matches and bring spoils home."))
+		return
+	for it in items:
+		var line := "%s — from %s, made for %s" % [it["name"], it["from"], it["made_for"]]
+		if it["holder"] != null:
+			line += "; held by %s" % it["holder_name"]
+		if it["ready_year"] != null:
+			line += "; refitting until year %d" % int(it["ready_year"])
+		var l := _label(line)
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		armoury_box.add_child(l)
+		if who < 0:
+			continue
+		var row := HBoxContainer.new()
+		armoury_box.add_child(row)
+		var item_id := int(it["id"])
+		if it["holder"] != null:
+			var ret := Button.new()
+			ret.text = "Return"
+			ret.pressed.connect(func():
+				sim.unequip(item_id)
+				_armoury_changed())
+			row.add_child(ret)
+			continue
+		var fits: bool = sim.gear_fits(item_id, who)
+		var give := Button.new()
+		give.text = "Give to %s" % who_name
+		give.disabled = not fits
+		give.tooltip_text = "Equip this item." if fits else "It does not fit their body."
+		give.pressed.connect(func():
+			sim.equip(item_id, who)
+			_armoury_changed())
+		row.add_child(give)
+		if not fits:
+			var refit := Button.new()
+			refit.text = "Refit for %s" % who_name
+			refit.tooltip_text = "Have their people refit it (takes grade + 1 years)."
+			refit.pressed.connect(func():
+				if sim.refit(item_id, who):
+					_armoury_changed()
+				else:
+					var why := "their people cannot refit gear before the Crafting era, or the item is taken"
+					refit.tooltip_text = why
+					armoury_note.text = why)
+			row.add_child(refit)
+	armoury_note = _label("")
+	armoury_note.add_theme_color_override("font_color", Color(0.85, 0.5, 0.5))
+	armoury_box.add_child(armoury_note)
+
+
+func _armoury_changed() -> void:
+	armoury_key = ""
+	_refresh_individuals()
 
 
 ## A character sheet in the style of a tabletop stat block.

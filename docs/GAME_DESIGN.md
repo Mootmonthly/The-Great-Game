@@ -295,7 +295,9 @@ Not all life has to come from the world's own chemistry. Some beings come from o
     | Factory | Industrial, city or larger |
 
   - **Effects:** walls and barracks each add 10% to a people's strength in that settlement; libraries and markets each add 10% to learning, up to 50%.
-  - The viewer shows a settlement's tier and buildings in the region panel and the Civilizations tab; the region visit draws them; the globe sizes its pins by tier.
+  - The viewer shows a settlement's tier and buildings in the region panel and the Civilizations tab; the region visit draws them on a plateau of dry land (huts by tier, walls and palisades, forges with glowing chimneys, temples, towers and the rest, about 30 pieces for a village and 120 for a town); the globe sizes its pins by tier and gives cities a base.
+
+![A town in the region visit: huts, temple, forge, granary, mine, palisade and walls](images/town-visit.png)
 
 ### 4.6 Laws of Reality
 
@@ -365,7 +367,7 @@ Not all life has to come from the world's own chemistry. Some beings come from o
 
   Brightness is at the typical mass. Radiation is relative to the Sun's, and falls with distance squared. The atmosphere shields the surface: dose = flux / (1 + 2 × pressure in bar). A dose above 1 (an airless Earth's) harms life, with armour as a shield, and speeds up speciation through mutation.
 - **Reality strain** (feeds the Veil, §4.4a): Godhand strain, +2 around a neutron star, and log₂(gravity / 5) above 5 g.
-- **Eclipses:** every moon beyond the second thins the Veil (§4.4a). Eclipse visuals are not built yet.
+- **Eclipses:** every moon beyond the second thins the Veil (§4.4a). On the globe, moons cast soft shadows on the planet as they pass before the sun, the planet shadows its moons, and city lights come on inside an eclipse's shadow (a ray test per pixel against up to 13 bodies in the planet shader).
 
 Extra and exotic resources (rare elements, unusual molecules, more moons, unusual star types) are unlocked with Essence.
 

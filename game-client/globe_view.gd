@@ -64,6 +64,8 @@ var host_active := false
 
 var settlement_marks: MultiMeshInstance3D
 var hero_marks: MultiMeshInstance3D
+## Flat base discs under the pins of Cities and Metropolises.
+var ring_marks: MultiMeshInstance3D
 var capital_labels: Array[Label3D] = []
 var label_dirs := PackedVector3Array()
 var war_arcs: MeshInstance3D
@@ -220,6 +222,13 @@ func _build_markers() -> void:
 	glint.radial_segments = 8
 	glint.rings = 4
 	hero_marks = _make_multimesh(glint)
+	var disc := CylinderMesh.new()
+	disc.top_radius = 0.5
+	disc.bottom_radius = 0.5
+	disc.height = 1.0
+	disc.radial_segments = 12
+	disc.rings = 1
+	ring_marks = _make_multimesh(disc)
 
 	for k in MAX_LABELS:
 		var label := Label3D.new()
@@ -439,6 +448,33 @@ func set_planet(st: Dictionary) -> void:
 	_update_bodies()
 
 
+## Eclipses: each moon shadows the planet, and the planet shadows each
+## moon, wherever they pass between a surface and the sun.
+func _update_eclipses() -> void:
+	var sun_dir := sun.global_transform.basis.z.normalized()
+	planet_material.set_shader_parameter("sun_dir_world", sun_dir)
+	var moons: Array[Vector4] = []
+	for m in moon_nodes:
+		if m.is_visible_in_tree():
+			moons.append(Vector4(m.global_position.x, m.global_position.y, m.global_position.z, (m.mesh as SphereMesh).radius))
+	planet_material.set_shader_parameter("caster_count", moons.size())
+	planet_material.set_shader_parameter("casters", _padded(moons))
+	var planet_caster := Vector4(planet.global_position.x, planet.global_position.y, planet.global_position.z, 1.0)
+	for mat in moon_materials:
+		mat.set_shader_parameter("sun_dir_world", sun_dir)
+		mat.set_shader_parameter("caster_count", 1)
+		mat.set_shader_parameter("casters", _padded([planet_caster]))
+
+
+## Shader arrays have a fixed length (13).
+func _padded(list: Array) -> PackedVector4Array:
+	var out := PackedVector4Array()
+	out.resize(13)
+	for k in mini(list.size(), 13):
+		out[k] = list[k]
+	return out
+
+
 func _process(delta: float) -> void:
 	if pivot == null or not is_visible_in_tree():
 		return
@@ -449,6 +485,7 @@ func _process(delta: float) -> void:
 			moon_nodes[k].get_parent().rotate_y(delta * moon_orbits[k])
 	if host_active:
 		host_planet.rotate_y(delta * 0.02)
+	_update_eclipses()
 	# Labels on the far side of the globe are hidden.
 	var cam_dir := (pivot.global_transform.affine_inverse() * camera.global_position).normalized()
 	for k in label_dirs.size():
@@ -548,6 +585,7 @@ func _rebuild_markers() -> void:
 	settlement_count = places.size()
 	var mm := settlement_marks.multimesh
 	mm.instance_count = places.size()
+	var big: Array = []
 	for k in places.size():
 		var m: Dictionary = places[k]
 		var x := int(m["x"])
@@ -556,6 +594,12 @@ func _rebuild_markers() -> void:
 		# Villages are small studs, towns and cities taller pins.
 		var pop := float(m["size"])
 		var height := clampf(0.008 + 0.012 * sqrt(pop), 0.01, 0.07) * (1.6 if capital else 1.0)
+		var tier := str(m.get("tier", ""))
+		match tier:
+			"Town":
+				height *= 1.3
+			"City", "Metropolis":
+				height *= 1.6
 		# Break up the region grid: each settlement sits at its own spot
 		# inside its region (fixed by name, so it never wanders).
 		var h := hash(m["name"])
@@ -568,6 +612,16 @@ func _rebuild_markers() -> void:
 		var color := Color.html(m["color"])
 		# Kept below 1.0 so the glow pass does not bloom them into blobs.
 		mm.set_instance_color(k, color.lightened(0.35) if capital else color.darkened(0.1))
+		if tier == "City" or tier == "Metropolis":
+			big.append([up, r, height, color, tier == "Metropolis"])
+	var rm := ring_marks.multimesh
+	rm.instance_count = big.size()
+	for k in big.size():
+		var b: Array = big[k]
+		var rad: float = (0.034 if b[4] else 0.026)
+		var flat := _upright(b[0]).scaled_local(Vector3(rad, 0.002, rad))
+		rm.set_instance_transform(k, Transform3D(flat, b[0] * (b[1] + 0.001)))
+		rm.set_instance_color(k, (b[3] as Color).lightened(0.55))
 	var hm := hero_marks.multimesh
 	hm.instance_count = heroes.size()
 	for k in heroes.size():
