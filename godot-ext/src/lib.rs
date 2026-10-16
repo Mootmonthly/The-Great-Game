@@ -512,7 +512,12 @@ impl SimWorld {
             })
         });
         let settlement = w.settlement_at(i).map(|(c, s)| {
-            json!({"name": s.name, "civ": c.name, "civ_id": c.id, "population": s.population.to_f64()})
+            json!({
+                "name": s.name, "civ": c.name, "civ_id": c.id, "population": s.population.to_f64(),
+                "tier": s.tier().name(), "capital": c.capital().is_some_and(|cap| cap.region == s.region),
+                "era": sim_core::civ::ERAS[w.era(c)].0, "color": hex(c.color),
+                "buildings": w.buildings(c, s).iter().map(|b| b.name()).collect::<Vec<_>>(),
+            })
         });
         to_gstring(json!({
             "x": x, "y": y,
@@ -697,18 +702,47 @@ impl SimWorld {
                     "arcana": sim_core::civ::ARCANA[w.arcana_level(c)].0,
                     "settlements": c.settlements.len(),
                     "capital": c.capital().map(|s| s.name.clone()),
+                    "settlements_detail": c.settlements.iter().map(|s| json!({
+                        "name": s.name, "x": s.region % WIDTH, "y": s.region / WIDTH,
+                        "population": s.population.to_f64(), "tier": s.tier().name(),
+                        "buildings": w.buildings(c, s).iter().map(|b| b.name()).collect::<Vec<_>>(),
+                    })).collect::<Vec<_>>(),
                     "population": c.population().to_f64(),
                     "culture": c.culture.describe(),
                     "founded_year": c.founded_tick / tpy,
                     "fallen_year": c.fallen_tick.map(|t| t / tpy),
                     "parent": c.parent.map(name_of),
                     "battles_won": c.battles_won, "battles_lost": c.battles_lost,
+                    "faith": c.faith.and_then(|f| w.religion(f)).map(|r| json!({"name": r.name, "describe": r.describe()})),
+                    "awe": c.awe.to_f64(), "dread": c.dread.to_f64(),
                     "wars": related(&|r| r.at_war),
                     "allies": related(&|r| r.opinion >= half),
                     "rivals": related(&|r| r.opinion <= -half && !r.at_war),
                 })
             })
             .collect();
+        to_gstring(json!(list))
+    }
+
+    /// The world's religions and cults: [{id, name, describe, deity,
+    /// character, founded_year, followers: [people names]}], largest first.
+    #[func]
+    fn religions_json(&self) -> GString {
+        let w = self.view();
+        let mut list: Vec<Value> = w
+            .religions
+            .iter()
+            .map(|r| {
+                let followers: Vec<String> = w.living_civs().filter(|c| c.faith == Some(r.id)).map(|c| c.name.clone()).collect();
+                json!({
+                    "id": r.id, "name": r.name, "describe": r.describe(),
+                    "deity": format!("{:?}", r.deity), "character": format!("{:?}", r.character),
+                    "founded_year": r.founded_tick / sim_core::world::TICKS_PER_YEAR,
+                    "followers": followers,
+                })
+            })
+            .collect();
+        list.sort_by_key(|v| std::cmp::Reverse(v["followers"].as_array().map_or(0, |a| a.len())));
         to_gstring(json!(list))
     }
 
@@ -876,6 +910,7 @@ impl SimWorld {
                     "kind": match m.kind { MarkerKind::Capital => "capital", MarkerKind::Settlement => "settlement", MarkerKind::Hero => "hero" },
                     "x": m.region % WIDTH, "y": m.region / WIDTH,
                     "name": m.name, "color": hex(m.color), "size": m.size,
+                    "tier": (m.kind != MarkerKind::Hero).then(|| sim_core::civ::Tier::of(Fx::from_f64(m.size)).name()),
                 })
             })
             .collect();

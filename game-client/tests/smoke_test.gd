@@ -532,4 +532,46 @@ func _initialize() -> void:
 	main.globe_toggle.button_pressed = false
 	check(main.selected_region == Vector2i(7, 7), "a pick on the globe selects the region")
 
+	# Settlement tiers, buildings, religions, armoury.
+	var civs: Array = JSON.parse_string(sim.civilizations_json())
+	var town_cell := Vector2i(-1, -1)
+	var best_pop := -1.0
+	for c in civs:
+		check(c.has("faith") and c.has("awe") and c.has("dread") and c.has("settlements_detail"), "a people lists its faith, awe, dread and settlements")
+		for d in c["settlements_detail"]:
+			if float(d["population"]) > best_pop:
+				best_pop = float(d["population"])
+				town_cell = Vector2i(int(d["x"]), int(d["y"]))
+	check(town_cell.x >= 0, "a settlement can be found through civilizations_json")
+	if town_cell.x >= 0:
+		var rj: Dictionary = JSON.parse_string(sim.region_json(town_cell.x, town_cell.y))
+		var town_st = rj["settlement"]
+		check(town_st != null and town_st.has("tier") and town_st["buildings"].size() > 0 and "Huts" in town_st["buildings"], "a settlement has a tier and buildings including Huts")
+		main.selected_region = town_cell
+		main._refresh_region()
+		check(main.region_label.text.contains(str(town_st["tier"])) and main.region_label.text.contains("Huts"), "the region panel shows tier and buildings")
+		main._refresh_civilizations()
+		check(main.civ_list.text.contains("Settlements") and (main.civ_list.text.contains("Faith:") or main.civ_list.text.contains("No faith yet")), "the civilizations tab shows settlements and faith")
+		main.visit_region(town_cell)
+		await process_frame
+		check(main.local_view != null and main.local_view.building_count > 0, "visiting a settlement spawns buildings")
+		if main.local_view != null:
+			var town_lv = main.local_view
+			var pieces: int = town_lv.building_count
+			check(pieces <= 400, "the settlement scene stays cheap (%d pieces)" % pieces)
+			town_lv.close()
+			await process_frame
+	var religions = JSON.parse_string(sim.religions_json())
+	check(religions is Array, "religions_json parses to an array")
+	for r in religions:
+		check(str(r["name"]) != "" and r["followers"] is Array, "a religion has a name and followers")
+	check(JSON.parse_string(sim.armoury_json()) is Array, "armoury_json parses to an array")
+	main.armoury_key = ""
+	main._refresh_individuals()
+	var empty_msg := false
+	for ch in main.armoury_box.get_children():
+		if ch is Label and ch.text.begins_with("No looted gear yet"):
+			empty_msg = true
+	check(main.armoury_box.get_child_count() > 0 and empty_msg, "the armoury section shows the empty message when there is no loot")
+
 	finish()

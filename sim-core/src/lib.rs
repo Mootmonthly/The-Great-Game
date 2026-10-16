@@ -20,6 +20,7 @@ pub mod laws;
 pub mod life;
 pub mod loot;
 pub mod presets;
+pub mod religion;
 pub mod render;
 pub mod rng;
 pub mod sheet;

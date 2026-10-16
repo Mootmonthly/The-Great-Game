@@ -266,6 +266,11 @@ pub struct World {
     /// Gear looted from fallen champions (§5.4).
     #[serde(default)]
     pub armoury: Vec<crate::equipment::Looted>,
+    /// Religions and cults, living and dead (§4.8).
+    #[serde(default)]
+    pub religions: Vec<crate::religion::Religion>,
+    #[serde(default)]
+    pub(crate) next_religion_id: u32,
     #[serde(default)]
     pub(crate) next_item_id: u32,
     #[serde(default)]
@@ -293,7 +298,7 @@ fn elements_of(substances: &[Substance]) -> Vec<String> {
 
 /// Bumped whenever the world's stored form or rules change, so old
 /// snapshots are not trusted.
-const SNAPSHOT_VERSION: u32 = 6;
+const SNAPSHOT_VERSION: u32 = 7;
 
 #[derive(Serialize)]
 struct SnapshotRef<'a> {
@@ -397,6 +402,8 @@ impl World {
             civs: Vec::new(),
             armoury: Vec::new(),
             next_item_id: 0,
+            religions: Vec::new(),
+            next_religion_id: 0,
             next_civ_id: 1,
             moon_worlds: Vec::new(),
             moons_made: 0,
@@ -449,10 +456,14 @@ impl World {
                 if *substance >= n || self.bought_only(*substance, *amount) {
                     return;
                 }
-                for i in brush(*x, *y, *radius) {
+                let touched = brush(*x, *y, *radius);
+                for &i in &touched {
                     let a = &mut self.regions[i].amounts[*substance as usize];
                     *a = (*a + *amount).max(Fx::ZERO);
                 }
+                // Gifts from the sky are miracles; taking things away is not
+                // kind. (§4.8 religion)
+                self.witness(Some(&touched), (*amount).clamp(-Fx::ONE, Fx::ONE) * Fx::ratio(3, 10));
             }
             Action::AddSubstanceGlobal { substance, amount } => {
                 if *substance >= n || self.bought_only(*substance, *amount) {
@@ -462,6 +473,7 @@ impl World {
                     let a = &mut r.amounts[*substance as usize];
                     *a = (*a + *amount).max(Fx::ZERO);
                 }
+                self.witness(None, (*amount).clamp(-Fx::ONE, Fx::ONE) * Fx::ratio(2, 10));
             }
             Action::HeatRegion {
                 x,
@@ -469,13 +481,20 @@ impl World {
                 radius,
                 delta,
             } => {
-                for i in brush(*x, *y, *radius) {
+                let touched = brush(*x, *y, *radius);
+                for &i in &touched {
                     let h = &mut self.regions[i].heat_offset;
                     *h = (*h + *delta).clamp(Fx::from_int(-2000), Fx::from_int(5000));
                 }
+                // Fire and frost from the sky: a gentle touch is a blessing,
+                // a fierce one a terror.
+                let fierce = (*delta).abs() / Fx::from_int(20);
+                self.witness(Some(&touched), Fx::ratio(2, 10) - fierce.min(Fx::from_int(2)));
             }
             Action::SetGlobalHeat { kelvin } => {
+                let change = (*kelvin - self.planet.global_heat).abs();
                 self.planet.global_heat = (*kelvin).clamp(Fx::from_int(-500), Fx::from_int(3000));
+                self.witness(None, -(change / Fx::from_int(50)).min(Fx::from_int(2)));
             }
             Action::SetStarDistance { au } => {
                 self.planet.star_distance_au = (*au).clamp(Fx::ratio(1, 100), Fx::from_int(100));
@@ -964,6 +983,9 @@ impl World {
             h.i64(c.tech.0);
             h.i64(c.arcana.0);
             h.u64(c.fallen_tick.map_or(u64::MAX, |t| t));
+            h.u64(c.faith.map_or(u64::MAX, |f| f as u64));
+            h.i64(c.awe.0);
+            h.i64(c.dread.0);
             for s in &c.settlements {
                 h.u64(s.region as u64);
                 h.i64(s.population.0);
