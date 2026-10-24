@@ -68,3 +68,30 @@ fn walls_make_a_settlement_harder_to_take_and_replay_holds() {
         assert!(walled.buildings(c, town).contains(&Building::Walls));
     }
 }
+
+/// Big settlements found daughter villages in their own region: a region
+/// can hold several settlements, all of one people, whose shares of that
+/// people add up to one (docs/GAME_DESIGN.md §4.5).
+#[test]
+fn regions_hold_several_settlements_of_one_people() {
+    let w = settled("earthlike", 1, 4800);
+    let mut shared = 0;
+    for c in w.living_civs() {
+        let mut regions: Vec<usize> = c.settlements.iter().map(|s| s.region).collect();
+        regions.sort_unstable();
+        regions.dedup();
+        for r in regions {
+            let here: Vec<_> = c.settlements.iter().filter(|s| s.region == r).collect();
+            assert!(here.len() <= sim_core::civ::MAX_PER_REGION);
+            let total = here.iter().fold(Fx::ZERO, |a, s| a + s.share);
+            assert!((total.to_f64() - 1.0).abs() < 0.01, "shares in a region add up to one: {}", total.to_f64());
+            shared += (here.len() > 1) as usize;
+            for o in w.living_civs().filter(|o| o.id != c.id) {
+                assert!(!o.settlements.iter().any(|s| s.region == r), "one people per region");
+            }
+        }
+    }
+    assert!(shared > 0, "some region holds more than one settlement");
+    let r = w.living_civs().flat_map(|c| c.settlements.iter()).find(|s| w.settlements_at(s.region).len() > 1).unwrap().region;
+    assert!(w.settlements_at(r).len() > 1 && w.settlement_at(r).is_some());
+}

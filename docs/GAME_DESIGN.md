@@ -295,6 +295,11 @@ Not all life has to come from the world's own chemistry. Some beings come from o
     | Factory | Industrial, city or larger |
 
   - **Effects:** walls and barracks each add 10% to a people's strength in that settlement; libraries and markets each add 10% to learning, up to 50%.
+  - **Several settlements per region:**
+    - A settlement holds a share of its people in its region. A settlement of 6,000 or more can found a daughter village in the same region, taking a quarter of its share, up to 4 settlements per region.
+    - A region still belongs to one people, so a war takes or razes all of a region's settlements together.
+    - City lights on the globe count everyone in the region.
+  - **Planned: rival kingdoms in one region.** Different peoples will be able to hold settlements in the same region. Two kingdoms of the same species there would split its population between them. Wars between neighbours in a region would then be fought there, and the region visit would show their warbands marching between the towns to fight. Not built yet (owner's aim, recorded for a later change).
   - The viewer shows a settlement's tier and buildings in the region panel and the Civilizations tab; the region visit draws them on a plateau of dry land (huts by tier with doors facing a central square and well, walls and palisades, forges with glowing chimneys, temples, towers, fields of crops outside the town and beaten-earth paths between them, about 30 pieces for a village and 120 for a town). A people builds to its own size: buildings are scaled so a door fits the species that built them (a medium people's hut door is about 2 m high, a large people's about 3 m); the globe sizes its pins by tier and gives cities a base.
 
 ![A town in the region visit: townsfolk at the well, huts with doors to the square, temple, forge, mine and longhouse on beaten-earth paths](images/town-visit.png)
@@ -431,7 +436,15 @@ Laws can stack. Their interactions are the main source of emergent variety.
       - **Hunters** prowl outside the town, chase grazers, and sometimes bring one down and feed.
       - **Swimmers** keep to the water.
       - **Winged creatures** fly when travelling.
-      - Everyone walks around buildings and each other. Hovering over a creature shows what it is doing. Named individuals' labels show it too.
+      - Everyone walks around buildings and each other.
+    - **Villages, farmsteads, raids and war (display only):**
+      - Every settlement in the region is built: the first-founded town near the middle, its daughter villages a few hundred metres off. Roads join them.
+      - Farmsteads stand between them, one for every 2,500 people (2 to 10). Each has a house, a fenced field and a farming family.
+      - Towns with walls, a palisade or barracks have spear-carrying guards on patrol (more with barracks).
+      - Hunters sometimes stalk a townsperson out in the fields or at a farmstead. Fights use the character sheets: d20 plus the attack bonus against armour class, about the sheet's damage per round, a blow every 2 s.
+      - A town that is attacked raises the alarm: guards come running, brave townsfolk fight and the rest take shelter.
+      - If the region's people is at war, a warband of the enemy's species marches on one of its towns every few minutes. It pillages, fights whoever stands in its way, and breaks when half its warriors fall.
+      - The fallen get up again after a while (raiders are gone for good). Possessed creatures can strike with Space. Hovering over a creature shows what it is doing. Named individuals' labels show it too.
 
 ![Region visit and first-person possession](images/region-visit-possession.png)
 
@@ -854,6 +867,8 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Globe detail | The 3D globe must be informative: it shows each people's lands and borders, settlements and capitals, city lights at night, wars, renowned individuals, forests, the map overlays, and lets the player pick and hover regions; moons are textured from their own worlds. Detail is added only where it costs no performance |
 | — | Refit cost | Refitting looted gear takes grade + 1 years and a Crafting-era people; no Essence (proposed by Claude, owner may revise) |
 | — | Arena rules | Win by wiping out the enemy or holding the central objective alone; procedurally generated biome battlefields from worlds; matches capped at 10 minutes, after which the side with more surviving cost wins (draw within 5%) (§6.1) |
+| — | Settlements per region | A region can hold up to 4 settlements of one people: big towns found daughter villages nearby that share the region's people (§4.5); the visit also shows farmsteads, raids by hunters, guards and warbands from peoples at war (§4.7). Owner asked for all three visit additions and multiple settlements per region |
+| — | Rival kingdoms in one region (planned) | Owner's aim: several peoples sharing a region, whose wars can be watched in the region visit as warbands marching between rival towns. To build after multiple settlements per region |
 | — | Region visit size | The visited area is 1.4 km across (10 times wider than the first revision), explored by moving the camera or a possessed creature; detail is streamed or simplified with distance so it stays cheap (§4.7) |
 | — | Region visit and arena readability | The region visit is in real-world scale (medium creature 1.7 m, buildings sized to their builders), has climate-driven ground, water and a day cycle, and its creatures live display-only routines (townsfolk work, talk and go home; grazers herd and flee; hunters stalk). The arena plays at half speed offline by default with health bars, damage numbers, lunges, death effects, a kill feed and a side-by-side header (§4.7, §6.1a) |
 | — | Ecology | Flora and fauna form a real food chain: plants hold the light niche, animals with nervous systems graze plants instead of photosynthesising, predators eat animals |

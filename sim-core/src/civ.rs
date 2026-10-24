@@ -34,6 +34,11 @@ pub const ARCANA: [(&str, i64); 5] = [
     ("High Magic", 800),
 ];
 const MAX_SETTLEMENTS: usize = 40;
+/// A region holds at most this many of its people's settlements: the first,
+/// and daughter villages founded by it as it grows.
+pub const MAX_PER_REGION: usize = 4;
+/// A settlement this big (thousands) may found a daughter village nearby.
+const DAUGHTER_AT: i64 = 6;
 /// Settlements more than this many regions apart do not border.
 const BORDER: usize = 3;
 
@@ -92,9 +97,13 @@ impl Culture {
 pub struct Settlement {
     pub region: usize,
     pub name: String,
-    /// Population in thousands (follows the species' biomass there).
+    /// Population in thousands: its share of the species' biomass in the
+    /// region.
     pub population: Fx,
     pub founded_tick: u64,
+    /// Share of its people in the region (the shares of one people's
+    /// settlements in a region add up to one).
+    pub share: Fx,
 }
 
 /// How big a settlement is, from its population (thousands).
@@ -391,10 +400,14 @@ impl World {
         for c in self.living_civs() {
             let bonus = Fx::ONE + Fx::ratio(15, 100) * Fx::from_int(self.era(c) as i64);
             for s in &c.settlements {
-                // Walls and barracks make a settlement harder to take.
+                // Walls and barracks make a settlement harder to take; the
+                // best defended settlement in a region counts.
                 let b = self.buildings(c, s);
                 let defence = Fx::ratio(10, 100) * Fx::from_int(b.contains(&Building::Walls) as i64 + b.contains(&Building::Barracks) as i64);
-                out[s.region] = Some((c.species, bonus + defence));
+                let m = bonus + defence;
+                if out[s.region].is_none_or(|(_, o)| m > o) {
+                    out[s.region] = Some((c.species, m));
+                }
             }
         }
         out
@@ -483,6 +496,7 @@ impl World {
                 name: self.new_name(),
                 population: self.species_biomass(region, species),
                 founded_tick: self.tick,
+                share: Fx::ONE,
             })
             .collect();
         self.civs.push(Civilization {
@@ -507,23 +521,49 @@ impl World {
         id
     }
 
-    fn grow_civilization(&mut self, k: usize) {
+    /// Sets each settlement's population from its share of the people in
+    /// its region.
+    fn settle_populations(&mut self, k: usize) {
         let species = self.civs[k].species;
-        // Settlements follow the people: they shrink, grow or are lost.
         let pops: Vec<Fx> = self.civs[k]
             .settlements
             .iter()
-            .map(|s| self.species_biomass(s.region, species))
+            .map(|s| self.species_biomass(s.region, species) * s.share)
             .collect();
-        let c = &mut self.civs[k];
-        for (s, p) in c.settlements.iter_mut().zip(&pops) {
-            s.population = *p;
+        for (s, p) in self.civs[k].settlements.iter_mut().zip(pops) {
+            s.population = p;
         }
-        c.settlements.retain(|s| s.population >= Fx::HALF);
-        if c.settlements.is_empty() {
-            c.fallen_tick = Some(self.tick);
+    }
+
+    /// Rescales a people's shares so they add up to one in every region it
+    /// holds (after settlements are lost, taken or founded).
+    fn normalise_shares(&mut self, k: usize) {
+        let c = &mut self.civs[k];
+        for i in 0..c.settlements.len() {
+            let region = c.settlements[i].region;
+            if c.settlements[..i].iter().any(|s| s.region == region) {
+                continue;
+            }
+            let total = c.settlements.iter().filter(|s| s.region == region).fold(Fx::ZERO, |a, s| a + s.share);
+            if total > Fx::ZERO && total != Fx::ONE {
+                for s in c.settlements.iter_mut().filter(|s| s.region == region) {
+                    s.share = s.share / total;
+                }
+            }
+        }
+    }
+
+    fn grow_civilization(&mut self, k: usize) {
+        let species = self.civs[k].species;
+        // Settlements follow the people: they shrink, grow or are lost.
+        self.settle_populations(k);
+        self.civs[k].settlements.retain(|s| s.population >= Fx::HALF);
+        if self.civs[k].settlements.is_empty() {
+            self.civs[k].fallen_tick = Some(self.tick);
             return;
         }
+        self.normalise_shares(k);
+        self.settle_populations(k);
 
         // Expansion into neighbouring land where the species lives.
         let culture = self.civs[k].culture;
@@ -549,6 +589,38 @@ impl World {
                     name,
                     population: b,
                     founded_tick: self.tick,
+                    share: Fx::ONE,
+                });
+            }
+        }
+
+        // A big settlement sends out a daughter village within its own
+        // region, taking a quarter of its people.
+        let big = self.civs[k]
+            .settlements
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.population >= Fx::from_int(DAUGHTER_AT))
+            .filter(|(_, s)| self.civs[k].settlements.iter().filter(|o| o.region == s.region).count() < MAX_PER_REGION)
+            .max_by_key(|(i, s)| (s.population, std::cmp::Reverse(*i)))
+            .map(|(i, _)| i);
+        if let Some(i) = big {
+            if self.civs[k].settlements.len() < MAX_SETTLEMENTS
+                && self.rng.chance(Fx::ratio(20, 100) + culture.openness * Fx::ratio(2, 10))
+            {
+                let name = self.new_name();
+                let parent = &mut self.civs[k].settlements[i];
+                let give = parent.share * Fx::ratio(1, 4);
+                parent.share -= give;
+                let region = parent.region;
+                let population = parent.population * Fx::ratio(1, 4);
+                parent.population -= population;
+                self.civs[k].settlements.push(Settlement {
+                    region,
+                    name,
+                    population,
+                    founded_tick: self.tick,
+                    share: give,
                 });
             }
         }
@@ -755,16 +827,31 @@ impl World {
         }
         self.civs[winner].battles_won += 1;
         self.civs[loser].battles_lost += 1;
-        let small = self.civs[loser].settlements[li].population < Fx::from_int(3);
-        if small && self.civs[loser].settlements.len() > 1 {
-            let s = self.civs[loser].settlements.remove(li);
+        // A region falls as a whole: every settlement the loser has there
+        // is taken (by kin) or razed (by strangers) if together they are
+        // small and the loser holds land elsewhere.
+        let held = self.civs[loser].settlements.iter().filter(|s| s.region == region);
+        let small = held.fold(Fx::ZERO, |a, s| a + s.population) < Fx::from_int(3);
+        let elsewhere = self.civs[loser].settlements.iter().any(|s| s.region != region);
+        if small && elsewhere {
+            let (lost, kept): (Vec<Settlement>, Vec<Settlement>) =
+                std::mem::take(&mut self.civs[loser].settlements).into_iter().partition(|s| s.region == region);
+            self.civs[loser].settlements = kept;
             if self.civs[winner].species == loser_species {
-                self.civs[winner].settlements.push(s);
+                self.civs[winner].settlements.extend(lost);
             }
         }
     }
 
-    /// The map region a settlement name refers to, for the viewer.
+    /// Every settlement in a region, the first-founded first (one people
+    /// holds a region, so they all share a civilization).
+    pub fn settlements_at(&self, region: usize) -> Vec<(&Civilization, &Settlement)> {
+        self.living_civs()
+            .flat_map(|c| c.settlements.iter().filter(move |s| s.region == region).map(move |s| (c, s)))
+            .collect()
+    }
+
+    /// The first-founded settlement in a region, for the viewer.
     pub fn settlement_at(&self, region: usize) -> Option<(&Civilization, &Settlement)> {
         self.living_civs().find_map(|c| {
             c.settlements
