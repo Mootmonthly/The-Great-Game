@@ -7,6 +7,7 @@
 use godot::prelude::*;
 
 mod net;
+mod terrain;
 use serde_json::{json, Value};
 use sim_core::presets::{preset_actions, PRESETS};
 use sim_core::world::{index, HEIGHT, WIDTH};
@@ -27,6 +28,8 @@ pub struct SimWorld {
     globe: Option<sim_core::globe::GlobeMaps>,
     /// Maps of a second body (a moon, or the planet seen from its moon).
     aux_globe: Option<sim_core::globe::GlobeMaps>,
+    /// The sea level and rivers of the last terrain made for a visit.
+    terrain_extras: Vec<f32>,
     base: Base<RefCounted>,
 }
 
@@ -38,6 +41,7 @@ impl IRefCounted for SimWorld {
             focus: None,
             globe: None,
             aux_globe: None,
+            terrain_extras: Vec::new(),
             base,
         }
     }
@@ -97,6 +101,7 @@ fn sheet_to_json(sh: &sim_core::sheet::CharacterSheet) -> Value {
             "save_ability": b.save_ability, "targets": b.targets,
         })),
         "class": sh.class, "equipment": sh.equipment, "archetype": sh.archetype,
+        "gear": sh.gear.iter().map(|g| json!({"name": g.0, "slot": g.1})).collect::<Vec<_>>(),
         "regeneration": sh.regeneration, "pack_tactics": sh.pack_tactics,
         "cost": c.cost,
         "cost_breakdown": {
@@ -548,6 +553,7 @@ impl SimWorld {
                 let mut v = civ_json(c);
                 v["at_war_with"] = json!(living_ids(c, &|r| r.at_war));
                 v["allied_with"] = json!(living_ids(c, &|r| r.allied));
+                v["cult"] = json!(c.faith.and_then(|f| w.religion(f)).is_some_and(|r| r.character == sim_core::religion::Character::Cult));
                 v
             })
             .collect();
@@ -977,6 +983,40 @@ impl SimWorld {
 
     /// A one-line summary of a region for hovering: its name on the map,
     /// whose land it is, what lives there.
+    /// Terrain for visiting a region (display only): heights in metres on a
+    /// (grid + 1)² lattice over [-extent, extent]², shaped by the region's
+    /// and its neighbours' elevation; `wet_share` of the land lies under the
+    /// sea. `terrain_extras` then gives the sea level and the rivers.
+    #[func]
+    fn terrain(&mut self, x: i64, y: i64, grid: i64, extent: f64, wet_share: f64) -> PackedFloat32Array {
+        let w = self.view();
+        let (cx, cy) = (coord(x, WIDTH) as usize, coord(y, HEIGHT) as usize);
+        let e = |dx: i64, dy: i64| {
+            let xx = coord(cx as i64 + dx, WIDTH) as usize;
+            let yy = (cy as i64 + dy).clamp(0, HEIGHT as i64 - 1) as usize;
+            w.regions[index(xx, yy)].elevation.to_f64() as f32
+        };
+        let elev = [e(0, 0), e(-1, 0), e(1, 0), e(0, -1), e(0, 1)];
+        let seed = (w.seed as u32) ^ ((cx * 131 + cy * 7919) as u32);
+        let t = terrain::generate(seed, elev, wet_share as f32, grid.clamp(16, 4096) as usize, extent as f32);
+        let mut extras = vec![t.sea_level, t.rivers.len() as f32];
+        for r in &t.rivers {
+            extras.push(r.len() as f32);
+            for p in r {
+                extras.extend_from_slice(p);
+            }
+        }
+        self.terrain_extras = extras;
+        PackedFloat32Array::from(t.heights.as_slice())
+    }
+
+    /// [sea level, river count, then per river: point count and (x, z,
+    /// surface height, width) per point] for the last `terrain` call.
+    #[func]
+    fn terrain_extras(&self) -> PackedFloat32Array {
+        PackedFloat32Array::from(self.terrain_extras.as_slice())
+    }
+
     #[func]
     fn region_summary(&self, x: i64, y: i64) -> GString {
         let w = self.view();

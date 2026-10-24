@@ -20,16 +20,22 @@ extends Control
 signal closed
 
 const CreatureBuilder := preload("res://creature_builder.gd")
+const Kit := preload("res://building_kit.gd")
+const ERA_INDEX := {"Primitive": 0, "Tribal": 1, "Crafting": 2, "Forging": 3, "Classical": 4, "Industrial": 5}
 ## Width of the walkable area, in metres.
-const SIZE := 1400.0
+const SIZE := 5600.0
 ## Terrain reaches this far beyond the walkable area, fading into the haze.
-const MARGIN := 300.0
+const MARGIN := 600.0
 const EXT := SIZE / 2.0 + MARGIN
-const GRID := 512
+const GRID := 2048
 const STEP := 2.0 * EXT / GRID
-## Terrain is drawn in square chunks of this many grid cells, so only what
-## the camera sees (and what is near enough to cast shadows) is drawn.
+## Near the camera the terrain is drawn in full detail, in square chunks of
+## CHUNK grid cells streamed in and out as the camera moves; beyond NEAR
+## metres a coarse mesh of the whole region (every COARSE-th grid point)
+## shows the land, sinking out of sight where the detailed chunks are.
 const CHUNK := 32
+const NEAR := 750.0
+const COARSE := 4
 ## Grass grows in square cells around the camera, out to GRASS_RADIUS.
 const GRASS_CELL := 32.0
 const GRASS_RADIUS := 120.0
@@ -137,6 +143,15 @@ var detail_img: Image
 var detail_tex: ImageTexture
 var palette: Dictionary = {}
 var terrain_mat: ShaderMaterial
+var coarse_mat: ShaderMaterial
+var terrain_root: Node3D
+## Detailed terrain chunks alive (Vector2i -> MeshInstance3D), those still
+## to build, and where the last complete ring was centred.
+var chunks := {}
+var chunk_queue: Array = []
+var _chunk_centre := Vector2i(1 << 20, 1 << 20)
+var _chunk_indices := PackedInt32Array()
+var rivers: Array = []
 var grass_mat: ShaderMaterial
 var grass_mesh: Mesh
 ## Grass cells alive around the camera (Vector2i -> MultiMeshInstance3D or
@@ -189,6 +204,16 @@ var _notice_time := 0.0
 var _war_timer := 0.0
 ## Peoples at war with this region's owners: {civ_id, name, species_id, color}.
 var enemies: Array = []
+## The Veil here (docs/GAME_DESIGN.md §4.4a): how thin it is (0 sealed, 1
+## wide open), whether it is breached (beings from beyond live here), and
+## the rift, its corruption and any cult shrine around it.
+var veil_thin := 0.0
+var breached := false
+var rift_pos := Vector3.ZERO
+var rift: Node3D
+var corrupt_radius := 0.0
+var cult_civs := {}
+var cult_sites: Array = []
 ## Places townsfolk go: {name, kind, pos, face} in world space.
 var sites: Array = []
 var huts: Array = []
@@ -200,6 +225,9 @@ var trodden_origin := Vector2.ZERO
 var trodden_half := 1.0
 var window_mat: StandardMaterial3D
 var _meshes := {}
+## The era and colour of the town being built, for the building kit.
+var _era := 1
+var _civ_col := Color.WHITE
 var _mats := {}
 const TIER_RADIUS := {"Camp": 5.0, "Village": 7.0, "Town": 9.0, "City": 12.0, "Metropolis": 15.0}
 const TIER_HUTS := {"Camp": 3, "Village": 6, "Town": 10, "City": 16, "Metropolis": 24}
@@ -212,7 +240,7 @@ const SITE_DOING := {"Forge": "smithing at the forge", "Workshop": "crafting in 
 	"Barracks": "drilling at the barracks", "Temple": "praying at the temple", "Shrine": "praying at the shrine",
 	"Wizard's tower": "studying at the tower", "Factory": "working at the factory", "Longhouse": "feasting in the longhouse",
 	"Harbour": "mending nets at the harbour", "Field": "tending the fields", "Well": "drawing water at the well",
-	"Post": "standing guard"}
+	"Post": "standing guard", "Rift": "chanting at the rift"}
 const GATHER := ["Well", "Market", "Longhouse"]
 
 
@@ -249,8 +277,10 @@ func _build() -> void:
 	home_focus = town_centre if _has_town() else Vector3(0, maxf(_height_at(0, 0), sea_level), 0)
 	cam_focus = home_focus
 	_build_settlement()
+	_plan_veil()
 	_build_ground_cover()
 	_update_grass(cam_focus, true)
+	_update_chunks(cam_focus, true)
 	_spawn_life()
 	enemies = info.get("enemies", []) if not towns.is_empty() else []
 	_war_timer = rng.randf_range(35.0, 70.0)
@@ -258,7 +288,7 @@ func _build() -> void:
 	camera = Camera3D.new()
 	camera.fov = 55.0
 	camera.near = 0.1
-	camera.far = 4000.0
+	camera.far = 14000.0
 	world.add_child(camera)
 	if town:
 		orbit_dist = clampf(town_radius * 2.6, 40.0, 200.0)
@@ -332,7 +362,7 @@ func _build_sky() -> void:
 	# Haze fades the far terrain into the sky, so the region has no hard edge.
 	env.fog_enabled = true
 	env.fog_light_color = sky_mat.sky_horizon_color
-	env.fog_density = 0.0006 + 0.0012 * haze
+	env.fog_density = 0.00008 + 0.00022 * haze
 	env.fog_sky_affect = 0.0
 	var we := WorldEnvironment.new()
 	we.environment = env
@@ -472,47 +502,38 @@ func _make_palette() -> Dictionary:
 	if ice > 0.3 or temp < 245.0:
 		p["snow_height"] = -1000.0  # Snow lies everywhere flat enough to hold it.
 		p["sand"] = Color(0.7, 0.72, 0.75)
-	elif temp < 275.0:
-		p["snow_height"] = 0.0  # Set to the upper hills once heights are known.
+	elif temp < 380.0:
+		p["snow_height"] = 0.0  # Set by altitude once heights are known.
 	return p
 
 
 func _build_terrain() -> void:
-	var broad := FastNoiseLite.new()
-	broad.seed = rng.seed
-	broad.frequency = 0.0011
-	broad.fractal_octaves = 4
-	var mid := FastNoiseLite.new()
-	mid.seed = rng.seed + 3
-	mid.frequency = 0.006
-	mid.fractal_octaves = 3
-	var fine := FastNoiseLite.new()
-	fine.seed = rng.seed + 7
-	fine.frequency = 0.04
-	fine.fractal_octaves = 2
-	heights.resize((GRID + 1) * (GRID + 1))
-	var inner: Array[float] = []
-	for z in GRID + 1:
-		for x in GRID + 1:
-			var wx := x * STEP - EXT
-			var wz := z * STEP - EXT
-			var h := broad.get_noise_2d(wx, wz) * 34.0 + mid.get_noise_2d(wx, wz) * 8.0 + fine.get_noise_2d(wx, wz) * 1.2
-			heights[z * (GRID + 1) + x] = h
-			if (x + z) % 3 == 0 and absf(wx) <= SIZE / 2.0 and absf(wz) <= SIZE / 2.0:
-				inner.append(h)
-	# Choose the sea level so the flooded share matches the region's liquid.
+	# The land itself comes from the extension: shaped by this region's and
+	# its neighbours' elevation, with mountains, coasts and rivers.
 	var liquid: float = info["liquid_amount"]
 	var wet_share := clampf(liquid / (liquid + 1.0), 0.0, 0.9)
-	inner.sort()
-	sea_level = inner[int(wet_share * (inner.size() - 1))] if wet_share > 0.02 else -100.0
+	heights = sim.terrain(region.x, region.y, GRID, EXT, wet_share)
+	var extras: PackedFloat32Array = sim.terrain_extras()
+	sea_level = extras[0] if extras[0] > -1000.0 else -100.0
+	if sea_level < -50.0 and sea_level > -1000.0:
+		sea_level = -100.0
+	var at := 2
+	for r in int(extras[1]):
+		var n := int(extras[at])
+		at += 1
+		var pts: Array = []
+		for k in n:
+			pts.append(Vector4(extras[at], extras[at + 1], extras[at + 2], extras[at + 3]))
+			at += 4
+		rivers.append(pts)
 
 	_plan_towns()
 	palette = _make_palette()
 	if float(palette["snow_height"]) == 0.0:
-		var top := -100.0
-		for h in heights:
-			top = maxf(top, h)
-		palette["snow_height"] = lerpf(maxf(sea_level, 0.0), top, 0.55)
+		# Stylised lapse rate: snow caps start a few hundred metres up on a
+		# temperate world, lower on a cold one.
+		var temp: float = info["temperature"]
+		palette["snow_height"] = maxf(sea_level, 0.0) + maxf(60.0, (temp - 268.0) / 0.075)
 
 	var dn := FastNoiseLite.new()
 	dn.seed = rng.seed + 31
@@ -524,15 +545,6 @@ func _build_terrain() -> void:
 	d2.generate_mipmaps()
 	detail_tex = ImageTexture.create_from_image(d2)
 
-	var normals := PackedVector3Array()
-	normals.resize((GRID + 1) * (GRID + 1))
-	for z in GRID + 1:
-		for x in GRID + 1:
-			var hl := heights[z * (GRID + 1) + maxi(x - 1, 0)]
-			var hr := heights[z * (GRID + 1) + mini(x + 1, GRID)]
-			var hd := heights[maxi(z - 1, 0) * (GRID + 1) + x]
-			var hu := heights[mini(z + 1, GRID) * (GRID + 1) + x]
-			normals[z * (GRID + 1) + x] = Vector3(hl - hr, 2.0 * STEP, hd - hu).normalized()
 	terrain_mat = ShaderMaterial.new()
 	terrain_mat.shader = preload("res://shaders/terrain.gdshader")
 	for k in ["grass_a", "grass_b", "soil", "sand", "rock", "snow"]:
@@ -543,25 +555,72 @@ func _build_terrain() -> void:
 	terrain_mat.set_shader_parameter("snow_height", palette["snow_height"])
 	terrain_mat.set_shader_parameter("ember_glow", palette["ember"])
 	terrain_mat.set_shader_parameter("detail", detail_tex)
-	var terrain := Node3D.new()
-	terrain.name = "Terrain"
-	world.add_child(terrain)
-	# Every chunk shares one index list.
+	coarse_mat = terrain_mat.duplicate()
+	coarse_mat.set_shader_parameter("sink_depth", 60.0)
+	coarse_mat.set_shader_parameter("sink_inner", NEAR - 150.0)
+	coarse_mat.set_shader_parameter("sink_outer", NEAR - 85.0)
+	terrain_root = Node3D.new()
+	terrain_root.name = "Terrain"
+	world.add_child(terrain_root)
 	var w := CHUNK + 1
-	var indices := PackedInt32Array()
 	for z in CHUNK:
 		for x in CHUNK:
 			var a := z * w + x
-			indices.append_array([a, a + 1, a + w + 1, a, a + w + 1, a + w])
-	for cz in GRID / CHUNK:
-		for cx in GRID / CHUNK:
-			terrain.add_child(_terrain_chunk(cx * CHUNK, cz * CHUNK, normals, indices))
+			_chunk_indices.append_array([a, a + 1, a + w + 1, a, a + w + 1, a + w])
+	_build_coarse()
 
 	if sea_level > -50.0:
 		_build_water()
+	_build_rivers()
 
 
-func _terrain_chunk(x0: int, z0: int, normals: PackedVector3Array, indices: PackedInt32Array) -> MeshInstance3D:
+## Ground normal at a grid point, from its neighbours `d` points away.
+func _grid_normal(x: int, z: int, d: int) -> Vector3:
+	var hl := heights[z * (GRID + 1) + maxi(x - d, 0)]
+	var hr := heights[z * (GRID + 1) + mini(x + d, GRID)]
+	var hd := heights[maxi(z - d, 0) * (GRID + 1) + x]
+	var hu := heights[mini(z + d, GRID) * (GRID + 1) + x]
+	return Vector3(hl - hr, 2.0 * STEP * d, hd - hu).normalized()
+
+
+## The whole region at low detail: every COARSE-th grid point.
+func _build_coarse() -> void:
+	var n := GRID / COARSE + 1
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	var indices := PackedInt32Array()
+	verts.resize(n * n)
+	norms.resize(n * n)
+	for z in n:
+		for x in n:
+			var gx := x * COARSE
+			var gz := z * COARSE
+			verts[z * n + x] = Vector3(gx * STEP - EXT, heights[gz * (GRID + 1) + gx], gz * STEP - EXT)
+			norms[z * n + x] = _grid_normal(gx, gz, COARSE)
+	for z in n - 1:
+		for x in n - 1:
+			var a := z * n + x
+			indices.append_array([a, a + 1, a + n + 1, a, a + n + 1, a + n])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = norms
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.name = "Coarse"
+	mi.mesh = mesh
+	mi.material_override = coarse_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	terrain_root.add_child(mi)
+
+
+func _terrain_chunk(cx: int, cz: int) -> MeshInstance3D:
+	var x0 := cx * CHUNK
+	var z0 := cz * CHUNK
+	if x0 < 0 or z0 < 0 or x0 + CHUNK > GRID or z0 + CHUNK > GRID:
+		return null
 	var w := CHUNK + 1
 	var verts := PackedVector3Array()
 	var norms := PackedVector3Array()
@@ -571,18 +630,55 @@ func _terrain_chunk(x0: int, z0: int, normals: PackedVector3Array, indices: Pack
 		for x in w:
 			var gi := (z0 + z) * (GRID + 1) + x0 + x
 			verts[z * w + x] = Vector3((x0 + x) * STEP - EXT, heights[gi], (z0 + z) * STEP - EXT)
-			norms[z * w + x] = normals[gi]
+			norms[z * w + x] = _grid_normal(x0 + x, z0 + z, 1)
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_NORMAL] = norms
-	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_INDEX] = _chunk_indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.material_override = terrain_mat
+	terrain_root.add_child(mi)
 	return mi
+
+
+## Streams detailed chunks around `focus`: builds missing ones (a few a
+## frame, nearest first), drops far ones, and once the ring is complete
+## lets the coarse mesh sink out of sight beneath it.
+func _update_chunks(focus: Vector3, all := false) -> void:
+	var size := CHUNK * STEP
+	var c := Vector2i(floori((focus.x + EXT) / size), floori((focus.z + EXT) / size))
+	if c != _chunk_centre:
+		_chunk_centre = c
+		var reach := int(ceil(NEAR / size)) + 1
+		var want := {}
+		chunk_queue.clear()
+		for dz in range(-reach, reach + 1):
+			for dx in range(-reach, reach + 1):
+				var k := c + Vector2i(dx, dz)
+				var centre := Vector2((k.x + 0.5) * size - EXT, (k.y + 0.5) * size - EXT)
+				if centre.distance_to(Vector2(focus.x, focus.z)) > NEAR + size * 0.75:
+					continue
+				want[k] = true
+				if not chunks.has(k):
+					chunk_queue.append(k)
+		chunk_queue.sort_custom(func(a: Vector2i, b: Vector2i): return (a - c).length_squared() < (b - c).length_squared())
+		for k in chunks.keys():
+			if not want.has(k):
+				if chunks[k] != null:
+					chunks[k].queue_free()
+				chunks.erase(k)
+	var built := 0
+	while not chunk_queue.is_empty() and (all or built < 3):
+		var k: Vector2i = chunk_queue.pop_front()
+		if not chunks.has(k):
+			chunks[k] = _terrain_chunk(k.x, k.y)
+			built += 1
+	if chunk_queue.is_empty():
+		coarse_mat.set_shader_parameter("sink_centre", Vector2(focus.x, focus.z))
 
 
 func _build_water() -> void:
@@ -591,8 +687,8 @@ func _build_water() -> void:
 	water.name = "Water"
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(EXT * 2.0, EXT * 2.0)
-	plane.subdivide_width = 32
-	plane.subdivide_depth = 32
+	plane.subdivide_width = 64
+	plane.subdivide_depth = 64
 	water.mesh = plane
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var wc := Color("#" + str(info["liquid_color"])) if info["liquid_color"] != null else Color(0.2, 0.45, 0.8)
@@ -603,10 +699,17 @@ func _build_water() -> void:
 	wm.set_shader_parameter("deep", (Color(0.9, 0.2, 0.02) if molten else wc.darkened(0.65)))
 	wm.set_shader_parameter("glow", 2.5 if molten else 0.0)
 	wm.set_shader_parameter("sea_level", sea_level)
-	var himg := Image.create_from_data(GRID + 1, GRID + 1, false, Image.FORMAT_RF, heights.to_byte_array())
+	# Depth shading reads a coarse copy of the heights.
+	var n := GRID / COARSE + 1
+	var coarse := PackedFloat32Array()
+	coarse.resize(n * n)
+	for z in n:
+		for x in n:
+			coarse[z * n + x] = heights[z * COARSE * (GRID + 1) + x * COARSE]
+	var himg := Image.create_from_data(n, n, false, Image.FORMAT_RF, coarse.to_byte_array())
 	wm.set_shader_parameter("heightmap", ImageTexture.create_from_image(himg))
 	wm.set_shader_parameter("extent", EXT)
-	wm.set_shader_parameter("texel", 1.0 / (GRID + 1))
+	wm.set_shader_parameter("texel", 1.0 / n)
 	var rimg := detail_img.duplicate()
 	rimg.bump_map_to_normal_map(6.0)
 	rimg.generate_mipmaps()
@@ -615,6 +718,56 @@ func _build_water() -> void:
 	water.material_override = wm
 	water.position.y = sea_level
 	world.add_child(water)
+
+
+## Each river as a ribbon of flowing water laid along its carved bed.
+func _build_rivers() -> void:
+	if rivers.is_empty() or float(info["temperature"]) > 700.0:
+		return
+	var wc := Color("#" + str(info["liquid_color"])) if info["liquid_color"] != null else Color(0.2, 0.45, 0.8)
+	var rm := ShaderMaterial.new()
+	rm.shader = preload("res://shaders/river.gdshader")
+	rm.set_shader_parameter("shallow", wc.lightened(0.35))
+	rm.set_shader_parameter("deep", wc.darkened(0.45))
+	var rimg := detail_img.duplicate()
+	rimg.bump_map_to_normal_map(6.0)
+	rimg.generate_mipmaps()
+	rm.set_shader_parameter("ripples", ImageTexture.create_from_image(rimg))
+	var icy: bool = float(info["ice_amount"]) > 0.3 or float(info["temperature"]) < 260.0
+	rm.set_shader_parameter("frozen", 1.0 if icy else 0.0)
+	for pts in rivers:
+		if pts.size() < 2:
+			continue
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var along := 0.0
+		var prev_l := Vector3.ZERO
+		var prev_r := Vector3.ZERO
+		var prev_v := 0.0
+		for i in pts.size():
+			var p: Vector4 = pts[i]
+			var a: Vector4 = pts[maxi(i - 1, 0)]
+			var b: Vector4 = pts[mini(i + 1, pts.size() - 1)]
+			var dir := Vector2(b.x - a.x, b.y - a.y).normalized()
+			var side := Vector3(-dir.y, 0, dir.x) * p.w * 0.62
+			var c := Vector3(p.x, p.z, p.y)
+			var l := c - side
+			var r := c + side
+			if i > 0:
+				along += Vector2(p.x - a.x, p.y - a.y).length()
+				var v := along / 12.0
+				for e in [[prev_l, 0.0, prev_v], [prev_r, 1.0, prev_v], [r, 1.0, v], [prev_l, 0.0, prev_v], [r, 1.0, v], [l, 0.0, v]]:
+					st.set_normal(Vector3.UP)
+					st.set_uv(Vector2(e[1], e[2]))
+					st.add_vertex(e[0])
+				prev_v = v
+			prev_l = l
+			prev_r = r
+		var mi := MeshInstance3D.new()
+		mi.mesh = st.commit()
+		mi.material_override = rm
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		world.add_child(mi)
 
 
 ## Loose rocks everywhere (one MultiMesh) and the grass material; grass
@@ -630,7 +783,7 @@ func _build_ground_cover() -> void:
 	grass_mat.set_shader_parameter("root_color", ga.darkened(0.3))
 	grass_mat.set_shader_parameter("tip_color", gb.lightened(0.1))
 	var rock_xf: Array = []
-	var rocks := int(SIZE * SIZE / 2500.0 * (0.5 + (1.0 - veg)))
+	var rocks := mini(int(SIZE * SIZE / 9000.0 * (0.5 + (1.0 - veg))), 4500)
 	for attempt in rocks * 3:
 		if rock_xf.size() >= rocks:
 			break
@@ -717,6 +870,8 @@ func _grass_cell(k: Vector2i) -> MultiMeshInstance3D:
 			continue
 		if near and (_trodden_at(x, z) > 0.25 or _blocked(Vector2(x, z), 0.4)):
 			continue
+		if corrupt_radius > 0.0 and Vector2(x - rift_pos.x, z - rift_pos.z).length() < corrupt_radius * (0.55 + 0.3 * r.randf()):
+			continue  # Nothing green grows near the rift.
 		var s := r.randf_range(0.7, 1.35) * (0.8 + veg * 0.4)
 		var b := Basis(Vector3.UP, r.randf() * TAU).scaled(Vector3(s, s * r.randf_range(0.8, 1.3), s))
 		xf.append(Transform3D(b, Vector3(x - centre.x, h - 0.02, z - centre.z)))
@@ -850,14 +1005,20 @@ func _spawn_life() -> void:
 			continue
 		animals += 1
 		var swimmer := _is_swimmer(detail)
-		var total := clampi(int(biomass / 1.5), 2, 18)
-		var herds := clampi(ceili(total / 5.0), 1, 4)
+		var total := clampi(int(biomass / 1.2), 3, 24)
+		var herds := clampi(ceili(total / 4.0), 1, 6)
+		var horror: bool = detail.get("otherworldly", false)
 		for h in herds:
-			# The first herd of each species stays within sight of the start.
+			# The first herd of each species stays within sight of the start;
+			# beings from beyond gather at the rift.
 			var herd := _spot_near(home_focus, 160.0, swimmer) if h == 0 else _random_spot(swimmer, true)
+			if horror and breached:
+				herd = _spot_near(rift_pos, 40.0, false)
 			for k in maxi(total / herds, 1):
 				var w := _add_wanderer(detail, sheet, p["name"], _role(detail, p["description"]), herd)
 				w.herd = herd
+				if w.role == "horror":
+					w.team = 3
 	if not towns.is_empty():
 		var budget := 72
 		for t: Town in towns:
@@ -898,7 +1059,7 @@ func _spawn_life() -> void:
 ## a simplified model up close and a trunk-and-crown shape far off, in tiles
 ## so only nearby plants are drawn in full.
 func _plant_forest(detail: Dictionary, sheet: Dictionary, biomass: float, kelp: bool) -> void:
-	var model := CreatureBuilder.build(detail)
+	var model := CreatureBuilder.build(detail, sheet)
 	var box := CreatureBuilder.bounds(model)
 	var metres: float = SIZE_METRES.get(sheet["size"], 1.7) * 1.6
 	var upright := box.size.y >= maxf(box.size.x, box.size.z) * 0.9
@@ -908,18 +1069,21 @@ func _plant_forest(detail: Dictionary, sheet: Dictionary, biomass: float, kelp: 
 	model.position = Vector3(-box.get_center().x * s, -box.position.y * s, -box.get_center().z * s)
 	var meshes := _merge_model(model)
 	model.free()
-	var count := clampi(int(biomass * 12.0), 20, 320)
-	var stands := clampi(3 + int(biomass / 2.0), 3, 16)
+	var count := clampi(int(biomass * 30.0), 40, 900)
+	var stands := clampi(6 + int(biomass), 6, 40)
+	var treeline: float = float(palette["snow_height"]) - 120.0
 	var tiles := {}
 	for st in stands:
 		var c := _spot_near(home_focus, 200.0, kelp) if st == 0 else _random_spot(kelp, true)
-		var radius := rng.randf_range(12.0, 50.0)
+		var radius := rng.randf_range(20.0, 90.0)
 		for k in count / stands:
 			var a := rng.randf() * TAU
 			var p := c + Vector3(cos(a), 0, sin(a)) * radius * sqrt(rng.randf())
 			if not _fits(p, kelp) or _in_town(p, 12.0 * town_scale):
 				continue
-			if not kelp and _slope_at(p.x, p.z) > 0.6:
+			if corrupt_radius > 0.0 and p.distance_to(rift_pos) < corrupt_radius * 0.8:
+				continue
+			if not kelp and (_slope_at(p.x, p.z) > 0.6 or _height_at(p.x, p.z) > treeline):
 				continue
 			var sc := rng.randf_range(0.75, 1.3)
 			var tk := Vector2i(floori(p.x / FOREST_TILE), floori(p.z / FOREST_TILE))
@@ -1069,6 +1233,8 @@ func _is_swimmer(detail: Dictionary) -> bool:
 
 
 func _role(detail: Dictionary, description: String) -> String:
+	if detail.get("otherworldly", false):
+		return "horror"
 	if _is_swimmer(detail):
 		return "swimmer"
 	return "hunter" if description.ends_with("Hunter") else "grazer"
@@ -1097,6 +1263,9 @@ func _arm(w: Wanderer) -> void:
 	var h := w.height
 	if h < w.radius * 1.6:
 		return  # Only upright creatures carry spears.
+	for g in w.sheet.get("gear", []):
+		if str(g.get("slot", "")) == "hand":
+			return  # It carries its people's own weapons already.
 	var shaft := MeshInstance3D.new()
 	shaft.mesh = _mesh("cyl")
 	shaft.material_override = _mat(Color(0.42, 0.3, 0.18))
@@ -1121,7 +1290,7 @@ func _add_wanderer(detail: Dictionary, sheet: Dictionary, name: String, role: St
 	w.plant = role == "plant"
 	w.aquatic = role == "swimmer" or (w.plant and _is_kelp(detail))
 	w.winged = _parts(detail).has("wing") and not w.plant
-	var model := CreatureBuilder.build(detail)
+	var model := CreatureBuilder.build(detail, sheet)
 	var box := CreatureBuilder.bounds(model)
 	var metres: float = SIZE_METRES.get(sheet["size"], 1.7)
 	if w.plant:
@@ -1239,6 +1408,11 @@ func _process(delta: float) -> void:
 		else:
 			_act(w, delta)
 	_update_floats(delta)
+	if rift:
+		rift.rotate_y(delta * 0.15)
+		var debris := rift.get_node_or_null("Debris")
+		if debris:
+			debris.position.y = sin(Time.get_ticks_msec() * 0.0006) * 1.5
 	if notice and _notice_time > 0.0:
 		_notice_time -= delta
 		notice.modulate.a = clampf(_notice_time / 1.5, 0.0, 1.0)
@@ -1258,6 +1432,7 @@ func _process(delta: float) -> void:
 	if possessed:
 		_drive(delta)
 		_update_grass(possessed.node.position)
+		_update_chunks(possessed.node.position)
 	else:
 		_pan(delta)
 		orbit_idle += delta
@@ -1269,6 +1444,7 @@ func _process(delta: float) -> void:
 		camera.position.y = maxf(camera.position.y, _height_at(camera.position.x, camera.position.z) + 2.0)
 		camera.transform = Transform3D(Basis.looking_at(focus + Vector3(0, 1.5, 0) - camera.position, Vector3.UP), camera.position)
 		_update_grass(cam_focus)
+		_update_chunks(cam_focus)
 	_hud_timer -= delta
 	if _hud_timer <= 0.0:
 		_hud_timer = 0.5
@@ -1365,6 +1541,22 @@ func _look_around(w: Wanderer) -> void:
 			if not t.farm and t.alarmed <= 0.0 and pos.distance_to(t.centre) < t.radius + 45.0:
 				_alarm(t, w)
 		return
+	if w.role == "horror":
+		var mind: Wanderer = null
+		var near := 35.0
+		for o: Wanderer in wanderers:
+			if o == w or o.plant or o.role == "horror" or not o.node.visible or o.state in ["dead", "inside"]:
+				continue
+			var d := pos.distance_to(o.node.position)
+			if d < near:
+				near = d
+				mind = o
+		if mind:
+			_engage(w, mind)
+			if mind.role == "villager" and mind.town:
+				_alarm(mind.town, w)
+				_notice("A being from beyond preys on %s!" % (mind.name if mind.label else "the folk of " + mind.town.name))
+		return
 	if w.role == "hunter":
 		if w.state in ["hunt", "eat", "rest"]:
 			return
@@ -1438,7 +1630,7 @@ func _look_around(w: Wanderer) -> void:
 func _hostile(a: Wanderer, b: Wanderer) -> bool:
 	if a.team < 0 or b.team < 0 or a.team == b.team:
 		return false
-	if a.team == 2 or b.team == 2:
+	if a.team in [2, 3] or b.team in [2, 3]:
 		return true
 	return _at_war(a.team - 10, b.team - 10)
 
@@ -1507,14 +1699,24 @@ func _strike(a: Wanderer, b: Wanderer) -> void:
 		var dmg := maxi(1, roundi(a.dpr * rng.randf_range(0.6, 1.4) * (2.0 if roll == 20 else 1.0)))
 		b.hp -= dmg
 		b.flash = 0.25
-		_float_text(b, str(dmg), Color(1.0, 0.4, 0.3) if b.role == "villager" else Color(1.0, 0.85, 0.3))
+		var col := Color(1.0, 0.4, 0.3) if b.role == "villager" else Color(1.0, 0.85, 0.3)
+		if a.role == "horror":
+			col = Color(0.8, 0.5, 1.0)
+		_float_text(b, str(dmg), col)
 		if b.hp <= 0:
 			_fall(b, a)
 			return
 	else:
 		_float_text(b, "miss", Color(0.85, 0.85, 0.85))
-	# The struck fight back, and their town takes up arms.
-	if b.foe == null and b != possessed and b.state != "dead":
+	# The struck fight back (grazers bolt instead), and their town takes up arms.
+	if b.role in ["grazer", "swimmer"] and b.state != "dead":
+		var away := b.node.position - a.node.position
+		away.y = 0.0
+		var to := b.node.position + away.normalized() * 18.0
+		to.x = clampf(to.x, -SIZE * 0.45, SIZE * 0.45)
+		to.z = clampf(to.z, -SIZE * 0.45, SIZE * 0.45)
+		_go(b, to, "", 2.4, "fleeing a %s" % a.species)
+	elif b.foe == null and b != possessed and b.state != "dead":
 		_engage(b, a)
 	if b.role == "villager" and b.town:
 		_alarm(b.town, a)
@@ -1530,9 +1732,10 @@ func _fall(b: Wanderer, a: Wanderer) -> void:
 	if b.bubble:
 		b.bubble.queue_free()
 		b.bubble = null
-	_enter_state(b, "dead", 45.0 if b.role == "villager" else 20.0, "fallen to %s" % (a.name if a.label else "a " + a.species))
+	var how := "drained" if a.role == "horror" else "fallen"
+	_enter_state(b, "dead", 45.0 if b.role == "villager" else 20.0, "%s by %s" % [how, (a.name if a.label else "a " + a.species)] if how == "drained" else "fallen to %s" % (a.name if a.label else "a " + a.species))
 	if b.label:
-		b.label.text = "%s\n(fallen)" % b.name
+		b.label.text = "%s\n(%s)" % [b.name, how]
 	if b.role == "raider" and not b.warband.is_empty():
 		b.warband["lost"] = int(b.warband["lost"]) + 1
 		if not b.warband["retreat"] and int(b.warband["lost"]) * 2 >= int(b.warband["size"]):
@@ -1555,6 +1758,8 @@ func _recover(w: Wanderer) -> void:
 	var p: Vector3
 	if w.role == "villager":
 		p = w.home.get("pos", w.town.centre if w.town else town_centre)
+	elif w.role == "horror":
+		p = _spot_near(w.herd, 30.0, false)
 	else:
 		p = _random_spot(w.aquatic, true)
 	w.node.position = Vector3(p.x, _ground_for(w, p.x, p.z), p.z)
@@ -1580,7 +1785,8 @@ func _break_off(w: Wanderer) -> void:
 	if w.role == "raider" and not w.warband.is_empty():
 		_go(w, w.warband["spawn"], "leave", 1.8, "fleeing, wounded")
 		return
-	w.team = -1
+	if w.role != "horror":
+		w.team = -1
 	var away := w.node.position - w.target
 	away.y = 0.0
 	var to := w.node.position + (away.normalized() if away.length() > 0.1 else Vector3.FORWARD) * 40.0
@@ -1669,6 +1875,108 @@ func _notice(text: String) -> void:
 	notice.text = text
 	notice.modulate.a = 1.0
 	_notice_time = 6.0
+
+
+# --- The Veil ----------------------------------------------------------------
+
+## Where the Veil is thin the sky turns violet; where it is breached (beings
+## from beyond live here) a rift opens away from the towns, the ground
+## around it is corrupted, and a people that worships the beings keeps a
+## shrine there.
+func _plan_veil() -> void:
+	veil_thin = clampf(1.0 - float(info.get("veil", 1.0)), 0.0, 1.0)
+	var horrors := 0
+	for p in (info["populations"] as Array).slice(0, 20):
+		var d = JSON.parse_string(sim.species_detail_json(int(p["id"])))
+		if d != null and d.get("otherworldly", false):
+			horrors += 1
+	breached = horrors > 0 or veil_thin > 0.5
+	for c in info.get("peoples", []):
+		if c.get("cult", false):
+			cult_civs[int(c["civ_id"])] = true
+	var tint := clampf(veil_thin * 0.6 + (0.25 if breached else 0.0), 0.0, 0.65)
+	if tint > 0.05:
+		var violet := Color(0.42, 0.22, 0.62)
+		var sky := env.sky.sky_material as ProceduralSkyMaterial
+		sky.sky_top_color = sky.sky_top_color.lerp(violet.darkened(0.3), tint)
+		sky.sky_horizon_color = sky.sky_horizon_color.lerp(violet.lightened(0.25), tint)
+		sky.ground_horizon_color = sky.ground_horizon_color.lerp(violet, tint)
+		_day_ambient = _day_ambient.lerp(violet.lightened(0.3), tint * 0.6)
+	if not breached:
+		return
+	# The rift: away from the towns, on dry land.
+	var best := home_focus + Vector3(400, 0, 0)
+	var best_score := -1e9
+	for attempt in 40:
+		var a := rng.randf() * TAU
+		var p := home_focus + Vector3(cos(a), 0, sin(a)) * rng.randf_range(260.0, 650.0)
+		if not _fits(p, false) or _in_town(p, 80.0):
+			continue
+		var score := -_slope_at(p.x, p.z) * 50.0 + rng.randf()
+		if score > best_score:
+			best_score = score
+			best = p
+	rift_pos = Vector3(best.x, _height_at(best.x, best.z), best.z)
+	corrupt_radius = 70.0 + 260.0 * clampf(veil_thin + 0.15 * horrors, 0.0, 1.0)
+	for m in [terrain_mat, coarse_mat]:
+		m.set_shader_parameter("corrupt_centre", Vector2(rift_pos.x, rift_pos.z))
+		m.set_shader_parameter("corrupt_radius", corrupt_radius)
+		m.set_shader_parameter("corrupt_strength", clampf(0.55 + veil_thin * 0.6, 0.0, 1.0))
+	_build_rift()
+
+
+func _build_rift() -> void:
+	rift = Node3D.new()
+	rift.name = "Rift"
+	rift.position = rift_pos
+	world.add_child(rift)
+	var h := 16.0 + 28.0 * veil_thin
+	var rm := ShaderMaterial.new()
+	rm.shader = preload("res://shaders/rift.gdshader")
+	for k in 2:
+		var q := MeshInstance3D.new()
+		var quad := QuadMesh.new()
+		quad.size = Vector2(h * 0.45, h)
+		q.mesh = quad
+		q.material_override = rm
+		q.position.y = h * 0.55
+		q.rotation.y = k * PI / 2.0
+		q.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		rift.add_child(q)
+	var light := OmniLight3D.new()
+	light.light_color = Color(0.7, 0.35, 1.0)
+	light.light_energy = 4.0
+	light.omni_range = 70.0
+	light.position.y = h * 0.5
+	rift.add_child(light)
+	# Torn-up ground drifting around the tear.
+	var xf: Array = []
+	for k in 26:
+		var a := TAU * k / 26.0 + rng.randf() * 0.3
+		var r := rng.randf_range(6.0, 22.0)
+		var s := rng.randf_range(0.6, 2.6)
+		xf.append(Transform3D(Basis.from_euler(Vector3(rng.randf() * TAU, rng.randf() * TAU, 0)).scaled(Vector3(s, s * 0.7, s)), Vector3(cos(a) * r, rng.randf_range(3.0, h * 0.9), sin(a) * r)))
+	var debris := _multimesh(_mesh("rock"), _mat(Color(0.25, 0.2, 0.3)), xf)
+	debris.name = "Debris"
+	world.remove_child(debris)
+	rift.add_child(debris)
+	# Dead trees in the corrupted ground.
+	var trunks: Array = []
+	for k in 18:
+		var p := _spot_near(rift_pos, corrupt_radius * 0.8, false)
+		var s := rng.randf_range(0.8, 1.6)
+		trunks.append(Transform3D(Basis.from_euler(Vector3(rng.randf_range(-0.2, 0.2), rng.randf() * TAU, rng.randf_range(-0.2, 0.2))).scaled(Vector3(0.35 * s, 5.0 * s, 0.35 * s)), Vector3(p.x, _height_at(p.x, p.z) + 2.3 * s, p.z)))
+	_multimesh(_mesh("cone"), _mat(Color(0.16, 0.13, 0.17)), trunks)
+	# A people that worships the beings keeps a ring of standing stones here.
+	if cult_civs.is_empty():
+		return
+	var stones: Array = []
+	for k in 7:
+		var a := TAU * k / 7.0
+		var p := rift_pos + Vector3(cos(a), 0, sin(a)) * 18.0
+		stones.append(Transform3D(Basis(Vector3.UP, a).scaled(Vector3(1.2, 6.0, 0.8)), Vector3(p.x, _height_at(p.x, p.z) + 2.6, p.z)))
+		cult_sites.append({"name": "Rift", "pos": rift_pos + Vector3(cos(a + 0.45), 0, sin(a + 0.45)) * 15.0, "face": rift_pos})
+	_multimesh(_mesh("box"), _mat(Color(0.3, 0.26, 0.36), 0.0), stones)
 
 
 # --- War ---------------------------------------------------------------------
@@ -1799,6 +2107,12 @@ func _next(w: Wanderer) -> void:
 			_next_villager(w)
 		"raider":
 			_next_raider(w)
+		"horror":
+			var to := _spot_near(w.herd, 120.0, false)
+			if not towns.is_empty() and rng.randf() < 0.2:
+				var t: Town = towns[rng.randi() % towns.size()]
+				to = w.node.position.lerp(t.centre, 0.4)
+			_go(w, to, "rest", 0.7, "drifting" if w.node.position.distance_to(w.herd) < 150.0 else "drifting toward the living")
 		"swimmer":
 			var to := _jitter(w.herd, 14.0)
 			if _fits(to, true):
@@ -1840,6 +2154,11 @@ func _next_villager(w: Wanderer) -> void:
 			_enter_state(w, "rest", 4.0, "keeping watch")
 		return
 	if night > 0.4:
+		if t and cult_civs.has(t.civ_id) and not cult_sites.is_empty() and rng.randf() < 0.45:
+			var s: Dictionary = cult_sites[rng.randi() % cult_sites.size()]
+			w.site = s
+			_go(w, _jitter(s["pos"], 1.5), "work", 1.1, "going to the rift")
+			return
 		if not w.home.is_empty():
 			_go(w, w.home["pos"], "home", 1.2, "heading home for the night")
 		else:
@@ -2112,6 +2431,10 @@ func _update_hud() -> void:
 					wars.append("the %s and the %s are at war" % [civ_names[ids[i]], civ_names[ids[j]]])
 		for e in enemies:
 			wars.append("the %s are at war with the %s" % [civ_names.get(int(e["against"]), "?"), e["name"]])
+		if breached:
+			wars.append("a rift to the beyond is open here (the Veil is %d%% thin)" % int(veil_thin * 100.0))
+		elif veil_thin > 0.25:
+			wars.append("the Veil is thin here (%d%%)" % int(veil_thin * 100.0))
 		if not wars.is_empty():
 			var line := "; ".join(wars)
 			head += "\n" + line.left(1).to_upper() + line.substr(1)
@@ -2189,7 +2512,7 @@ func _on_input(event: InputEvent) -> void:
 				if possessed == null and drag_moved < 6.0:
 					_pick(event.position)
 		elif event.pressed and possessed == null and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
-			orbit_dist = clampf(orbit_dist * (0.9 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.1), 8.0, 420.0)
+			orbit_dist = clampf(orbit_dist * (0.9 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.1), 8.0, 1600.0)
 	elif event is InputEventMouseMotion:
 		if dragging:
 			drag_moved += event.relative.length()
@@ -2317,7 +2640,7 @@ func _site_score_best(radius: float, around: Vector3, _dmin: float, reach: float
 	for cz in range(-half, half + 1):
 		for cx in range(-half, half + 1):
 			var c := Vector2(around.x, around.z) + Vector2(cx, cz) * reach / half
-			var score := _site_score(c, radius) - c.distance_to(Vector2(around.x, around.z)) * 0.04
+			var score := _site_score(c, radius) - c.distance_to(Vector2(around.x, around.z)) * 0.04 - _slope_at(c.x, c.y) * 30.0 - maxf(_height_at(c.x, c.y) - maxf(sea_level, 0.0), 0.0) * 0.03
 			if score > best_score:
 				best_score = score
 				best = c
@@ -2457,18 +2780,39 @@ func _part(parent: Node3D, kind: String, mat: Material, base: Vector3, size: Vec
 ## Many copies of one primitive in a single MultiMesh (huts, posts, wall
 ## blocks): `xf` holds one Transform3D per copy, in town space. Props that
 ## are not buildings (crops) are left out of the building count.
+## Many copies of one building-kit piece in town space.
+func _scatter_kit(kind: String, xf: Array, count := true) -> void:
+	_scatter_mesh(Kit.mesh(kind, _civ_col, _era, window_mat), null, xf, count)
+
+
+## One building-kit piece standing at `local` (town space), facing `yaw`.
+func _kit_piece(kind: String, local: Vector2, yaw: float, parent: Node3D = null) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = Kit.mesh(kind, _civ_col, _era, window_mat)
+	mi.position = Vector3(local.x, _ground(local) - 0.05, local.y)
+	mi.rotation.y = yaw
+	(parent if parent else town).add_child(mi)
+	building_count += 1
+	return mi
+
+
 func _scatter(kind: String, mat: Material, xf: Array, count := true) -> void:
+	_scatter_mesh(_mesh(kind), mat, xf, count)
+
+
+func _scatter_mesh(mesh: Mesh, mat: Material, xf: Array, count := true) -> void:
 	if xf.is_empty():
 		return
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.mesh = _mesh(kind)
+	mm.mesh = mesh
 	mm.instance_count = xf.size()
 	for i in xf.size():
 		mm.set_instance_transform(i, xf[i])
 	var inst := MultiMeshInstance3D.new()
 	inst.multimesh = mm
-	inst.material_override = mat
+	if mat:
+		inst.material_override = mat
 	town.add_child(inst)
 	if count:
 		building_count += xf.size()
@@ -2510,7 +2854,7 @@ func _build_settlement() -> void:
 	window_mat.emission = Color(1.0, 0.68, 0.32)
 	trodden_origin = Vector2.ZERO
 	trodden_half = SIZE * 0.5
-	trodden = Image.create(2048, 2048, false, Image.FORMAT_L8)
+	trodden = Image.create(4096, 4096, false, Image.FORMAT_L8)
 	for k in towns.size():
 		var t: Town = towns[k]
 		town_centre = t.centre
@@ -2565,52 +2909,36 @@ func _build_farm(t: Town, k: int) -> void:
 	town.position = Vector3(t.centre.x, 0, t.centre.z)
 	town.scale = Vector3.ONE * town_scale
 	world.add_child(town)
-	var wood := _mat(Color(0.45, 0.32, 0.2))
+	_era = int(ERA_INDEX.get(str(t.info.get("era", "Tribal")), 1))
+	_civ_col = civ_col
 	var yaw := brng.randf() * TAU
 	var fwd := Vector2(sin(yaw), cos(yaw))
 	var side := Vector2(fwd.y, -fwd.x)
-	var house := Node3D.new()
-	house.position = Vector3(0, _ground(Vector2.ZERO) - 0.05, 0)
-	house.rotation.y = yaw
-	town.add_child(house)
-	_part(house, "box", wood, Vector3.ZERO, Vector3(2.2, 1.2, 1.7))
-	_part(house, "prism", _mat(Color(0.72, 0.6, 0.3).lerp(civ_col, 0.3)), Vector3(0, 1.2, 0), Vector3(2.6, 0.9, 1.9))
-	_part(house, "box", window_mat, Vector3(0, 0, 0.86), Vector3(0.45, 0.75, 0.05))
-	var hay := Node3D.new()
-	var hp := -side * 1.9
-	hay.position = Vector3(hp.x, _ground(hp) - 0.05, hp.y)
-	town.add_child(hay)
-	_part(hay, "dome", _mat(Color(0.82, 0.7, 0.35)), Vector3.ZERO, Vector3(1.1, 1.2, 1.1))
+	_kit_piece("Farmhouse", Vector2.ZERO, yaw)
+	_kit_piece("Haystack", -side * 2.0, yaw)
 	var wc := _world(Vector2.ZERO)
-	obstacles.append([Vector2(wc.x, wc.z), 1.3 * town_scale])
-	huts.append({"name": "Hut", "pos": _world(fwd * 1.4), "face": wc})
-	# The field in front of the house, fenced.
-	var field := fwd * 4.2
+	obstacles.append([Vector2(wc.x, wc.z), Kit.footprint("Farmhouse") * town_scale])
+	huts.append({"name": "Hut", "pos": _world(fwd * Kit.door("Farmhouse").z), "face": wc})
+	# The field in front of the house, fenced, with a gate towards the house.
+	var field := fwd * 4.4
 	var crops: Array = []
-	var posts: Array = []
-	var ripe := Color(0.78, 0.66, 0.25) if brng.randf() < 0.5 else Color(0.36, 0.55, 0.2)
 	for row in 5:
 		for c in 8:
 			var p := field + side * (c - 3.5) * 0.45 + fwd * (row - 2) * 0.5
-			var h := 0.32 + brng.randf() * 0.15
-			crops.append(Transform3D(Basis(Vector3.UP, yaw).scaled_local(Vector3(0.2, h, 0.2)), Vector3(p.x, _ground(p) + h * 0.5, p.y)))
-	for e in 24:
-		var u := float(e) / 24.0 * 4.0
-		var q := Vector2.ZERO
-		if u < 1.0:
-			q = side * lerpf(-2.1, 2.1, u) + fwd * -1.4
-		elif u < 2.0:
-			q = side * 2.1 + fwd * lerpf(-1.4, 1.4, u - 1.0)
-		elif u < 3.0:
-			q = side * lerpf(2.1, -2.1, u - 2.0) + fwd * 1.4
-		else:
-			q = side * -2.1 + fwd * lerpf(1.4, -1.4, u - 3.0)
-		if u >= 0.4 and u < 0.6:
-			continue  # The gate faces the house.
-		var p := field + q
-		posts.append(Transform3D(Basis().scaled(Vector3(0.08, 0.6, 0.08)), Vector3(p.x, _ground(p) + 0.3, p.y)))
-	_scatter("cone", _mat(ripe), crops, false)
-	_scatter("box", wood, posts)
+			crops.append(Transform3D(Basis(Vector3.UP, yaw + brng.randf()).scaled(Vector3(1.0, 0.85 + brng.randf() * 0.35, 1.0)), Vector3(p.x, _ground(p), p.y)))
+	var fence: Array = []
+	for e in 5:
+		for end_side in [-1.0, 1.0]:
+			var p: Vector2 = field + side * (e - 2.0) + fwd * 1.5 * end_side
+			if end_side < 0.0 and e == 2:
+				continue  # The gate.
+			fence.append(Transform3D(Basis(Vector3.UP, yaw), Vector3(p.x, _ground(p), p.y)))
+	for e in 3:
+		for end_side in [-1.0, 1.0]:
+			var p: Vector2 = field + fwd * (e - 1.0) + side * 2.5 * end_side
+			fence.append(Transform3D(Basis(Vector3.UP, yaw + PI / 2.0), Vector3(p.x, _ground(p), p.y)))
+	_scatter_kit("Crop", crops, false)
+	_scatter_kit("Fence", fence)
 	_add_site("Field", field - fwd * 0.6, field)
 	_add_site("Field", field + side * 1.2, field)
 	var fw := _world(field)
@@ -2629,22 +2957,13 @@ func _build_town(t: Town, k: int) -> void:
 	var brng := RandomNumberGenerator.new()
 	brng.seed = region.x * 7919 + region.y * 104729 + 17 + 101 * k
 	var tier := str(st.get("tier", "Village"))
+	_era = int(ERA_INDEX.get(str(st.get("era", "Tribal")), 1))
+	_civ_col = civ_col
 	var r_units := town_radius / town_scale
-	var wood := _mat(Color(0.45, 0.32, 0.2))
-	var stone := _mat(Color(0.58, 0.58, 0.6))
-	var dark := _mat(Color(0.3, 0.3, 0.33))
-	var roof := _mat(civ_col.darkened(0.15))
 	var placed: Array = [[Vector2.ZERO, 1.6]]  # [town-space position, footprint radius]; the well.
 
 	# The well in the square, where townsfolk meet.
-	var well := Node3D.new()
-	well.position = Vector3(0, _ground(Vector2.ZERO) - 0.05, 0)
-	town.add_child(well)
-	_part(well, "cyl", stone, Vector3.ZERO, Vector3(1.1, 0.45, 1.1))
-	_part(well, "cyl", _mat(Color(0.15, 0.25, 0.35)), Vector3(0, 0.4, 0), Vector3(0.8, 0.06, 0.8))
-	for sx in [-0.45, 0.45]:
-		_part(well, "box", wood, Vector3(sx, 0.4, 0), Vector3(0.08, 0.9, 0.08))
-	_part(well, "prism", roof, Vector3(0, 1.25, 0), Vector3(1.2, 0.4, 0.9))
+	_kit_piece("Well", Vector2.ZERO, 0.0)
 	obstacles.append([Vector2(town_centre.x, town_centre.z), 0.6 * town_scale])
 	_add_site("Well", Vector2(0, 1.1), Vector2.ZERO)
 
@@ -2653,9 +2972,9 @@ func _build_town(t: Town, k: int) -> void:
 	for n in names:
 		if FOOTPRINT.has(n):
 			core.append(n)
-	core.sort_custom(func(a, b): return FOOTPRINT[a] > FOOTPRINT[b])
+	core.sort_custom(func(a, b): return Kit.footprint(a) > Kit.footprint(b))
 	for n in core:
-		var foot: float = FOOTPRINT[n]
+		var foot: float = Kit.footprint(n)
 		var spot = _find_spot(brng, placed, foot, r_units, 1.0 if n in ["Temple", "Library", "Market"] else 0.0)
 		if spot == null:
 			continue
@@ -2664,19 +2983,20 @@ func _build_town(t: Town, k: int) -> void:
 		root.position = Vector3(local.x, _ground(local) - 0.05, local.y)
 		root.rotation.y = atan2(-local.x, -local.y) + (brng.randf() - 0.5) * 0.3
 		town.add_child(root)
-		_make_building(n, root, civ_col, wood, stone, dark, roof)
+		var piece := MeshInstance3D.new()
+		piece.mesh = Kit.mesh(n, civ_col, _era, window_mat)
+		root.add_child(piece)
+		building_count += 1
 		placed.append([local, foot])
 		var wc := _world(local)
 		obstacles.append([Vector2(wc.x, wc.z), foot * town_scale * (0.6 if n == "Market" else 0.85)])
 		if SITE_DOING.has(n):
 			# The door faces the square (+Z of the building points at the centre).
 			var inward := -local.normalized() if local.length() > 0.01 else Vector2(0, 1)
-			_add_site(n, local + inward * (foot * 0.9 + 0.5), local)
+			_add_site(n, local + inward * Kit.door(n).z, local)
 
 	# Huts, scattered over what is left, each with a door to the square.
 	var hut_xf: Array = []
-	var tops: Array = []
-	var doors: Array = []
 	if "Huts" in names or tier == "Camp":
 		for h in int(TIER_HUTS.get(tier, 6)):
 			var spot = _find_spot(brng, placed, 1.3, r_units, 0.0)
@@ -2689,23 +3009,18 @@ func _build_town(t: Town, k: int) -> void:
 			var yaw := atan2(inward.x, inward.y)
 			var sc := 0.9 + brng.randf() * 0.3
 			var b := Basis(Vector3.UP, yaw)
-			hut_xf.append(Transform3D(b.scaled_local(Vector3(1.6, 1.1, 1.6) * sc), Vector3(local.x, gy + 0.55 * sc, local.y)))
-			tops.append(Transform3D(b.scaled_local(Vector3(2.1, 0.9, 2.1) * sc), Vector3(local.x, gy + 1.1 * sc + 0.45 * sc, local.y)))
-			var door := local + inward * 0.8 * sc
-			doors.append(Transform3D(b.scaled_local(Vector3(0.42, 0.72, 0.1) * sc), Vector3(door.x, gy + 0.36 * sc, door.y)))
+			hut_xf.append(Transform3D(b.scaled(Vector3.ONE * sc), Vector3(local.x, gy, local.y)))
 			var wc := _world(local)
-			obstacles.append([Vector2(wc.x, wc.z), 0.8 * sc * town_scale])
-			huts.append({"name": "Hut", "pos": _world(local + inward * (0.8 * sc + 0.45)), "face": wc})
-	_scatter("cyl", wood, hut_xf)
-	_scatter("cone", _mat(Color(0.72, 0.6, 0.3).lerp(civ_col, 0.35)), tops)
-	_scatter("box", window_mat, doors)
+			obstacles.append([Vector2(wc.x, wc.z), Kit.footprint("Hut") * sc * town_scale])
+			huts.append({"name": "Hut", "pos": _world(local + inward * Kit.door("Hut").z * sc), "face": wc})
+	_scatter_kit("Hut", hut_xf)
 
 	if "Palisade" in names:
-		_ring(r_units + 3.0, 1.9, "cyl", _mat(Color(0.5, 0.36, 0.22)), Vector3(0.28, 1.8, 0.28), 0.0, 0.0)
+		_ring(r_units + 3.0, 0.42, "PalisadePost", false)
 	if "Walls" in names:
-		_ring(r_units + 5.0, 3.2, "box", stone, Vector3(0.7, 1.8, 2.4), 0.8, 0.25)
+		_ring(r_units + 5.0, 3.2, "WallSegment", true)
 	if "Harbour" in names:
-		_build_harbour(wood)
+		_build_harbour()
 	if "Granary" in names or tier != "Camp":
 		_build_fields(brng, r_units + (6.5 if "Walls" in names else 4.5))
 
@@ -2731,11 +3046,12 @@ func _find_spot(brng: RandomNumberGenerator, placed: Array, foot: float, r_units
 	return null
 
 
-## A ring of posts or blocks around the town; pieces over water are skipped.
-## `chunk` is the arc length of each piece, `gates` the share left open.
-func _ring(radius: float, chunk: float, kind: String, mat: Material, size: Vector3, gates: float, towers_on: float) -> void:
+## A ring of palisade posts or wall sections around the town, with gates
+## and (for walls) towers; pieces over water are skipped. `chunk` is the arc
+## length of each piece.
+func _ring(radius: float, chunk: float, kind: String, wall: bool) -> void:
 	var circ := TAU * radius
-	var n := clampi(int(circ / chunk), 12, 56)
+	var n := clampi(int(circ / chunk), 12, 400)
 	var xf: Array = []
 	var towers: Array = []
 	for i in n:
@@ -2743,26 +3059,27 @@ func _ring(radius: float, chunk: float, kind: String, mat: Material, size: Vecto
 		var p := Vector2(cos(a), sin(a)) * radius
 		if not _dry(p):
 			continue
-		if i % 7 == 6:
-			continue  # A gap in the wall or fence: a gate.
+		if (wall and i % 7 == 6) or (not wall and i % 24 >= 20):
+			continue  # A gap: a gate.
 		var y := _ground(p) - 0.1
+		# +Z of each piece runs along the ring.
 		var b := Basis(Vector3.UP, -a)
-		var sz := size
-		if kind == "box":
-			sz.z = circ / n * (1.0 - gates * 0.3)
-		if towers_on > 0.0 and i % 4 == 0:
-			towers.append(Transform3D(Basis(Vector3.UP, -a).scaled_local(Vector3(1.3, 2.8, 1.3)), Vector3(p.x, y + 1.4, p.y)))
-		xf.append(Transform3D(b.scaled_local(sz), Vector3(p.x, y + sz.y * 0.5, p.y)))
-		var w := _world(p)
-		obstacles.append([Vector2(w.x, w.z), maxf(sz.x, sz.z) * 0.55 * town_scale])
-	_scatter(kind, mat, xf)
-	if towers.size() > 0:
-		_scatter("box", _mat(Color(0.5, 0.5, 0.53)), towers)
+		if wall:
+			b = b.scaled_local(Vector3(0.8, 1.0, circ / n * 0.98))
+			if i % 4 == 0:
+				towers.append(Transform3D(Basis(Vector3.UP, -a), Vector3(p.x, y, p.y)))
+		else:
+			b = b.rotated(Vector3.UP, (float(i * 7919 % 13) / 13.0 - 0.5) * 0.4).scaled(Vector3(1.0, 0.85 + 0.3 * float(i * 104729 % 7) / 7.0, 1.0))
+		# Walls and palisades do not steer anyone: without real pathfinding
+		# through the gates, folk would be stuck behind them.
+		xf.append(Transform3D(b, Vector3(p.x, y, p.y)))
+	_scatter_kit(kind, xf)
+	_scatter_kit("WallTower", towers)
 
 
 ## A short pier from the nearest shore into the water, if there is any water
 ## within reach of the town.
-func _build_harbour(wood: Material) -> void:
+func _build_harbour() -> void:
 	if sea_level < -50.0:
 		return
 	var best_a := -1.0
@@ -2787,11 +3104,10 @@ func _build_harbour(wood: Material) -> void:
 	root.position = Vector3(shore.x, (sea_level + 0.3) / town_scale, shore.y)
 	root.rotation.y = atan2(dir.x, dir.y)
 	town.add_child(root)
-	_part(root, "box", wood, Vector3(0, -0.1, 3.0), Vector3(1.6, 0.15, 6.5))
-	for k in 4:
-		for sx in [-0.7, 0.7]:
-			_part(root, "cyl", wood, Vector3(sx, -1.5, 0.6 + k * 1.7), Vector3(0.18, 1.5, 0.18))
-	_part(root, "box", _mat(Color(0.6, 0.42, 0.25)), Vector3(0, 0.05, 6.4), Vector3(1.2, 0.5, 1.0))
+	var pier := MeshInstance3D.new()
+	pier.mesh = Kit.mesh("Pier", _civ_col, _era, window_mat)
+	root.add_child(pier)
+	building_count += 1
 	_add_site("Harbour", shore - dir * 0.8, shore + dir * 3.0)
 
 
@@ -2822,11 +3138,11 @@ func _build_fields(brng: RandomNumberGenerator, ring: float) -> void:
 			for k in 10:
 				var p := c + along * (k - 4.5) * 0.45 + out * (row - 2) * 0.55
 				var gy := _ground(p)
-				var h := 0.35 + brng.randf() * 0.15
-				crops.append(Transform3D(Basis(Vector3.UP, a).scaled_local(Vector3(0.22, h, 0.22)), Vector3(p.x, gy + h * 0.5, p.y)))
+				var h := 0.85 + brng.randf() * 0.35
+				crops.append(Transform3D(Basis(Vector3.UP, a + brng.randf()).scaled(Vector3(1.0, h, 1.0)), Vector3(p.x, gy, p.y)))
 		_add_site("Field", c - out * 1.6, c)
 		_paint_rect(cw, along, out, 2.6 * town_scale, 1.6 * town_scale, 0.85)
-	_scatter("cone", _mat(ripe), crops, false)
+	_scatter_kit("Crop", crops, false)
 
 
 func _trodden_at(x: float, z: float) -> float:
@@ -2876,83 +3192,3 @@ func _paint_paths() -> void:
 	_paint(town_centre.x, town_centre.z, (1.6 if town.name == "Farm" else 3.2) * town_scale, 0.9)
 	for s in sites + huts:
 		_paint_line(town_centre, s["pos"], 0.9, 0.75)
-
-
-func _make_building(n: String, root: Node3D, civ: Color, wood: Material, stone: Material, dark: Material, roof: Material) -> void:
-	var pale := _mat(Color(0.82, 0.8, 0.72))
-	match n:
-		"Longhouse":
-			_part(root, "box", wood, Vector3.ZERO, Vector3(1.9, 1.3, 5.0))
-			_part(root, "prism", roof, Vector3(0, 1.3, 0), Vector3(2.4, 1.0, 5.3))
-			_part(root, "box", window_mat, Vector3(0, 0, 2.51), Vector3(0.6, 0.85, 0.05))
-		"Workshop", "Forge":
-			var forge := n == "Forge"
-			_part(root, "box", dark if forge else wood, Vector3.ZERO, Vector3(2.6, 1.6, 2.6))
-			_part(root, "box", roof, Vector3(0, 1.6, 0), Vector3(2.9, 0.25, 2.9))
-			_part(root, "cyl", stone, Vector3(0.8, 1.85, 0.8), Vector3(0.55, 1.5, 0.55))
-			if forge:
-				_part(root, "cyl", _mat(Color(1.0, 0.45, 0.1), 2.5), Vector3(0.8, 3.3, 0.8), Vector3(0.4, 0.15, 0.4))
-				_part(root, "box", _mat(Color(1.0, 0.4, 0.1), 2.0), Vector3(0, 0.2, 1.31), Vector3(1.0, 0.7, 0.05))
-				_part(root, "box", dark, Vector3(0.4, 0, 1.9), Vector3(0.5, 0.45, 0.35))  # Anvil.
-			else:
-				_part(root, "box", window_mat, Vector3(0, 0, 1.31), Vector3(0.6, 0.9, 0.05))
-				_part(root, "box", wood, Vector3(-0.8, 0, 1.7), Vector3(0.5, 0.45, 0.5))  # Crates.
-				_part(root, "box", wood, Vector3(-0.2, 0, 1.8), Vector3(0.4, 0.35, 0.4))
-		"Granary":
-			_part(root, "cyl", wood, Vector3.ZERO, Vector3(2.2, 1.6, 2.2))
-			_part(root, "dome", _mat(Color(0.75, 0.62, 0.3)), Vector3(0, 1.4, 0), Vector3(2.4, 1.3, 2.4))
-			_part(root, "box", window_mat, Vector3(0, 0, 1.08), Vector3(0.55, 0.8, 0.05))
-		"Mine":
-			_part(root, "dome", _mat(Color(0.36, 0.28, 0.2)), Vector3(0, -2.0, 0), Vector3(4.2, 4.0, 4.2))
-			_part(root, "box", _mat(Color(0.05, 0.04, 0.04)), Vector3(0, 0, 1.55), Vector3(1.2, 1.0, 0.5))
-			_part(root, "cyl", _mat(Color(0.05, 0.04, 0.04)), Vector3(0, 1.0, 1.55), Vector3(1.2, 0.5, 1.2), Vector3(PI / 2.0, 0, 0))
-			_part(root, "box", wood, Vector3(-0.7, 0, 1.75), Vector3(0.18, 1.5, 0.18))
-			_part(root, "box", wood, Vector3(0.7, 0, 1.75), Vector3(0.18, 1.5, 0.18))
-		"Market":
-			var awnings := [Color(0.85, 0.25, 0.2), Color(0.25, 0.5, 0.85), Color(0.9, 0.75, 0.2), Color(0.3, 0.7, 0.35)]
-			for k in 4:
-				var o := Vector3(-1.1 if k % 2 == 0 else 1.1, 0, -1.1 if k < 2 else 1.1)
-				_part(root, "box", wood, o, Vector3(1.4, 0.7, 0.9))
-				for sx in [-0.65, 0.65]:
-					_part(root, "cyl", wood, o + Vector3(sx, 0, 0.4), Vector3(0.1, 1.7, 0.1))
-				_part(root, "box", _mat(awnings[k]), o + Vector3(0, 1.7, 0.1), Vector3(1.7, 0.1, 1.5), Vector3(0.15, 0, 0))
-		"Library":
-			_part(root, "box", pale, Vector3.ZERO, Vector3(3.0, 0.3, 2.8))
-			_part(root, "box", pale, Vector3(0, 0.3, -0.2), Vector3(2.6, 2.0, 2.0))
-			_part(root, "box", window_mat, Vector3(0, 0.3, 0.81), Vector3(0.7, 1.2, 0.05))
-			for k in 4:
-				_part(root, "cyl", pale, Vector3(-1.1 + k * 0.73, 0.3, 1.0), Vector3(0.28, 2.0, 0.28))
-			_part(root, "prism", roof, Vector3(0, 2.3, 0), Vector3(3.2, 0.9, 2.8))
-		"Barracks":
-			_part(root, "box", _mat(Color(0.5, 0.42, 0.35)), Vector3.ZERO, Vector3(1.8, 1.0, 5.0))
-			_part(root, "box", dark, Vector3(0, 1.0, 0), Vector3(2.0, 0.15, 5.2))
-			_part(root, "cyl", wood, Vector3(0.9, 0, 2.4), Vector3(0.1, 3.2, 0.1))
-			_part(root, "box", _mat(civ), Vector3(1.25, 2.5, 2.4), Vector3(0.8, 0.55, 0.05))
-		"Shrine":
-			_part(root, "box", stone, Vector3.ZERO, Vector3(1.1, 0.7, 1.1))
-			_part(root, "box", stone, Vector3(0, 0.7, 0), Vector3(0.75, 0.2, 0.75))
-			_part(root, "dome", _mat(Color(0.7, 0.85, 1.0), 1.2), Vector3(0, 0.9, 0), Vector3(0.35, 0.35, 0.35))
-		"Temple":
-			_part(root, "box", pale, Vector3.ZERO, Vector3(5.4, 0.4, 5.4))
-			_part(root, "box", pale, Vector3(0, 0.4, 0), Vector3(4.4, 0.4, 4.4))
-			_part(root, "box", pale, Vector3(0, 0.8, 0), Vector3(3.2, 1.9, 3.2))
-			_part(root, "box", window_mat, Vector3(0, 0.8, 1.61), Vector3(0.8, 1.3, 0.05))
-			_part(root, "cone", roof, Vector3(0, 2.7, 0), Vector3(1.8, 2.8, 1.8))
-		"Wizard's tower":
-			_part(root, "cyl", _mat(Color(0.5, 0.5, 0.62)), Vector3.ZERO, Vector3(1.3, 6.5, 1.3))
-			_part(root, "cone", _mat(Color(0.3, 0.2, 0.5)), Vector3(0, 6.5, 0), Vector3(1.9, 1.6, 1.9))
-			_part(root, "dome", _mat(Color(0.7, 0.4, 1.0), 2.5), Vector3(0, 8.1, 0), Vector3(0.5, 0.5, 0.5))
-		"Aqueduct":
-			for k in 5:
-				_part(root, "box", stone, Vector3(-3.6 + k * 1.8, 0, 0), Vector3(0.7, 3.0, 0.9))
-			for k in 4:
-				_part(root, "cyl", _mat(Color(0.5, 0.5, 0.52)), Vector3(-2.7 + k * 1.8, 2.0, 0), Vector3(1.1, 0.9, 0.9), Vector3(PI / 2.0, 0, 0))
-			_part(root, "box", stone, Vector3(0, 3.0, 0), Vector3(8.0, 0.6, 1.1))
-			_part(root, "box", _mat(Color(0.3, 0.55, 0.85)), Vector3(0, 3.5, 0), Vector3(7.8, 0.1, 0.7))
-		"Factory":
-			_part(root, "box", _mat(Color(0.4, 0.38, 0.38)), Vector3.ZERO, Vector3(4.5, 2.5, 3.5))
-			_part(root, "box", dark, Vector3(0, 2.5, 0), Vector3(4.7, 0.2, 3.7))
-			_part(root, "box", window_mat, Vector3(0, 0, 1.76), Vector3(1.2, 1.4, 0.05))
-			for k in 2:
-				_part(root, "cyl", _mat(Color(0.5, 0.28, 0.22)), Vector3(-1.3 + k * 2.0, 2.7, -0.9), Vector3(0.8, 4.5, 0.8))
-				_part(root, "cyl", dark, Vector3(-1.3 + k * 2.0, 7.0, -0.9), Vector3(0.95, 0.3, 0.95))

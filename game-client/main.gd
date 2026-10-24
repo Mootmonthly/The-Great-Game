@@ -23,6 +23,7 @@ var tick_budget := 0.0
 var paint_cooldown := 0.0
 var painting := false
 var refresh_timer := 0.0
+var date_timer := 0.0
 var selected_region := Vector2i(-1, -1)
 var selected_species := -1
 var selected_individual := -1
@@ -260,15 +261,28 @@ func _build_ui() -> void:
 	row = HBoxContainer.new()
 	panel.add_child(row)
 	row.add_child(_label("Speed"))
+	# Logarithmic: from one day a second to a hundred seasons a second.
 	speed_slider = HSlider.new()
-	speed_slider.min_value = 1
+	speed_slider.min_value = 0
 	speed_slider.max_value = 100
-	speed_slider.value = 10
+	speed_slider.step = 0.5
+	speed_slider.value = _slider_for(10.0)
 	speed_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	speed_slider.value_changed.connect(func(_v): _update_speed_label())
 	row.add_child(speed_slider)
 	speed_label = _label("")
+	speed_label.custom_minimum_size = Vector2(110, 0)
 	row.add_child(speed_label)
+	row = HBoxContainer.new()
+	panel.add_child(row)
+	for preset in [["1 day/s", 1.0 / DAYS_PER_SEASON], ["1 week/s", 7.0 / DAYS_PER_SEASON], ["1 season/s", 1.0], ["10 seasons/s", 10.0]]:
+		var b := Button.new()
+		b.text = preset[0]
+		var v: float = preset[1]
+		b.pressed.connect(func(): speed_slider.value = _slider_for(v))
+		row.add_child(b)
+	date_label = _label("")
+	panel.add_child(date_label)
 	_update_speed_label()
 	status_label = _rich(140)
 	panel.add_child(status_label)
@@ -562,8 +576,48 @@ func _toggle_play() -> void:
 	play_button.text = "Pause" if running else "Play"
 
 
+## The world steps one season at a time; between steps the calendar counts
+## the days, so at slow speeds a season's step comes every few minutes.
+const DAYS_PER_SEASON := 91.3
+const SEASONS := ["Spring", "Summer", "Autumn", "Winter"]
+const SLOWEST := 1.0 / DAYS_PER_SEASON
+const FASTEST := 100.0
+var date_label: Label
+## The world's season count, re-read only after it steps.
+var cur_tick := -1
+
+
+## Seasons per second for a slider position (0..100, logarithmic).
+func _speed() -> float:
+	var t := speed_slider.value / 100.0
+	return pow(10.0, lerpf(log(SLOWEST) / log(10.0), log(FASTEST) / log(10.0), t))
+
+
+func _slider_for(seasons_per_second: float) -> float:
+	var lo := log(SLOWEST)
+	var hi := log(FASTEST)
+	return clampf((log(seasons_per_second) - lo) / (hi - lo) * 100.0, 0.0, 100.0)
+
+
 func _update_speed_label() -> void:
-	speed_label.text = "%d seasons/s" % int(speed_slider.value)
+	var v := _speed()
+	if v < 0.95:
+		var days := v * DAYS_PER_SEASON
+		speed_label.text = ("%.0f days/s" % days) if days >= 1.5 else "1 day/s"
+	else:
+		speed_label.text = "%.0f season%s/s" % [v, "" if v < 1.5 else "s"]
+	_update_date()
+
+
+## Year, season and day, counting the days between the world's steps.
+func _update_date() -> void:
+	if date_label == null or sim == null:
+		return
+	if cur_tick < 0:
+		cur_tick = int(JSON.parse_string(sim.status_json()).get("tick", 0))
+	var tick := cur_tick
+	var day := int(clampf(tick_budget, 0.0, 0.999) * DAYS_PER_SEASON) + 1
+	date_label.text = "Year %d · %s, day %d" % [tick / 4, SEASONS[tick % 4], day]
 
 
 func _advance(ticks: int) -> void:
@@ -577,11 +631,17 @@ func _process(delta: float) -> void:
 		return
 	globe_timer -= delta
 	if running:
-		tick_budget += delta * speed_slider.value
+		tick_budget += delta * _speed()
 		var ticks := int(tick_budget)
+		date_timer -= delta
 		if ticks > 0:
 			tick_budget -= ticks
 			sim.tick(min(ticks, 40))
+			cur_tick = -1
+		if date_timer <= 0.0 or ticks > 0:
+			date_timer = 0.25
+			_update_date()
+		if ticks > 0:
 			_refresh_map()
 			refresh_timer -= delta
 			if refresh_timer <= 0.0:
@@ -685,6 +745,8 @@ func _apply_tool(cell: Vector2i) -> void:
 # --- Display -----------------------------------------------------------------
 
 func _refresh_all() -> void:
+	cur_tick = -1
+	_update_date()
 	_refresh_map()
 	_refresh_text()
 	_refresh_tabs()
@@ -970,7 +1032,8 @@ func _refresh_species_detail() -> void:
 		species_detail.text = "That species is no longer on record."
 		return
 	creature_preview.visible = true
-	creature_preview.show_species(d)
+	var sh = JSON.parse_string(sim.sheet_json("species", selected_species))
+	creature_preview.show_species(d, sh if sh is Dictionary else {})
 	var status := "alive, %d regions, biomass %.0f" % [d["regions"], d["biomass"]] if d["alive"] else "[color=#cc6666]extinct[/color]"
 	var t: Dictionary = d["traits"]
 	var tm: Dictionary = d["temperament_values"]
