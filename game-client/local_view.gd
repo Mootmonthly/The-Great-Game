@@ -20,18 +20,28 @@ extends Control
 signal closed
 
 const CreatureBuilder := preload("res://creature_builder.gd")
-## Width of the walkable area, in metres: 140 m, more for a town of giants.
-var SIZE := 140.0
+## Width of the walkable area, in metres.
+const SIZE := 1400.0
 ## Terrain reaches this far beyond the walkable area, fading into the haze.
-const MARGIN := 45.0
-var EXT := SIZE / 2.0 + MARGIN
-const GRID := 128
-var STEP := 2.0 * EXT / GRID
+const MARGIN := 300.0
+const EXT := SIZE / 2.0 + MARGIN
+const GRID := 512
+const STEP := 2.0 * EXT / GRID
+## Terrain is drawn in square chunks of this many grid cells, so only what
+## the camera sees (and what is near enough to cast shadows) is drawn.
+const CHUNK := 32
+## Grass grows in square cells around the camera, out to GRASS_RADIUS.
+const GRASS_CELL := 32.0
+const GRASS_RADIUS := 120.0
+## Forests are drawn in tiles: full plants up close, simple shapes far off.
+const FOREST_TILE := 200.0
+const FOREST_NEAR := 320.0
 ## Body height (upright) or length (otherwise) by size class, in metres.
 const SIZE_METRES := {"Tiny": 0.4, "Small": 0.9, "Medium": 1.7, "Large": 2.7, "Huge": 4.8, "Gargantuan": 8.0}
 ## Real seconds per day in the visit.
 const DAY_LENGTH := 240.0
-const MAX_PLANTS := 70
+## Living (swaying, hoverable) plants; the rest of each species is forest.
+const MAX_PLANTS := 30
 
 
 class Wanderer:
@@ -82,6 +92,15 @@ var rng := RandomNumberGenerator.new()
 var detail_img: Image
 var detail_tex: ImageTexture
 var palette: Dictionary = {}
+var terrain_mat: ShaderMaterial
+var grass_mat: ShaderMaterial
+var grass_mesh: Mesh
+## Grass cells alive around the camera (Vector2i -> MultiMeshInstance3D or
+## null when a cell has no grass), and the cells still to grow.
+var grass_cells := {}
+var grass_queue: Array = []
+var _grass_centre := Vector2i(1 << 20, 1 << 20)
+var _frame := 0
 
 var viewport: SubViewport
 var world: Node3D
@@ -96,6 +115,9 @@ var orbit_yaw := 0.6
 var orbit_pitch := 0.5
 var orbit_dist := 70.0
 var orbit_idle := 0.0
+## Where the orbiting camera looks; WASD moves it across the land.
+var cam_focus := Vector3.ZERO
+var home_focus := Vector3.ZERO
 var look_yaw := 0.0
 var look_pitch := 0.0
 var dragging := false
@@ -122,6 +144,9 @@ var huts: Array = []
 ## Circles creatures walk around: [Vector2 centre, radius] in world space.
 var obstacles: Array = []
 var trodden: Image
+## The trodden-ground image covers this square around the town.
+var trodden_origin := Vector2.ZERO
+var trodden_half := 1.0
 var window_mat: StandardMaterial3D
 var _meshes := {}
 var _mats := {}
@@ -169,17 +194,20 @@ func _build() -> void:
 	_find_builders()
 	_build_sky()
 	_build_terrain()
+	home_focus = town_centre if _has_town() else Vector3(0, maxf(_height_at(0, 0), sea_level), 0)
+	cam_focus = home_focus
 	_build_settlement()
 	_build_ground_cover()
+	_update_grass(cam_focus, true)
 	_spawn_life()
 
 	camera = Camera3D.new()
 	camera.fov = 55.0
 	camera.near = 0.1
-	camera.far = 900.0
+	camera.far = 4000.0
 	world.add_child(camera)
 	if town:
-		orbit_dist = clampf(town_radius * 2.6, 40.0, SIZE * 0.8)
+		orbit_dist = clampf(town_radius * 2.6, 40.0, 200.0)
 
 	var bar := VBoxContainer.new()
 	bar.position = Vector2(12, 12)
@@ -238,14 +266,14 @@ func _build_sky() -> void:
 	# Haze fades the far terrain into the sky, so the region has no hard edge.
 	env.fog_enabled = true
 	env.fog_light_color = sky_mat.sky_horizon_color
-	env.fog_density = (0.0015 + 0.004 * haze) * 140.0 / SIZE
+	env.fog_density = 0.0006 + 0.0012 * haze
 	env.fog_sky_affect = 0.0
 	var we := WorldEnvironment.new()
 	we.environment = env
 	world.add_child(we)
 	sun = DirectionalLight3D.new()
 	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 160.0
+	sun.directional_shadow_max_distance = 220.0
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	world.add_child(sun)
 	moon = DirectionalLight3D.new()
@@ -384,13 +412,17 @@ func _make_palette() -> Dictionary:
 
 
 func _build_terrain() -> void:
-	var noise := FastNoiseLite.new()
-	noise.seed = rng.seed
-	noise.frequency = 0.008
-	noise.fractal_octaves = 3
+	var broad := FastNoiseLite.new()
+	broad.seed = rng.seed
+	broad.frequency = 0.0011
+	broad.fractal_octaves = 4
+	var mid := FastNoiseLite.new()
+	mid.seed = rng.seed + 3
+	mid.frequency = 0.006
+	mid.fractal_octaves = 3
 	var fine := FastNoiseLite.new()
 	fine.seed = rng.seed + 7
-	fine.frequency = 0.045
+	fine.frequency = 0.04
 	fine.fractal_octaves = 2
 	heights.resize((GRID + 1) * (GRID + 1))
 	var inner: Array[float] = []
@@ -398,9 +430,9 @@ func _build_terrain() -> void:
 		for x in GRID + 1:
 			var wx := x * STEP - EXT
 			var wz := z * STEP - EXT
-			var h := noise.get_noise_2d(wx, wz) * 9.0 + fine.get_noise_2d(wx, wz) * 1.2
+			var h := broad.get_noise_2d(wx, wz) * 34.0 + mid.get_noise_2d(wx, wz) * 8.0 + fine.get_noise_2d(wx, wz) * 1.2
 			heights[z * (GRID + 1) + x] = h
-			if absf(wx) <= SIZE / 2.0 and absf(wz) <= SIZE / 2.0:
+			if (x + z) % 3 == 0 and absf(wx) <= SIZE / 2.0 and absf(wz) <= SIZE / 2.0:
 				inner.append(h)
 	# Choose the sea level so the flooded share matches the region's liquid.
 	var liquid: float = info["liquid_amount"]
@@ -425,52 +457,66 @@ func _build_terrain() -> void:
 	var d2 := detail_img.duplicate()
 	d2.generate_mipmaps()
 	detail_tex = ImageTexture.create_from_image(d2)
-	trodden = Image.create(256, 256, false, Image.FORMAT_L8)
 
-	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
-	var indices := PackedInt32Array()
-	verts.resize((GRID + 1) * (GRID + 1))
-	normals.resize(verts.size())
+	normals.resize((GRID + 1) * (GRID + 1))
 	for z in GRID + 1:
 		for x in GRID + 1:
-			var i := z * (GRID + 1) + x
-			verts[i] = Vector3(x * STEP - EXT, heights[i], z * STEP - EXT)
 			var hl := heights[z * (GRID + 1) + maxi(x - 1, 0)]
 			var hr := heights[z * (GRID + 1) + mini(x + 1, GRID)]
 			var hd := heights[maxi(z - 1, 0) * (GRID + 1) + x]
 			var hu := heights[mini(z + 1, GRID) * (GRID + 1) + x]
-			normals[i] = Vector3(hl - hr, 2.0 * STEP, hd - hu).normalized()
-	for z in GRID:
-		for x in GRID:
-			var a := z * (GRID + 1) + x
-			indices.append_array([a, a + 1, a + GRID + 2, a, a + GRID + 2, a + GRID + 1])
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = verts
-	arrays[Mesh.ARRAY_NORMAL] = normals
-	arrays[Mesh.ARRAY_INDEX] = indices
-	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var terrain := MeshInstance3D.new()
-	terrain.name = "Terrain"
-	terrain.mesh = mesh
-	var tm := ShaderMaterial.new()
-	tm.shader = preload("res://shaders/terrain.gdshader")
+			normals[z * (GRID + 1) + x] = Vector3(hl - hr, 2.0 * STEP, hd - hu).normalized()
+	terrain_mat = ShaderMaterial.new()
+	terrain_mat.shader = preload("res://shaders/terrain.gdshader")
 	for k in ["grass_a", "grass_b", "soil", "sand", "rock", "snow"]:
-		tm.set_shader_parameter(k, palette[k])
-	tm.set_shader_parameter("path_color", palette["path"])
-	tm.set_shader_parameter("vegetation", palette["vegetation"])
-	tm.set_shader_parameter("sea_level", sea_level)
-	tm.set_shader_parameter("snow_height", palette["snow_height"])
-	tm.set_shader_parameter("ember_glow", palette["ember"])
-	tm.set_shader_parameter("detail", detail_tex)
-	tm.set_shader_parameter("extent", EXT)
-	terrain.material_override = tm
+		terrain_mat.set_shader_parameter(k, palette[k])
+	terrain_mat.set_shader_parameter("path_color", palette["path"])
+	terrain_mat.set_shader_parameter("vegetation", palette["vegetation"])
+	terrain_mat.set_shader_parameter("sea_level", sea_level)
+	terrain_mat.set_shader_parameter("snow_height", palette["snow_height"])
+	terrain_mat.set_shader_parameter("ember_glow", palette["ember"])
+	terrain_mat.set_shader_parameter("detail", detail_tex)
+	var terrain := Node3D.new()
+	terrain.name = "Terrain"
 	world.add_child(terrain)
+	# Every chunk shares one index list.
+	var w := CHUNK + 1
+	var indices := PackedInt32Array()
+	for z in CHUNK:
+		for x in CHUNK:
+			var a := z * w + x
+			indices.append_array([a, a + 1, a + w + 1, a, a + w + 1, a + w])
+	for cz in GRID / CHUNK:
+		for cx in GRID / CHUNK:
+			terrain.add_child(_terrain_chunk(cx * CHUNK, cz * CHUNK, normals, indices))
 
 	if sea_level > -50.0:
 		_build_water()
+
+
+func _terrain_chunk(x0: int, z0: int, normals: PackedVector3Array, indices: PackedInt32Array) -> MeshInstance3D:
+	var w := CHUNK + 1
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	verts.resize(w * w)
+	norms.resize(w * w)
+	for z in w:
+		for x in w:
+			var gi := (z0 + z) * (GRID + 1) + x0 + x
+			verts[z * w + x] = Vector3((x0 + x) * STEP - EXT, heights[gi], (z0 + z) * STEP - EXT)
+			norms[z * w + x] = normals[gi]
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = norms
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = terrain_mat
+	return mi
 
 
 func _build_water() -> void:
@@ -479,8 +525,8 @@ func _build_water() -> void:
 	water.name = "Water"
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(EXT * 2.0, EXT * 2.0)
-	plane.subdivide_width = 8
-	plane.subdivide_depth = 8
+	plane.subdivide_width = 32
+	plane.subdivide_depth = 32
 	water.mesh = plane
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var wc := Color("#" + str(info["liquid_color"])) if info["liquid_color"] != null else Color(0.2, 0.45, 0.8)
@@ -505,58 +551,112 @@ func _build_water() -> void:
 	world.add_child(water)
 
 
-## Grass tufts where plants grow and loose rocks everywhere, in two
-## MultiMeshes, after the town so they stay off its paths and floors.
+## Loose rocks everywhere (one MultiMesh) and the grass material; grass
+## itself grows in cells around the camera (_update_grass). Built after the
+## town so both stay off its paths and floors.
 func _build_ground_cover() -> void:
 	var veg: float = palette["vegetation"]
-	var tuft_xf: Array = []
-	var tints: Array = []
-	var want := int(8000.0 * veg * clampf(SIZE / 140.0, 1.0, 1.6))
-	for attempt in want * 2:
-		if tuft_xf.size() >= want:
-			break
-		var x := rng.randf_range(-SIZE * 0.62, SIZE * 0.62)
-		var z := rng.randf_range(-SIZE * 0.62, SIZE * 0.62)
-		var h := _height_at(x, z)
-		if sea_level > -50.0 and h < sea_level + 0.9:
-			continue
-		if _slope_at(x, z) > 0.45 or h > float(palette["snow_height"]) - 1.0:
-			continue
-		var n1 := _detail(x, z, 0.011)
-		var cover := veg * 1.5 - 0.25 + (n1 - 0.5) * 0.9
-		if rng.randf() > cover or _trodden_at(x, z) > 0.25 or _blocked(Vector2(x, z), 0.4):
-			continue
-		var s := rng.randf_range(0.7, 1.35) * (0.8 + veg * 0.4)
-		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s, s * rng.randf_range(0.8, 1.3), s))
-		tuft_xf.append(Transform3D(b, Vector3(x, h - 0.02, z)))
-		var k := rng.randf_range(0.82, 1.15)
-		tints.append(Color(k, k * rng.randf_range(0.95, 1.05), k * 0.95))
-	if not tuft_xf.is_empty():
-		var gm := ShaderMaterial.new()
-		gm.shader = preload("res://shaders/grass.gdshader")
-		var ga: Color = palette["grass_a"]
-		var gb: Color = palette["grass_b"]
-		gm.set_shader_parameter("root_color", ga.darkened(0.3))
-		gm.set_shader_parameter("tip_color", gb.lightened(0.1))
-		var inst := _multimesh(_tuft_mesh(), gm, tuft_xf, tints)
-		inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		inst.name = "Grass"
+	grass_mesh = _tuft_mesh()
+	grass_mat = ShaderMaterial.new()
+	grass_mat.shader = preload("res://shaders/grass.gdshader")
+	var ga: Color = palette["grass_a"]
+	var gb: Color = palette["grass_b"]
+	grass_mat.set_shader_parameter("root_color", ga.darkened(0.3))
+	grass_mat.set_shader_parameter("tip_color", gb.lightened(0.1))
 	var rock_xf: Array = []
-	var rocks := 45 + int(60.0 * (1.0 - veg))
+	var rocks := int(SIZE * SIZE / 2500.0 * (0.5 + (1.0 - veg)))
 	for attempt in rocks * 3:
 		if rock_xf.size() >= rocks:
 			break
-		var x := rng.randf_range(-SIZE * 0.6, SIZE * 0.6)
-		var z := rng.randf_range(-SIZE * 0.6, SIZE * 0.6)
+		var x := rng.randf_range(-EXT * 0.95, EXT * 0.95)
+		var z := rng.randf_range(-EXT * 0.95, EXT * 0.95)
 		var steep := _slope_at(x, z)
-		if rng.randf() > 0.35 + steep or _blocked(Vector2(x, z), 1.5) or _trodden_at(x, z) > 0.1:
+		if rng.randf() > 0.3 + steep:
 			continue
-		var s := rng.randf_range(0.25, 1.4) * (1.6 if rng.randf() < 0.1 else 1.0)
+		if _near_town(x, z) and (_blocked(Vector2(x, z), 1.5) or _trodden_at(x, z) > 0.1):
+			continue
+		var s := rng.randf_range(0.25, 1.4) * (2.5 if rng.randf() < 0.08 else 1.0)
 		var b := Basis.from_euler(Vector3(rng.randf() * 0.6, rng.randf() * TAU, rng.randf() * 0.6)).scaled(Vector3(s * rng.randf_range(0.9, 1.6), s * rng.randf_range(0.5, 0.9), s))
 		rock_xf.append(Transform3D(b, Vector3(x, _height_at(x, z) - s * 0.2, z)))
 	var rc: Color = palette["rock"]
 	if not rock_xf.is_empty():
 		_multimesh(_mesh("rock"), _mat(rc.lightened(0.05)), rock_xf).name = "Rocks"
+
+
+func _near_town(x: float, z: float) -> bool:
+	return town != null and Vector2(x - town_centre.x, z - town_centre.z).length() < trodden_half + 4.0
+
+
+## Grows grass in the cells around `focus` and drops cells left behind; at
+## most one new cell a frame so moving the camera never stalls.
+func _update_grass(focus: Vector3, all := false) -> void:
+	if grass_mat == null or float(palette["vegetation"]) <= 0.0:
+		return
+	var c := Vector2i(floori(focus.x / GRASS_CELL), floori(focus.z / GRASS_CELL))
+	if c != _grass_centre:
+		_grass_centre = c
+		var reach := int(ceil(GRASS_RADIUS / GRASS_CELL))
+		var want := {}
+		grass_queue.clear()
+		for dz in range(-reach, reach + 1):
+			for dx in range(-reach, reach + 1):
+				if Vector2(dx, dz).length() * GRASS_CELL > GRASS_RADIUS + GRASS_CELL * 0.5:
+					continue
+				var k := c + Vector2i(dx, dz)
+				want[k] = true
+				if not grass_cells.has(k):
+					grass_queue.append(k)
+		grass_queue.sort_custom(func(a: Vector2i, b: Vector2i): return (a - c).length_squared() < (b - c).length_squared())
+		for k in grass_cells.keys():
+			if not want.has(k):
+				if grass_cells[k] != null:
+					grass_cells[k].queue_free()
+				grass_cells.erase(k)
+	while not grass_queue.is_empty():
+		var k: Vector2i = grass_queue.pop_front()
+		if not grass_cells.has(k):
+			grass_cells[k] = _grass_cell(k)
+		if not all:
+			break
+
+
+func _grass_cell(k: Vector2i) -> MultiMeshInstance3D:
+	var veg: float = palette["vegetation"]
+	var r := RandomNumberGenerator.new()
+	r.seed = hash(Vector3i(k.x, k.y, int(rng.seed)))
+	var x0 := k.x * GRASS_CELL
+	var z0 := k.y * GRASS_CELL
+	var centre := Vector3(x0 + GRASS_CELL * 0.5, 0, z0 + GRASS_CELL * 0.5)
+	if absf(centre.x) > EXT or absf(centre.z) > EXT:
+		return null
+	var near := town != null and Vector2(centre.x - town_centre.x, centre.z - town_centre.z).length() < trodden_half + GRASS_CELL
+	var snow: float = palette["snow_height"]
+	var xf: Array = []
+	var tints: Array = []
+	for attempt in int(GRASS_CELL * GRASS_CELL * 0.6 * veg):
+		var x := x0 + r.randf() * GRASS_CELL
+		var z := z0 + r.randf() * GRASS_CELL
+		var h := _height_at(x, z)
+		if sea_level > -50.0 and h < sea_level + 0.9:
+			continue
+		if h > snow - 1.0 or _slope_at(x, z) > 0.45:
+			continue
+		var cover := veg * 1.5 - 0.25 + (_detail(x, z, 0.011) - 0.5) * 0.9
+		if r.randf() > cover:
+			continue
+		if near and (_trodden_at(x, z) > 0.25 or _blocked(Vector2(x, z), 0.4)):
+			continue
+		var s := r.randf_range(0.7, 1.35) * (0.8 + veg * 0.4)
+		var b := Basis(Vector3.UP, r.randf() * TAU).scaled(Vector3(s, s * r.randf_range(0.8, 1.3), s))
+		xf.append(Transform3D(b, Vector3(x - centre.x, h - 0.02, z - centre.z)))
+		var t := r.randf_range(0.82, 1.15)
+		tints.append(Color(t, t * r.randf_range(0.95, 1.05), t * 0.95))
+	if xf.is_empty():
+		return null
+	var inst := _multimesh(grass_mesh, grass_mat, xf, tints)
+	inst.position = centre
+	inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return inst
 
 
 ## One grass tuft: a clump of tapering blades, UV.y running from root to tip.
@@ -615,20 +715,14 @@ func _find_builders() -> void:
 		var sh = JSON.parse_string(sim.sheet_json("species", civ_species))
 		if sh != null:
 			builder_m = SIZE_METRES.get(sh["size"], 1.7)
-	var tier_r: float = TIER_RADIUS.get(_tier_name(), 7.0)
 	town_scale = clampf(2.0 * builder_m / 1.7, 1.2, 8.0)
-	# Make room for the whole town, walls and fields included.
-	SIZE = maxf(140.0, (tier_r + 9.0) * town_scale / 0.42)
-	EXT = SIZE / 2.0 + MARGIN
-	STEP = 2.0 * EXT / GRID
 
 
 func _spawn_life() -> void:
 	var animals := 0
 	var plants := 0
-	var stands := {}
 	for p in info["populations"]:
-		if animals >= 10 and plants >= 7:
+		if animals >= 14 and plants >= 7:
 			break
 		var id := int(p["id"])
 		var detail = JSON.parse_string(sim.species_detail_json(id))
@@ -640,24 +734,28 @@ func _spawn_life() -> void:
 			if plants >= 7:
 				continue
 			plants += 1
-			var n := clampi(int(biomass / 2.0), 2, 12)
-			var centre := _random_spot(_is_kelp(detail), true)
-			for k in n:
-				if _plant_count() >= MAX_PLANTS:
-					break
-				_add_wanderer(detail, sheet, p["name"], "plant", centre)
-			stands[id] = centre
+			var kelp := _is_kelp(detail)
+			_plant_forest(detail, sheet, biomass, kelp)
+			# A few living plants near where the visit starts sway and can be hovered.
+			var stand := _spot_near(home_focus, 70.0, kelp)
+			for k in 3:
+				if _plant_count() < MAX_PLANTS:
+					_add_wanderer(detail, sheet, p["name"], "plant", stand)
 			continue
 		if id == civ_species and town:
 			continue  # The townsfolk are spawned with their town below.
-		if animals >= 10:
+		if animals >= 14:
 			continue
 		animals += 1
-		var count := clampi(int(biomass / 4.0), 1, 6)
-		var herd := _random_spot(_is_swimmer(detail), true)
-		for k in count:
-			var w := _add_wanderer(detail, sheet, p["name"], _role(detail, p["description"]), herd)
-			w.herd = herd
+		var swimmer := _is_swimmer(detail)
+		var total := clampi(int(biomass / 1.5), 2, 18)
+		var herds := clampi(ceili(total / 5.0), 1, 4)
+		for h in herds:
+			# The first herd of each species stays within sight of the start.
+			var herd := _spot_near(home_focus, 160.0, swimmer) if h == 0 else _random_spot(swimmer, true)
+			for k in maxi(total / herds, 1):
+				var w := _add_wanderer(detail, sheet, p["name"], _role(detail, p["description"]), herd)
+				w.herd = herd
 	if town and civ_species >= 0:
 		var detail = JSON.parse_string(sim.species_detail_json(civ_species))
 		var sheet = JSON.parse_string(sim.sheet_json("species", civ_species))
@@ -675,8 +773,159 @@ func _spawn_life() -> void:
 		if sid == civ_species and town:
 			w = _add_villager(detail, sheet, x["title"], rng.randi())
 		else:
-			w = _add_wanderer(detail, sheet, x["title"], _role(detail, str(detail.get("description", ""))), _random_spot(false, true))
+			w = _add_wanderer(detail, sheet, x["title"], _role(detail, str(detail.get("description", ""))), _spot_near(home_focus, 120.0, false))
 		_add_label(w, Color(1.0, 0.85, 0.35))
+
+
+## A plant species' stands across the region, drawn as instanced copies of
+## a simplified model up close and a trunk-and-crown shape far off, in tiles
+## so only nearby plants are drawn in full.
+func _plant_forest(detail: Dictionary, sheet: Dictionary, biomass: float, kelp: bool) -> void:
+	var model := CreatureBuilder.build(detail)
+	var box := CreatureBuilder.bounds(model)
+	var metres: float = SIZE_METRES.get(sheet["size"], 1.7) * 1.6
+	var upright := box.size.y >= maxf(box.size.x, box.size.z) * 0.9
+	var ref := box.size.y if upright else maxf(box.size.x, box.size.z)
+	var s: float = metres / maxf(ref, 0.01)
+	model.scale = Vector3.ONE * s
+	model.position = Vector3(-box.get_center().x * s, -box.position.y * s, -box.get_center().z * s)
+	var meshes := _merge_model(model)
+	model.free()
+	var count := clampi(int(biomass * 12.0), 20, 320)
+	var stands := clampi(3 + int(biomass / 2.0), 3, 16)
+	var tiles := {}
+	for st in stands:
+		var c := _spot_near(home_focus, 200.0, kelp) if st == 0 else _random_spot(kelp, true)
+		var radius := rng.randf_range(12.0, 50.0)
+		for k in count / stands:
+			var a := rng.randf() * TAU
+			var p := c + Vector3(cos(a), 0, sin(a)) * radius * sqrt(rng.randf())
+			if not _fits(p, kelp) or _in_town(p, 12.0 * town_scale):
+				continue
+			if not kelp and _slope_at(p.x, p.z) > 0.6:
+				continue
+			var sc := rng.randf_range(0.75, 1.3)
+			var tk := Vector2i(floori(p.x / FOREST_TILE), floori(p.z / FOREST_TILE))
+			if not tiles.has(tk):
+				tiles[tk] = []
+			tiles[tk].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * sc), Vector3(p.x, _height_at(p.x, p.z) - 0.05, p.z)))
+	for tk: Vector2i in tiles:
+		var centre := Vector3((tk.x + 0.5) * FOREST_TILE, 0, (tk.y + 0.5) * FOREST_TILE)
+		var local: Array = []
+		for t: Transform3D in tiles[tk]:
+			local.append(Transform3D(t.basis, t.origin - centre))
+		var near := _multimesh(meshes[0], null, local)
+		near.position = centre
+		near.visibility_range_end = FOREST_NEAR
+		near.visibility_range_end_margin = 20.0
+		var far := _multimesh(meshes[1], null, local)
+		far.position = centre
+		far.visibility_range_begin = FOREST_NEAR
+		far.visibility_range_begin_margin = 20.0
+		far.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## A built model flattened into meshes for instancing: [full, distant].
+## The full one keeps every part but with fewer segments, one surface per
+## material; the distant one is a trunk and a crown in the model's colours.
+func _merge_model(model: Node3D) -> Array:
+	var by_mat := {}
+	var whole := AABB()
+	var first := true
+	var crown_mat: Material
+	var stem_mat: Material
+	var stack: Array = [[model, model.transform]]
+	while not stack.is_empty():
+		var item: Array = stack.pop_back()
+		var n: Node = item[0]
+		var xf: Transform3D = item[1]
+		for ch in n.get_children():
+			if ch is Node3D:
+				stack.append([ch, xf * ch.transform])
+		if n is MeshInstance3D and n.mesh != null:
+			var mi := n as MeshInstance3D
+			var mat: Material = mi.material_override
+			if not by_mat.has(mat):
+				var st := SurfaceTool.new()
+				st.begin(Mesh.PRIMITIVE_TRIANGLES)
+				by_mat[mat] = st
+			by_mat[mat].append_from(_coarse(mi.mesh), 0, xf)
+			var b := xf * mi.mesh.get_aabb()
+			whole = b if first else whole.merge(b)
+			first = false
+			if mi.mesh is SphereMesh or mi.mesh is BoxMesh:
+				crown_mat = mat
+			else:
+				stem_mat = mat
+	var full := ArrayMesh.new()
+	for mat in by_mat:
+		by_mat[mat].commit(full)
+		full.surface_set_material(full.get_surface_count() - 1, mat)
+	var far := ArrayMesh.new()
+	var h := whole.size.y
+	var width := maxf(whole.size.x, whole.size.z)
+	var parts := SurfaceTool.new()
+	if stem_mat != null and h > width * 0.8:
+		var trunk := CylinderMesh.new()
+		trunk.top_radius = width * 0.06
+		trunk.bottom_radius = width * 0.09
+		trunk.height = h * 0.55
+		trunk.radial_segments = 5
+		trunk.rings = 0
+		parts.begin(Mesh.PRIMITIVE_TRIANGLES)
+		parts.append_from(trunk, 0, Transform3D(Basis(), Vector3(0, h * 0.275, 0)))
+		parts.commit(far)
+		far.surface_set_material(0, stem_mat)
+	var crown := SphereMesh.new()
+	crown.radius = 0.5
+	crown.height = 1.0
+	crown.radial_segments = 7
+	crown.rings = 4
+	var crown_h := h * (0.6 if stem_mat != null and h > width * 0.8 else 1.0)
+	parts = SurfaceTool.new()
+	parts.begin(Mesh.PRIMITIVE_TRIANGLES)
+	parts.append_from(crown, 0, Transform3D(Basis().scaled(Vector3(width * 0.85, crown_h, width * 0.85)), Vector3(0, h - crown_h * 0.5, 0)))
+	parts.commit(far)
+	far.surface_set_material(far.get_surface_count() - 1, crown_mat if crown_mat != null else stem_mat)
+	return [full, far]
+
+
+## A cheaper copy of a creature-builder primitive, for forests.
+func _coarse(mesh: Mesh) -> Mesh:
+	if mesh is SphereMesh:
+		var m := SphereMesh.new()
+		m.radius = mesh.radius
+		m.height = mesh.height
+		m.radial_segments = 8
+		m.rings = 4
+		return m
+	if mesh is CapsuleMesh:
+		var m := CapsuleMesh.new()
+		m.radius = mesh.radius
+		m.height = mesh.height
+		m.radial_segments = 6
+		m.rings = 1
+		return m
+	if mesh is CylinderMesh:
+		var m := CylinderMesh.new()
+		m.top_radius = mesh.top_radius
+		m.bottom_radius = mesh.bottom_radius
+		m.height = mesh.height
+		m.radial_segments = 6
+		m.rings = 0
+		return m
+	return mesh
+
+
+## A spot within `reach` of `p` that suits the creature, or `p` itself.
+func _spot_near(p: Vector3, reach: float, aquatic: bool) -> Vector3:
+	for attempt in 30:
+		var a := rng.randf() * TAU
+		var q := p + Vector3(cos(a), 0, sin(a)) * reach * sqrt(rng.randf())
+		if _fits(q, aquatic) and not _in_town(q, 4.0):
+			q.y = _height_at(q.x, q.z)
+			return q
+	return _random_spot(aquatic, true)
 
 
 func _plant_count() -> int:
@@ -831,25 +1080,60 @@ func _blocked(p: Vector2, margin: float) -> bool:
 
 func _process(delta: float) -> void:
 	_advance_day(delta)
-	for w: Wanderer in wanderers:
+	_frame += 1
+	var eye := camera.position
+	for i in wanderers.size():
+		var w: Wanderer = wanderers[i]
 		if w == possessed or w.plant:
 			continue
-		_act(w, delta)
+		# Creatures far from the camera think a quarter as often.
+		if w.node.position.distance_squared_to(eye) > 250000.0:
+			if (_frame + i) % 4 == 0:
+				_act(w, delta * 4.0)
+		else:
+			_act(w, delta)
 	if possessed:
 		_drive(delta)
+		_update_grass(possessed.node.position)
 	else:
+		_pan(delta)
 		orbit_idle += delta
 		if orbit_idle > 6.0:
 			orbit_yaw += delta * 0.04
-		var focus := town_centre if town else Vector3(0, maxf(_height_at(0, 0), sea_level), 0)
+		var focus := cam_focus
 		var off := Vector3(sin(orbit_yaw) * cos(orbit_pitch), sin(orbit_pitch), cos(orbit_yaw) * cos(orbit_pitch)) * orbit_dist
 		camera.position = focus + off
 		camera.position.y = maxf(camera.position.y, _height_at(camera.position.x, camera.position.z) + 2.0)
 		camera.transform = Transform3D(Basis.looking_at(focus + Vector3(0, 1.5, 0) - camera.position, Vector3.UP), camera.position)
+		_update_grass(cam_focus)
 	_hud_timer -= delta
 	if _hud_timer <= 0.0:
 		_hud_timer = 0.5
 		_update_hud()
+
+
+## WASD or the arrow keys move the orbiting camera across the land (Shift
+## for speed).
+func _pan(delta: float) -> void:
+	var input := Vector2.ZERO
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+		input.y += 1.0
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+		input.y -= 1.0
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		input.x -= 1.0
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		input.x += 1.0
+	if input == Vector2.ZERO:
+		return
+	orbit_idle = 0.0
+	var forward := Vector3(-sin(orbit_yaw), 0, -cos(orbit_yaw))
+	var right := Vector3(cos(orbit_yaw), 0, -sin(orbit_yaw))
+	var speed := maxf(orbit_dist, 20.0) * (3.0 if Input.is_key_pressed(KEY_SHIFT) else 1.0)
+	cam_focus += (forward * input.y + right * input.x).normalized() * speed * delta
+	cam_focus.x = clampf(cam_focus.x, -SIZE * 0.5, SIZE * 0.5)
+	cam_focus.z = clampf(cam_focus.z, -SIZE * 0.5, SIZE * 0.5)
+	cam_focus.y = maxf(_height_at(cam_focus.x, cam_focus.z), sea_level)
 
 
 func _act(w: Wanderer, delta: float) -> void:
@@ -993,7 +1277,7 @@ func _next(w: Wanderer) -> void:
 		"villager":
 			_next_villager(w)
 		"swimmer":
-			var to := _jitter(w.herd, 9.0)
+			var to := _jitter(w.herd, 14.0)
 			if _fits(to, true):
 				_go(w, to, "rest", 1.0, "swimming")
 			else:
@@ -1002,8 +1286,7 @@ func _next(w: Wanderer) -> void:
 			if rng.randf() < 0.35:
 				_enter_state(w, "rest", rng.randf_range(5.0, 10.0), "resting")
 			else:
-				var to := _random_spot(false, true)
-				_go(w, w.node.position.lerp(to, 0.5), "rest", 0.8, "prowling")
+				_go(w, _spot_near(w.node.position, 60.0, false), "rest", 0.8, "prowling")
 		_:
 			var r := rng.randf()
 			if r < 0.2 and _try_chat(w, 7.0, "nuzzling"):
@@ -1012,8 +1295,8 @@ func _next(w: Wanderer) -> void:
 				_enter_state(w, "graze", rng.randf_range(5.0, 12.0), "grazing")
 			else:
 				if rng.randf() < 0.15:
-					w.herd = (w.herd + _random_spot(false, true)) * 0.5  # The herd drifts.
-				var to := _jitter(w.herd, 8.0)
+					w.herd = _spot_near(w.herd, 30.0, false)  # The herd drifts.
+				var to := _jitter(w.herd, 14.0)
 				if _fits(to, false):
 					_go(w, to, "graze", 0.7 + rng.randf() * 0.4, "roaming")
 				else:
@@ -1158,7 +1441,7 @@ func _avoid(w: Wanderer, to: Vector3) -> Vector3:
 	var p := Vector2(w.node.position.x, w.node.position.z)
 	var goal := Vector2(to.x, to.z)
 	var push := Vector2.ZERO
-	if not w.aquatic and w.altitude < 1.0:
+	if not w.aquatic and w.altitude < 1.0 and _near_town(p.x, p.y):
 		for o in obstacles:
 			var c: Vector2 = o[0]
 			var r: float = o[1] + w.radius + 0.3
@@ -1178,6 +1461,8 @@ func _avoid(w: Wanderer, to: Vector3) -> Vector3:
 		if o == w or o.plant or not o.node.visible:
 			continue
 		var off := p - Vector2(o.node.position.x, o.node.position.z)
+		if absf(off.x) > 8.0 or absf(off.y) > 8.0:
+			continue
 		var d := off.length()
 		var r := w.radius + o.radius + 0.2
 		if d < r and d > 0.001:
@@ -1229,9 +1514,9 @@ func _drive(delta: float) -> void:
 		var move := (facing * input).normalized()
 		move += _avoid(w, move * 3.0) * 0.5
 		move.y = 0.0
-		var next := w.node.position + move * w.speed * 2.2 * delta
-		next.x = clampf(next.x, -SIZE * 0.48, SIZE * 0.48)
-		next.z = clampf(next.z, -SIZE * 0.48, SIZE * 0.48)
+		var next := w.node.position + move * w.speed * 2.2 * (3.0 if Input.is_key_pressed(KEY_SHIFT) else 1.0) * delta
+		next.x = clampf(next.x, -SIZE * 0.5, SIZE * 0.5)
+		next.z = clampf(next.z, -SIZE * 0.5, SIZE * 0.5)
 		var ground := _height_at(next.x, next.z)
 		if w.aquatic and ground > sea_level - 0.4:
 			next = w.node.position
@@ -1255,14 +1540,15 @@ func _update_hud() -> void:
 	title.text = head
 	if possessed:
 		var sh := possessed.sheet
-		hud.text = "Possessing %s — %s %s · HP %d · AC %d · cost %d\nWASD move · drag to look · Esc to release. Possession is display only: it does not change the world." % [
+		hud.text = "Possessing %s — %s %s · HP %d · AC %d · cost %d\nWASD move (Shift to run) · drag to look · Esc to release. Possession is display only: it does not change the world." % [
 			possessed.name, sh["size"], sh["type"].to_lower(), sh["hit_points"], sh["armor_class"], sh["cost"]]
 	else:
-		hud.text = "Drag to orbit · scroll to zoom · hover a creature to see what it is doing · click one to possess it."
+		hud.text = "WASD to travel (Shift faster) · drag to orbit · scroll to zoom · H to return%s\nHover a creature to see what it is doing · click one to possess it." % (" to town" if town else "")
 
 
 func possess(w: Wanderer) -> void:
 	if possessed:
+		cam_focus = possessed.node.position
 		possessed.node.visible = true
 		possessed.model.set("pace", 0.2)
 		possessed.state = "idle"
@@ -1286,6 +1572,8 @@ func possess(w: Wanderer) -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		possess(null)
+	elif event is InputEventKey and event.pressed and event.keycode in [KEY_H, KEY_HOME] and possessed == null:
+		cam_focus = home_focus
 
 
 func _on_input(event: InputEvent) -> void:
@@ -1299,7 +1587,7 @@ func _on_input(event: InputEvent) -> void:
 				if possessed == null and drag_moved < 6.0:
 					_pick(event.position)
 		elif event.pressed and possessed == null and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
-			orbit_dist = clampf(orbit_dist * (0.9 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.1), 8.0, SIZE * 1.1)
+			orbit_dist = clampf(orbit_dist * (0.9 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.1), 8.0, 420.0)
 	elif event is InputEventMouseMotion:
 		if dragging:
 			drag_moved += event.relative.length()
@@ -1370,7 +1658,7 @@ func _level_town_site() -> void:
 	var land := sea_level + 0.4
 	var best := Vector2.ZERO
 	var best_score := -1e9
-	var reach := maxf(SIZE * 0.5 - town_radius - 10.0, 0.0)
+	var reach := 240.0
 	for cz in range(-6, 7):
 		for cx in range(-6, 7):
 			var c := Vector2(cx, cz) * reach / 6.0
@@ -1390,9 +1678,12 @@ func _level_town_site() -> void:
 	if sea_level > -50.0:
 		plateau = maxf(plateau, sea_level + 0.6)
 	var flat := town_radius + 7.0 * town_scale
-	var blend := flat + 16.0
-	for z in GRID + 1:
-		for x in GRID + 1:
+	var blend := flat + 24.0
+	var gx := int((best.x + EXT) / STEP)
+	var gz := int((best.y + EXT) / STEP)
+	var cells := int(blend / STEP) + 2
+	for z in range(maxi(gz - cells, 0), mini(gz + cells, GRID) + 1):
+		for x in range(maxi(gx - cells, 0), mini(gx + cells, GRID) + 1):
 			var d := Vector2(x * STEP - EXT - best.x, z * STEP - EXT - best.y).length()
 			if d >= blend:
 				continue
@@ -1541,6 +1832,9 @@ func _build_settlement() -> void:
 	window_mat.albedo_color = Color(0.12, 0.08, 0.05)
 	window_mat.emission_enabled = true
 	window_mat.emission = Color(1.0, 0.68, 0.32)
+	trodden_origin = Vector2(town_centre.x, town_centre.z)
+	trodden_half = town_radius + 16.0 * town_scale
+	trodden = Image.create(512, 512, false, Image.FORMAT_L8)
 	var placed: Array = [[Vector2.ZERO, 1.6]]  # [town-space position, footprint radius]; the well.
 
 	# The well in the square, where townsfolk meet.
@@ -1740,16 +2034,19 @@ func _build_fields(brng: RandomNumberGenerator, ring: float) -> void:
 func _trodden_at(x: float, z: float) -> float:
 	if trodden == null:
 		return 0.0
-	var px := clampi(int((x / (2.0 * EXT) + 0.5) * trodden.get_width()), 0, trodden.get_width() - 1)
-	var pz := clampi(int((z / (2.0 * EXT) + 0.5) * trodden.get_height()), 0, trodden.get_height() - 1)
+	var w := trodden.get_width()
+	var px := int(((x - trodden_origin.x) / (2.0 * trodden_half) + 0.5) * w)
+	var pz := int(((z - trodden_origin.y) / (2.0 * trodden_half) + 0.5) * w)
+	if px < 0 or pz < 0 or px >= w or pz >= w:
+		return 0.0
 	return trodden.get_pixel(px, pz).r
 
 
 func _paint(x: float, z: float, radius: float, strength: float) -> void:
 	var w := trodden.get_width()
-	var cx := (x / (2.0 * EXT) + 0.5) * w
-	var cz := (z / (2.0 * EXT) + 0.5) * w
-	var r := radius / (2.0 * EXT) * w
+	var cx := ((x - trodden_origin.x) / (2.0 * trodden_half) + 0.5) * w
+	var cz := ((z - trodden_origin.y) / (2.0 * trodden_half) + 0.5) * w
+	var r := radius / (2.0 * trodden_half) * w
 	for pz in range(int(cz - r - 1), int(cz + r + 2)):
 		for px in range(int(cx - r - 1), int(cx + r + 2)):
 			if px < 0 or pz < 0 or px >= w or pz >= w:
@@ -1781,10 +2078,9 @@ func _paint_paths() -> void:
 	_paint(town_centre.x, town_centre.z, 3.2 * town_scale, 0.9)
 	for s in sites + huts:
 		_paint_line(town_centre, s["pos"], 0.9, 0.75)
-	var tex := ImageTexture.create_from_image(trodden)
-	var terrain := world.get_node_or_null("Terrain") as MeshInstance3D
-	if terrain:
-		(terrain.material_override as ShaderMaterial).set_shader_parameter("trodden", tex)
+	terrain_mat.set_shader_parameter("trodden", ImageTexture.create_from_image(trodden))
+	terrain_mat.set_shader_parameter("trodden_origin", trodden_origin)
+	terrain_mat.set_shader_parameter("trodden_half", trodden_half)
 
 
 func _make_building(n: String, root: Node3D, civ: Color, wood: Material, stone: Material, dark: Material, roof: Material) -> void:

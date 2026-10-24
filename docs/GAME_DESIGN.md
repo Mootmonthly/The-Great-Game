@@ -410,7 +410,13 @@ Laws can stack. Their interactions are the main source of emergent variety.
 - **Possession:** select any individual at L2 to drop into L3 first-person control. The creature's actual stats and abilities apply. Possession can be used for exploration, guiding a civilization, or testing a future champion.
   - **Prototype (Phase 2):** from the region inspector, **Visit this region** builds a ground-level scene from the region's simulated state: terrain with seas sized to its liquids (lava glows on hot worlds, ice whitens cold ones), sky tinted by the atmosphere, and creatures from its populations (more biomass, more creatures; swimmers stay in the water) with its named individuals labelled. Click one to possess it: first-person view from its eyes, WASD to move, drag to look, its character sheet in the HUD. Following the camera rule (§4.8), the visit is display only; a test checks the world's state hash is unchanged.
   - **Visit revision (owner feedback: creatures out of scale, nothing interacting, plain ground):**
-    - **Scale in metres.** By size class a creature is Tiny 0.4 m, Small 0.9, Medium 1.7, Large 2.7, Huge 4.8 or Gargantuan 8 m (height if upright, length otherwise). Plants are 1.6 times taller, so a large bloom is a tree. Walking speed comes from the sheet's 5e speed (30 ft a round is 1.5 m/s). The visit covers 140 m of ground (more when a town of giants needs the room), and the terrain reaches beyond it into haze so the region has no hard edge.
+    - **Scale in metres.** By size class a creature is Tiny 0.4 m, Small 0.9, Medium 1.7, Large 2.7, Huge 4.8 or Gargantuan 8 m (height if upright, length otherwise). Plants are 1.6 times taller, so a large bloom is a tree. Walking speed comes from the sheet's 5e speed (30 ft a round is 1.5 m/s). The visit covers 1.4 km of ground, and the terrain reaches 300 m beyond that into haze. To keep it cheap:
+      - terrain is drawn in chunks, so only what the camera sees is drawn;
+      - grass grows only in cells within 120 m of the camera;
+      - each plant species forms forest stands across the region, drawn as instanced copies of a simplified model up close and a trunk-and-crown shape beyond 320 m;
+      - herds are spread over the land;
+      - creatures far from the camera think less often.
+      WASD moves the camera across the land, Shift moves it faster, and H returns to the town. A possessed creature can run with Shift.
     - **Ground.** A terrain shader blends the following by slope, height above the sea and the region's climate:
       - grass tinted by the region's dominant plant;
       - bare earth where little grows;
@@ -848,6 +854,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Globe detail | The 3D globe must be informative: it shows each people's lands and borders, settlements and capitals, city lights at night, wars, renowned individuals, forests, the map overlays, and lets the player pick and hover regions; moons are textured from their own worlds. Detail is added only where it costs no performance |
 | — | Refit cost | Refitting looted gear takes grade + 1 years and a Crafting-era people; no Essence (proposed by Claude, owner may revise) |
 | — | Arena rules | Win by wiping out the enemy or holding the central objective alone; procedurally generated biome battlefields from worlds; matches capped at 10 minutes, after which the side with more surviving cost wins (draw within 5%) (§6.1) |
+| — | Region visit size | The visited area is 1.4 km across (10 times wider than the first revision), explored by moving the camera or a possessed creature; detail is streamed or simplified with distance so it stays cheap (§4.7) |
 | — | Region visit and arena readability | The region visit is in real-world scale (medium creature 1.7 m, buildings sized to their builders), has climate-driven ground, water and a day cycle, and its creatures live display-only routines (townsfolk work, talk and go home; grazers herd and flee; hunters stalk). The arena plays at half speed offline by default with health bars, damage numbers, lunges, death effects, a kill feed and a side-by-side header (§4.7, §6.1a) |
 | — | Ecology | Flora and fauna form a real food chain: plants hold the light niche, animals with nervous systems graze plants instead of photosynthesising, predators eat animals |
 | — | Humanoid sapients | Sapience biases evolution toward a humanoid body plan (two legs, two arms, a head with eyes) in the simulation itself |
