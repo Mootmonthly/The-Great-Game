@@ -2,66 +2,141 @@ extends Control
 ## Visit a region at ground level and possess one of its creatures in first
 ## person (roadmap Phase 2, design pillar 2).
 ##
-## The scene is generated from the region's simulated state: terrain and
-## seas from its liquids and ice, sky tint from the atmosphere, and wandering
-## creatures from its populations (more biomass, more creatures), with its
-## named individuals labelled. Per the camera rule (docs/GAME_DESIGN.md
-## §4.8) this view is display only: nothing here changes the world.
+## The scene is generated from the region's simulated state: terrain, seas
+## and climate from its liquids, ice and temperature, sky from its
+## atmosphere, plants and creatures from its populations, and its settlement
+## from its tier and buildings. Everything is in metres: a medium creature
+## stands about 1.7 m tall and a settlement is built to the size of the
+## people who built it (docs/GAME_DESIGN.md §4.7).
 ##
-## Click a creature to possess it: WASD to move, drag the mouse to look,
-## Esc to release.
+## Life goes on while you watch: townsfolk keep a daily round (work at the
+## forge or in the fields, meet in the square, go home at night), grazers
+## herd and flee, hunters stalk them. Per the camera rule (§4.8) all of this
+## is display only: nothing here changes the world.
+##
+## Drag to orbit, scroll to zoom, hover a creature to see what it is doing,
+## click one to possess it: WASD to move, drag to look, Esc to release.
 
 signal closed
 
 const CreatureBuilder := preload("res://creature_builder.gd")
-const SIZE := 60.0
-const GRID := 48
-const SIZE_SCALE := {"Tiny": 0.6, "Small": 0.9, "Medium": 1.3, "Large": 2.0, "Huge": 3.0, "Gargantuan": 4.2}
+## Width of the walkable area, in metres: 140 m, more for a town of giants.
+var SIZE := 140.0
+## Terrain reaches this far beyond the walkable area, fading into the haze.
+const MARGIN := 45.0
+var EXT := SIZE / 2.0 + MARGIN
+const GRID := 128
+var STEP := 2.0 * EXT / GRID
+## Body height (upright) or length (otherwise) by size class, in metres.
+const SIZE_METRES := {"Tiny": 0.4, "Small": 0.9, "Medium": 1.7, "Large": 2.7, "Huge": 4.8, "Gargantuan": 8.0}
+## Real seconds per day in the visit.
+const DAY_LENGTH := 240.0
+const MAX_PLANTS := 70
 
 
 class Wanderer:
 	extends RefCounted
 	var node: Node3D
+	var model: Node3D
 	var name := ""
+	var species := ""
 	var detail: Dictionary
 	var sheet: Dictionary
+	## "villager", "grazer", "hunter", "swimmer" or "plant".
+	var role := "grazer"
 	var aquatic := false
 	var plant := false
+	var winged := false
 	var target := Vector3.ZERO
+	## Walking speed in metres per second, and the current multiple of it.
 	var speed := 1.5
+	var mult := 1.0
 	var height := 1.0
+	var radius := 0.5
+	var state := "idle"
+	var timer := 0.0
+	var scan := 0.0
+	## What to do on reaching `target`.
+	var then := ""
+	var site: Dictionary = {}
+	var home: Dictionary = {}
+	var partner: Wanderer
+	var prey: Wanderer
+	var herd := Vector3.ZERO
+	var activity := ""
+	var stuck := 0.0
+	var last_pos := Vector3.ZERO
+	var label: Label3D
+	var bubble: Label3D
+	var altitude := 0.0
 
 
 var sim: RefCounted
 var region := Vector2i.ZERO
 var info: Dictionary
-var sea_level := 0.0
+var sea_level := -100.0
 var heights := PackedFloat32Array()
 var wanderers: Array = []
 var possessed: Wanderer
 var rng := RandomNumberGenerator.new()
+var detail_img: Image
+var detail_tex: ImageTexture
+var palette: Dictionary = {}
 
 var viewport: SubViewport
 var world: Node3D
 var camera: Camera3D
+var env: Environment
+var sun: DirectionalLight3D
+var moon: DirectionalLight3D
 var hud: Label
-var orbit_yaw := 0.4
+var title: Label
+var tooltip: Label
+var orbit_yaw := 0.6
+var orbit_pitch := 0.5
+var orbit_dist := 70.0
+var orbit_idle := 0.0
 var look_yaw := 0.0
 var look_pitch := 0.0
 var dragging := false
+var drag_moved := 0.0
+var day := 0.3
+var night := 0.0
+var _hud_timer := 0.0
+var _sky_timer := 0.0
+var _day_sky: Color
+var _day_ambient: Color
+
 ## Settlement scenery (docs/GAME_DESIGN.md §4.5): where the town stands, how
-## far it reaches, and how many building pieces were placed.
+## far it reaches in metres, how big its builders are, and how many building
+## pieces were placed.
 var town_centre := Vector3.ZERO
 var town_radius := 0.0
+var town_scale := 2.0
 var building_count := 0
 var town: Node3D
+var civ_species := -1
+## Places townsfolk go: {name, kind, pos, face} in world space.
+var sites: Array = []
+var huts: Array = []
+## Circles creatures walk around: [Vector2 centre, radius] in world space.
+var obstacles: Array = []
+var trodden: Image
+var window_mat: StandardMaterial3D
 var _meshes := {}
 var _mats := {}
 const TIER_RADIUS := {"Camp": 5.0, "Village": 7.0, "Town": 9.0, "City": 12.0, "Metropolis": 15.0}
 const TIER_HUTS := {"Camp": 3, "Village": 6, "Town": 10, "City": 16, "Metropolis": 24}
-## Rough footprint radius of each building, for keeping them apart.
+## Rough footprint radius of each building in town units, for keeping them apart.
 const FOOTPRINT := {"Longhouse": 3.0, "Workshop": 2.1, "Granary": 1.6, "Forge": 2.1, "Mine": 2.4, "Market": 3.0, "Library": 2.4,
 	"Barracks": 3.0, "Shrine": 1.0, "Temple": 3.2, "Wizard's tower": 1.3, "Aqueduct": 5.0, "Factory": 3.0}
+## What townsfolk do at each kind of place.
+const SITE_DOING := {"Forge": "smithing at the forge", "Workshop": "crafting in the workshop", "Granary": "storing grain",
+	"Mine": "digging in the mine", "Market": "trading at the market", "Library": "reading in the library",
+	"Barracks": "drilling at the barracks", "Temple": "praying at the temple", "Shrine": "praying at the shrine",
+	"Wizard's tower": "studying at the tower", "Factory": "working at the factory", "Longhouse": "feasting in the longhouse",
+	"Harbour": "mending nets at the harbour", "Field": "tending the fields", "Well": "drawing water at the well"}
+const GATHER := ["Well", "Market", "Longhouse"]
 
 
 func open(world_sim: RefCounted, cell: Vector2i) -> void:
@@ -91,48 +166,134 @@ func _build() -> void:
 	world = Node3D.new()
 	viewport.add_child(world)
 
-	var sky_tint := Color(info["sky_color"][0], info["sky_color"][1], info["sky_color"][2])
-	var thickness: float = info["atmosphere"]
-	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.02, 0.02, 0.05).lerp(sky_tint.lightened(0.2), clampf(thickness * 1.5, 0.0, 0.9))
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.35, 0.35, 0.4).lerp(sky_tint, 0.3)
-	env.fog_enabled = thickness > 0.2
-	env.fog_light_color = env.background_color
-	env.fog_density = 0.01 * thickness
-	var we := WorldEnvironment.new()
-	we.environment = env
-	world.add_child(we)
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-40, 25, 0)
-	sun.light_energy = clampf(0.5 + 0.6 * sqrt(float(info["sunlight"])), 0.3, 1.6)
-	world.add_child(sun)
-
+	_find_builders()
+	_build_sky()
 	_build_terrain()
 	_build_settlement()
+	_build_ground_cover()
 	_spawn_life()
 
 	camera = Camera3D.new()
-	camera.fov = 60.0
-	camera.far = 400.0
+	camera.fov = 55.0
+	camera.near = 0.1
+	camera.far = 900.0
 	world.add_child(camera)
+	if town:
+		orbit_dist = clampf(town_radius * 2.6, 40.0, SIZE * 0.8)
 
 	var bar := VBoxContainer.new()
 	bar.position = Vector2(12, 12)
 	add_child(bar)
-	var title := Label.new()
-	title.text = "Region (%d, %d) · %.0f K · %d species here" % [region.x, region.y, info["temperature"], info["populations"].size()]
+	title = Label.new()
 	title.add_theme_font_size_override("font_size", 20)
+	title.add_theme_constant_override("outline_size", 6)
+	title.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	bar.add_child(title)
 	hud = Label.new()
+	hud.add_theme_constant_override("outline_size", 5)
+	hud.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	bar.add_child(hud)
 	var back := Button.new()
 	back.text = "Back to world"
+	back.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	back.pressed.connect(close)
 	bar.add_child(back)
+	tooltip = Label.new()
+	tooltip.visible = false
+	tooltip.add_theme_constant_override("outline_size", 6)
+	tooltip.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	tooltip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(tooltip)
+	_advance_day(0.0)
 	_update_hud()
 
+
+# --- Sky, light and the day ------------------------------------------------------
+
+func _build_sky() -> void:
+	var tint := Color(info["sky_color"][0], info["sky_color"][1], info["sky_color"][2])
+	var thickness: float = info["atmosphere"]
+	var haze := clampf(thickness * 1.5, 0.0, 0.9)
+	_day_sky = Color(0.02, 0.02, 0.05).lerp(tint.lightened(0.15), haze)
+	_day_ambient = Color(0.42, 0.42, 0.46).lerp(tint, 0.35)
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = _day_sky.lightened(0.05)
+	sky_mat.sky_energy_multiplier = 1.3
+	sky_mat.sky_horizon_color = _day_sky.lightened(0.25)
+	sky_mat.ground_horizon_color = _day_sky.lightened(0.15)
+	sky_mat.ground_bottom_color = _day_sky.darkened(0.5)
+	sky_mat.sun_angle_max = 20.0
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+	sky.radiance_size = Sky.RADIANCE_SIZE_32
+	env = Environment.new()
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = _day_ambient
+	env.ambient_light_energy = 0.9
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_white = 6.0
+	# Haze fades the far terrain into the sky, so the region has no hard edge.
+	env.fog_enabled = true
+	env.fog_light_color = sky_mat.sky_horizon_color
+	env.fog_density = (0.0015 + 0.004 * haze) * 140.0 / SIZE
+	env.fog_sky_affect = 0.0
+	var we := WorldEnvironment.new()
+	we.environment = env
+	world.add_child(we)
+	sun = DirectionalLight3D.new()
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 160.0
+	sun.light_color = Color(1.0, 0.96, 0.88)
+	world.add_child(sun)
+	moon = DirectionalLight3D.new()
+	moon.light_color = Color(0.55, 0.65, 1.0)
+	moon.rotation_degrees = Vector3(-50, -120, 0)
+	moon.light_energy = 0.0
+	world.add_child(moon)
+
+
+## Moves the sun across the sky; at night the townsfolk go home and their
+## doorways glow.
+func _advance_day(delta: float) -> void:
+	day = fmod(day + delta / DAY_LENGTH, 1.0)
+	var elev := sin(TAU * (day - 0.25))
+	var light := smoothstep(-0.08, 0.25, elev)
+	night = 1.0 - smoothstep(-0.12, 0.08, elev)
+	var strength := clampf(0.55 + 0.6 * sqrt(float(info["sunlight"])), 0.4, 1.4)
+	sun.rotation = Vector3(-asin(clampf(elev, -1.0, 1.0)) * 1.1 - 0.05, TAU * day * 0.5 + 0.5, 0.0)
+	sun.light_energy = strength * light
+	sun.visible = light > 0.01
+	moon.light_energy = 0.25 * night
+	var dusk := Color(1.0, 0.55, 0.35)
+	var sunset := clampf(1.0 - absf(elev) * 4.0, 0.0, 1.0) * (1.0 - night)
+	sun.light_color = Color(1.0, 0.96, 0.88).lerp(dusk, sunset * 0.8)
+	env.ambient_light_color = _day_ambient.lerp(Color(0.12, 0.14, 0.25), night * 0.85)
+	env.ambient_light_energy = lerpf(0.9, 0.55, night)
+	_sky_timer -= delta
+	if _sky_timer <= 0.0:
+		_sky_timer = 0.5
+		env.background_energy_multiplier = lerpf(1.0, 0.12, night)
+		env.fog_light_color = (env.sky.sky_material as ProceduralSkyMaterial).sky_horizon_color.lerp(Color(0.04, 0.05, 0.1), night * 0.9).lerp(dusk, sunset * 0.3)
+	if window_mat:
+		window_mat.emission_energy_multiplier = 0.2 + 3.0 * night
+
+
+func _time_name() -> String:
+	if night > 0.6:
+		return "Night"
+	if day < 0.3:
+		return "Dawn"
+	if day < 0.45:
+		return "Morning"
+	if day < 0.62:
+		return "Midday"
+	return "Evening"
+
+
+# --- Terrain ---------------------------------------------------------------------
 
 func _material(color: Color, glow := 0.0) -> ShaderMaterial:
 	var m := ShaderMaterial.new()
@@ -143,167 +304,913 @@ func _material(color: Color, glow := 0.0) -> ShaderMaterial:
 	return m
 
 
+## Ground height at a world point, interpolated between grid points.
 func _height_at(x: float, z: float) -> float:
-	var gx := clampi(int((x / SIZE + 0.5) * GRID), 0, GRID)
-	var gz := clampi(int((z / SIZE + 0.5) * GRID), 0, GRID)
-	return heights[gz * (GRID + 1) + gx]
+	var fx := clampf((x + EXT) / STEP, 0.0, GRID - 0.001)
+	var fz := clampf((z + EXT) / STEP, 0.0, GRID - 0.001)
+	var ix := int(fx)
+	var iz := int(fz)
+	var tx := fx - ix
+	var tz := fz - iz
+	var i := iz * (GRID + 1) + ix
+	var a := lerpf(heights[i], heights[i + 1], tx)
+	var b := lerpf(heights[i + GRID + 1], heights[i + GRID + 2], tx)
+	return lerpf(a, b, tz)
+
+
+func _slope_at(x: float, z: float) -> float:
+	var dx := _height_at(x + 1.0, z) - _height_at(x - 1.0, z)
+	var dz := _height_at(x, z + 1.0) - _height_at(x, z - 1.0)
+	return Vector2(dx, dz).length() * 0.5
+
+
+## The detail noise, sampled the way the terrain shader samples it.
+func _detail(x: float, z: float, scale: float) -> float:
+	var w := detail_img.get_width()
+	var px := posmod(int(x * scale * w), w)
+	var pz := posmod(int(z * scale * w), w)
+	return detail_img.get_pixel(px, pz).r
+
+
+## Colours and cover for the region's climate: grass where life grows, sand
+## and dust where it is dry, snow where it is cold, ash where it is molten.
+func _make_palette() -> Dictionary:
+	var temp: float = info["temperature"]
+	var ice: float = info["ice_amount"]
+	var liquid: float = info["liquid_amount"]
+	var plant_mass := 0.0
+	var plant_tint := Color(0.3, 0.5, 0.2)
+	var best := 0.0
+	for p in info["populations"]:
+		var d: String = p["description"]
+		if d.ends_with("Bloom") or d.ends_with("Plant"):
+			var m: float = p["biomass"]
+			plant_mass += m
+			if m > best:
+				best = m
+				var sd = JSON.parse_string(sim.species_detail_json(int(p["id"])))
+				if sd != null and sd.get("color") != null:
+					plant_tint = Color.html(str(sd["color"]))
+	var veg := clampf(plant_mass / 25.0, 0.0, 1.0)
+	if plant_mass > 0.0:
+		veg = maxf(veg, 0.3)
+	var grass := Color(0.25, 0.46, 0.16).lerp(plant_tint, 0.2)
+	var p := {
+		"grass_a": grass.darkened(0.15), "grass_b": grass.lerp(Color(0.55, 0.62, 0.22), 0.25),
+		"soil": Color(0.42, 0.33, 0.22), "sand": Color(0.80, 0.72, 0.52), "rock": Color(0.46, 0.44, 0.43),
+		"snow": Color(0.93, 0.95, 1.0), "path": Color(0.52, 0.42, 0.30), "vegetation": veg,
+		"snow_height": 1000.0, "ember": 0.0,
+	}
+	if liquid < 0.15:  # Dry: dusty soil, yellowed grass.
+		p["soil"] = Color(0.62, 0.5, 0.34)
+		p["grass_b"] = Color(0.66, 0.6, 0.3)
+	if temp > 700.0:  # Molten: black basalt with glowing cracks.
+		p["soil"] = Color(0.16, 0.12, 0.11)
+		p["rock"] = Color(0.24, 0.2, 0.19)
+		p["sand"] = Color(0.3, 0.22, 0.18)
+		p["path"] = Color(0.25, 0.2, 0.18)
+		p["vegetation"] = 0.0
+		p["ember"] = 2.0
+	elif temp > 380.0:  # Scorched.
+		p["soil"] = Color(0.55, 0.36, 0.24)
+		p["sand"] = Color(0.7, 0.5, 0.35)
+		p["vegetation"] = veg * 0.5
+	if ice > 0.3 or temp < 245.0:
+		p["snow_height"] = -1000.0  # Snow lies everywhere flat enough to hold it.
+		p["sand"] = Color(0.7, 0.72, 0.75)
+	elif temp < 275.0:
+		p["snow_height"] = 0.0  # Set to the upper hills once heights are known.
+	return p
 
 
 func _build_terrain() -> void:
 	var noise := FastNoiseLite.new()
 	noise.seed = rng.seed
-	noise.frequency = 0.035
-	noise.fractal_octaves = 4
+	noise.frequency = 0.008
+	noise.fractal_octaves = 3
+	var fine := FastNoiseLite.new()
+	fine.seed = rng.seed + 7
+	fine.frequency = 0.045
+	fine.fractal_octaves = 2
 	heights.resize((GRID + 1) * (GRID + 1))
-	var values: Array[float] = []
+	var inner: Array[float] = []
 	for z in GRID + 1:
 		for x in GRID + 1:
-			var h := noise.get_noise_2d(x * 2.0, z * 2.0) * 6.0
+			var wx := x * STEP - EXT
+			var wz := z * STEP - EXT
+			var h := noise.get_noise_2d(wx, wz) * 9.0 + fine.get_noise_2d(wx, wz) * 1.2
 			heights[z * (GRID + 1) + x] = h
-			values.append(h)
+			if absf(wx) <= SIZE / 2.0 and absf(wz) <= SIZE / 2.0:
+				inner.append(h)
 	# Choose the sea level so the flooded share matches the region's liquid.
 	var liquid: float = info["liquid_amount"]
-	var wet_share := clampf(liquid / (liquid + 1.0), 0.0, 0.95)
-	values.sort()
-	sea_level = values[int(wet_share * (values.size() - 1))] if wet_share > 0.02 else -100.0
+	var wet_share := clampf(liquid / (liquid + 1.0), 0.0, 0.9)
+	inner.sort()
+	sea_level = inner[int(wet_share * (inner.size() - 1))] if wet_share > 0.02 else -100.0
 
 	_level_town_site()
+	palette = _make_palette()
+	if float(palette["snow_height"]) == 0.0:
+		var top := -100.0
+		for h in heights:
+			top = maxf(top, h)
+		palette["snow_height"] = lerpf(maxf(sea_level, 0.0), top, 0.55)
 
-	var temp: float = info["temperature"]
-	var icy: bool = float(info["ice_amount"]) > 0.3
-	var ground := Color(0.55, 0.47, 0.33)
-	if temp > 700.0:
-		ground = Color(0.2, 0.12, 0.1)
-	elif icy:
-		ground = Color(0.88, 0.92, 0.98)
-	elif info["populations"].size() > 0:
-		ground = ground.lerp(Color(0.32, 0.55, 0.28), 0.5)
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var step := SIZE / GRID
+	var dn := FastNoiseLite.new()
+	dn.seed = rng.seed + 31
+	dn.frequency = 0.012
+	dn.fractal_octaves = 4
+	detail_img = dn.get_seamless_image(256, 256)
+	detail_img.convert(Image.FORMAT_RGB8)
+	var d2 := detail_img.duplicate()
+	d2.generate_mipmaps()
+	detail_tex = ImageTexture.create_from_image(d2)
+	trodden = Image.create(256, 256, false, Image.FORMAT_L8)
+
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var indices := PackedInt32Array()
+	verts.resize((GRID + 1) * (GRID + 1))
+	normals.resize(verts.size())
+	for z in GRID + 1:
+		for x in GRID + 1:
+			var i := z * (GRID + 1) + x
+			verts[i] = Vector3(x * STEP - EXT, heights[i], z * STEP - EXT)
+			var hl := heights[z * (GRID + 1) + maxi(x - 1, 0)]
+			var hr := heights[z * (GRID + 1) + mini(x + 1, GRID)]
+			var hd := heights[maxi(z - 1, 0) * (GRID + 1) + x]
+			var hu := heights[mini(z + 1, GRID) * (GRID + 1) + x]
+			normals[i] = Vector3(hl - hr, 2.0 * STEP, hd - hu).normalized()
 	for z in GRID:
 		for x in GRID:
-			var corners := [Vector2i(x, z), Vector2i(x + 1, z), Vector2i(x + 1, z + 1), Vector2i(x, z), Vector2i(x + 1, z + 1), Vector2i(x, z + 1)]
-			for c in corners:
-				var h := heights[c.y * (GRID + 1) + c.x]
-				st.set_color(ground.darkened(clampf(-h * 0.04, 0.0, 0.3)).lightened(clampf(h * 0.03, 0.0, 0.3)))
-				st.add_vertex(Vector3(c.x * step - SIZE / 2.0, h, c.y * step - SIZE / 2.0))
-	st.generate_normals()
+			var a := z * (GRID + 1) + x
+			indices.append_array([a, a + 1, a + GRID + 2, a, a + GRID + 2, a + GRID + 1])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	var terrain := MeshInstance3D.new()
-	terrain.mesh = st.commit()
-	var tm := StandardMaterial3D.new()
-	tm.vertex_color_use_as_albedo = true
-	tm.roughness = 1.0
+	terrain.name = "Terrain"
+	terrain.mesh = mesh
+	var tm := ShaderMaterial.new()
+	tm.shader = preload("res://shaders/terrain.gdshader")
+	for k in ["grass_a", "grass_b", "soil", "sand", "rock", "snow"]:
+		tm.set_shader_parameter(k, palette[k])
+	tm.set_shader_parameter("path_color", palette["path"])
+	tm.set_shader_parameter("vegetation", palette["vegetation"])
+	tm.set_shader_parameter("sea_level", sea_level)
+	tm.set_shader_parameter("snow_height", palette["snow_height"])
+	tm.set_shader_parameter("ember_glow", palette["ember"])
+	tm.set_shader_parameter("detail", detail_tex)
+	tm.set_shader_parameter("extent", EXT)
 	terrain.material_override = tm
 	world.add_child(terrain)
 
 	if sea_level > -50.0:
-		var water := MeshInstance3D.new()
-		var plane := PlaneMesh.new()
-		plane.size = Vector2(SIZE, SIZE)
-		water.mesh = plane
-		var wc := Color("#" + str(info["liquid_color"])) if info["liquid_color"] != null else Color(0.2, 0.4, 0.8)
-		var glow := 1.2 if temp > 700.0 else 0.0
-		var wm := _material(wc.lerp(Color(0.1, 0.2, 0.4), 0.2) if glow == 0.0 else Color(1.0, 0.45, 0.1), glow)
-		water.material_override = wm
-		water.position.y = sea_level
-		world.add_child(water)
+		_build_water()
+
+
+func _build_water() -> void:
+	var temp: float = info["temperature"]
+	var water := MeshInstance3D.new()
+	water.name = "Water"
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(EXT * 2.0, EXT * 2.0)
+	plane.subdivide_width = 8
+	plane.subdivide_depth = 8
+	water.mesh = plane
+	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var wc := Color("#" + str(info["liquid_color"])) if info["liquid_color"] != null else Color(0.2, 0.45, 0.8)
+	var wm := ShaderMaterial.new()
+	wm.shader = preload("res://shaders/water.gdshader")
+	var molten := temp > 700.0
+	wm.set_shader_parameter("shallow", (Color(1.0, 0.55, 0.15) if molten else wc.lightened(0.25)))
+	wm.set_shader_parameter("deep", (Color(0.9, 0.2, 0.02) if molten else wc.darkened(0.65)))
+	wm.set_shader_parameter("glow", 2.5 if molten else 0.0)
+	wm.set_shader_parameter("sea_level", sea_level)
+	var himg := Image.create_from_data(GRID + 1, GRID + 1, false, Image.FORMAT_RF, heights.to_byte_array())
+	wm.set_shader_parameter("heightmap", ImageTexture.create_from_image(himg))
+	wm.set_shader_parameter("extent", EXT)
+	wm.set_shader_parameter("texel", 1.0 / (GRID + 1))
+	var rimg := detail_img.duplicate()
+	rimg.bump_map_to_normal_map(6.0)
+	rimg.generate_mipmaps()
+	wm.set_shader_parameter("ripples", ImageTexture.create_from_image(rimg))
+	wm.set_shader_parameter("detail", detail_tex)
+	water.material_override = wm
+	water.position.y = sea_level
+	world.add_child(water)
+
+
+## Grass tufts where plants grow and loose rocks everywhere, in two
+## MultiMeshes, after the town so they stay off its paths and floors.
+func _build_ground_cover() -> void:
+	var veg: float = palette["vegetation"]
+	var tuft_xf: Array = []
+	var tints: Array = []
+	var want := int(8000.0 * veg * clampf(SIZE / 140.0, 1.0, 1.6))
+	for attempt in want * 2:
+		if tuft_xf.size() >= want:
+			break
+		var x := rng.randf_range(-SIZE * 0.62, SIZE * 0.62)
+		var z := rng.randf_range(-SIZE * 0.62, SIZE * 0.62)
+		var h := _height_at(x, z)
+		if sea_level > -50.0 and h < sea_level + 0.9:
+			continue
+		if _slope_at(x, z) > 0.45 or h > float(palette["snow_height"]) - 1.0:
+			continue
+		var n1 := _detail(x, z, 0.011)
+		var cover := veg * 1.5 - 0.25 + (n1 - 0.5) * 0.9
+		if rng.randf() > cover or _trodden_at(x, z) > 0.25 or _blocked(Vector2(x, z), 0.4):
+			continue
+		var s := rng.randf_range(0.7, 1.35) * (0.8 + veg * 0.4)
+		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s, s * rng.randf_range(0.8, 1.3), s))
+		tuft_xf.append(Transform3D(b, Vector3(x, h - 0.02, z)))
+		var k := rng.randf_range(0.82, 1.15)
+		tints.append(Color(k, k * rng.randf_range(0.95, 1.05), k * 0.95))
+	if not tuft_xf.is_empty():
+		var gm := ShaderMaterial.new()
+		gm.shader = preload("res://shaders/grass.gdshader")
+		var ga: Color = palette["grass_a"]
+		var gb: Color = palette["grass_b"]
+		gm.set_shader_parameter("root_color", ga.darkened(0.3))
+		gm.set_shader_parameter("tip_color", gb.lightened(0.1))
+		var inst := _multimesh(_tuft_mesh(), gm, tuft_xf, tints)
+		inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		inst.name = "Grass"
+	var rock_xf: Array = []
+	var rocks := 45 + int(60.0 * (1.0 - veg))
+	for attempt in rocks * 3:
+		if rock_xf.size() >= rocks:
+			break
+		var x := rng.randf_range(-SIZE * 0.6, SIZE * 0.6)
+		var z := rng.randf_range(-SIZE * 0.6, SIZE * 0.6)
+		var steep := _slope_at(x, z)
+		if rng.randf() > 0.35 + steep or _blocked(Vector2(x, z), 1.5) or _trodden_at(x, z) > 0.1:
+			continue
+		var s := rng.randf_range(0.25, 1.4) * (1.6 if rng.randf() < 0.1 else 1.0)
+		var b := Basis.from_euler(Vector3(rng.randf() * 0.6, rng.randf() * TAU, rng.randf() * 0.6)).scaled(Vector3(s * rng.randf_range(0.9, 1.6), s * rng.randf_range(0.5, 0.9), s))
+		rock_xf.append(Transform3D(b, Vector3(x, _height_at(x, z) - s * 0.2, z)))
+	var rc: Color = palette["rock"]
+	if not rock_xf.is_empty():
+		_multimesh(_mesh("rock"), _mat(rc.lightened(0.05)), rock_xf).name = "Rocks"
+
+
+## One grass tuft: a clump of tapering blades, UV.y running from root to tip.
+func _tuft_mesh() -> Mesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var r := RandomNumberGenerator.new()
+	r.seed = 5
+	for k in 7:
+		var a := r.randf() * TAU
+		var off := Vector3(cos(a), 0, sin(a)) * r.randf_range(0.0, 0.12)
+		var face := r.randf() * TAU
+		var side := Vector3(cos(face), 0, sin(face)) * 0.035
+		var h := r.randf_range(0.28, 0.5)
+		var lean := Vector3(cos(a), 0, sin(a)) * r.randf_range(0.03, 0.12)
+		st.set_normal(Vector3.UP)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(off - side)
+		st.set_uv(Vector2(1, 0))
+		st.add_vertex(off + side)
+		st.set_uv(Vector2(0.5, 1))
+		st.add_vertex(off + lean + Vector3(0, h, 0))
+	return st.commit()
+
+
+func _multimesh(mesh: Mesh, mat: Material, xf: Array, colors: Array = []) -> MultiMeshInstance3D:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = not colors.is_empty()
+	mm.mesh = mesh
+	mm.instance_count = xf.size()
+	for i in xf.size():
+		mm.set_instance_transform(i, xf[i])
+		if mm.use_colors:
+			mm.set_instance_color(i, colors[i])
+	var inst := MultiMeshInstance3D.new()
+	inst.multimesh = mm
+	inst.material_override = mat
+	world.add_child(inst)
+	return inst
+
+
+# --- Life ------------------------------------------------------------------------
+
+## Which species built the settlement here, and how big its buildings are:
+## a people builds doors to fit itself.
+func _find_builders() -> void:
+	if not _has_town():
+		return
+	var civ_id := int(info["settlement"].get("civ_id", -1))
+	for c in JSON.parse_string(sim.civilizations_json()):
+		if int(c["id"]) == civ_id and c.get("species_id") != null:
+			civ_species = int(c["species_id"])
+	var builder_m := 1.7
+	if civ_species >= 0:
+		var sh = JSON.parse_string(sim.sheet_json("species", civ_species))
+		if sh != null:
+			builder_m = SIZE_METRES.get(sh["size"], 1.7)
+	var tier_r: float = TIER_RADIUS.get(_tier_name(), 7.0)
+	town_scale = clampf(2.0 * builder_m / 1.7, 1.2, 8.0)
+	# Make room for the whole town, walls and fields included.
+	SIZE = maxf(140.0, (tier_r + 9.0) * town_scale / 0.42)
+	EXT = SIZE / 2.0 + MARGIN
+	STEP = 2.0 * EXT / GRID
 
 
 func _spawn_life() -> void:
-	var pops: Array = info["populations"]
-	for p in pops.slice(0, 8):
-		var detail = JSON.parse_string(sim.species_detail_json(int(p["id"])))
-		var sheet = JSON.parse_string(sim.sheet_json("species", int(p["id"])))
+	var animals := 0
+	var plants := 0
+	var stands := {}
+	for p in info["populations"]:
+		if animals >= 10 and plants >= 7:
+			break
+		var id := int(p["id"])
+		var detail = JSON.parse_string(sim.species_detail_json(id))
+		var sheet = JSON.parse_string(sim.sheet_json("species", id))
 		if detail == null or sheet == null:
 			continue
-		var n := clampi(int(float(p["biomass"]) / 6.0), 1, 6)
+		var biomass: float = p["biomass"]
 		if CreatureBuilder.is_plant(detail):
-			n = clampi(int(float(p["biomass"]) / 3.0), 2, 14)  # Plants grow in stands.
-		for k in n:
-			_add_wanderer(detail, sheet, p["name"], Color.WHITE, false)
-	for x in info["individuals_here"]:
-		var detail = JSON.parse_string(sim.species_detail_json(int(x["species_id"])))
-		var sheet = JSON.parse_string(sim.sheet_json("individual", int(x["id"])))
+			if plants >= 7:
+				continue
+			plants += 1
+			var n := clampi(int(biomass / 2.0), 2, 12)
+			var centre := _random_spot(_is_kelp(detail), true)
+			for k in n:
+				if _plant_count() >= MAX_PLANTS:
+					break
+				_add_wanderer(detail, sheet, p["name"], "plant", centre)
+			stands[id] = centre
+			continue
+		if id == civ_species and town:
+			continue  # The townsfolk are spawned with their town below.
+		if animals >= 10:
+			continue
+		animals += 1
+		var count := clampi(int(biomass / 4.0), 1, 6)
+		var herd := _random_spot(_is_swimmer(detail), true)
+		for k in count:
+			var w := _add_wanderer(detail, sheet, p["name"], _role(detail, p["description"]), herd)
+			w.herd = herd
+	if town and civ_species >= 0:
+		var detail = JSON.parse_string(sim.species_detail_json(civ_species))
+		var sheet = JSON.parse_string(sim.sheet_json("species", civ_species))
 		if detail != null and sheet != null:
-			_add_wanderer(detail, sheet, x["title"], Color(1.0, 0.85, 0.35), true)
+			var pop: float = info["settlement"].get("population", 6.0)
+			for k in clampi(int(pop), 4, 24):
+				_add_villager(detail, sheet, detail["name"], k)
+	for x in info["individuals_here"]:
+		var sid := int(x["species_id"])
+		var detail = JSON.parse_string(sim.species_detail_json(sid))
+		var sheet = JSON.parse_string(sim.sheet_json("individual", int(x["id"])))
+		if detail == null or sheet == null:
+			continue
+		var w: Wanderer
+		if sid == civ_species and town:
+			w = _add_villager(detail, sheet, x["title"], rng.randi())
+		else:
+			w = _add_wanderer(detail, sheet, x["title"], _role(detail, str(detail.get("description", ""))), _random_spot(false, true))
+		_add_label(w, Color(1.0, 0.85, 0.35))
 
 
-func _add_wanderer(detail: Dictionary, sheet: Dictionary, name: String, label_color: Color, named: bool) -> void:
+func _plant_count() -> int:
+	var n := 0
+	for w: Wanderer in wanderers:
+		n += 1 if w.plant else 0
+	return n
+
+
+func _parts(detail: Dictionary) -> Dictionary:
+	var kinds := {}
+	for p in detail["parts"]:
+		kinds[p["part"]] = true
+	return kinds
+
+
+func _is_kelp(detail: Dictionary) -> bool:
+	return _parts(detail).has("fin") and sea_level > -50.0
+
+
+func _is_swimmer(detail: Dictionary) -> bool:
+	var k := _parts(detail)
+	return (k.has("fin") or k.is_empty()) and not k.has("limb") and sea_level > -50.0
+
+
+func _role(detail: Dictionary, description: String) -> String:
+	if _is_swimmer(detail):
+		return "swimmer"
+	return "hunter" if description.ends_with("Hunter") else "grazer"
+
+
+func _add_villager(detail: Dictionary, sheet: Dictionary, name: String, k: int) -> Wanderer:
+	var start: Vector3 = town_centre
+	var home: Dictionary = {}
+	if not huts.is_empty():
+		home = huts[posmod(k, huts.size())]
+		start = home["pos"]
+	elif not sites.is_empty():
+		start = sites[posmod(k, sites.size())]["pos"]
+	start += Vector3(rng.randf_range(-1.5, 1.5), 0, rng.randf_range(-1.5, 1.5))
+	var w := _add_wanderer(detail, sheet, name, "villager", start)
+	w.home = home
+	w.timer = rng.randf_range(0.0, 3.0)
+	return w
+
+
+func _add_wanderer(detail: Dictionary, sheet: Dictionary, name: String, role: String, near: Vector3) -> Wanderer:
 	var w := Wanderer.new()
 	w.detail = detail
 	w.sheet = sheet
 	w.name = name
-	var limbs := false
-	var fins := false
-	for p in detail["parts"]:
-		limbs = limbs or p["part"] == "limb"
-		fins = fins or p["part"] == "fin"
-	w.plant = CreatureBuilder.is_plant(detail)
-	# Plants with fins are kelp and grow on the seabed; the rest on land.
-	w.aquatic = (fins or (detail["parts"].is_empty() and not w.plant)) and not limbs and sea_level > -50.0
+	w.species = str(detail.get("name", name))
+	w.role = role
+	w.plant = role == "plant"
+	w.aquatic = role == "swimmer" or (w.plant and _is_kelp(detail))
+	w.winged = _parts(detail).has("wing") and not w.plant
 	var model := CreatureBuilder.build(detail)
 	var box := CreatureBuilder.bounds(model)
-	var extent: float = max(box.size.x, max(box.size.y, box.size.z))
-	var s: float = SIZE_SCALE.get(sheet["size"], 1.0) / max(extent, 0.01)
+	var metres: float = SIZE_METRES.get(sheet["size"], 1.7)
+	if w.plant:
+		metres *= 1.6  # Trees stand taller than beasts of their size class.
+	var upright := box.size.y >= maxf(box.size.x, box.size.z) * 0.9
+	var ref := box.size.y if upright else maxf(box.size.x, box.size.z)
+	var s: float = metres / maxf(ref, 0.01)
 	model.scale = Vector3.ONE * s
 	model.position = Vector3(-box.get_center().x * s, -box.position.y * s, -box.get_center().z * s)
+	model.set_meta("base_y", model.position.y)
 	w.height = box.size.y * s
+	w.radius = maxf(box.size.x, box.size.z) * s * 0.45
+	w.model = model
 	var holder := Node3D.new()
 	holder.add_child(model)
 	world.add_child(holder)
 	w.node = holder
-	w.speed = 0.8 + float(max(int(sheet["speed"]["walk"]), int(sheet["speed"]["swim"]))) / 20.0
-	holder.position = _random_spot(w.aquatic)
-	w.target = _random_spot(w.aquatic)
+	# 5e speeds are feet per six-second round.
+	var feet := maxi(int(sheet["speed"]["walk"]), int(sheet["speed"]["swim"]) if w.aquatic else 0)
+	w.speed = clampf(float(maxi(feet, 10)) * 0.3048 / 6.0, 0.4, 4.0)
+	var spread := 7.0 if w.plant else 5.0
+	var spot := near
+	if role != "villager":
+		for attempt in 12:
+			var cand := near + Vector3(rng.randf_range(-spread, spread), 0, rng.randf_range(-spread, spread))
+			if _fits(cand, w.aquatic):
+				spot = cand
+				break
+	holder.position = Vector3(spot.x, _ground_for(w, spot.x, spot.z), spot.z)
+	holder.rotation.y = rng.randf() * TAU
+	w.last_pos = holder.position
 	if w.plant:
 		w.speed = 0.0
-		holder.position.y = _height_at(holder.position.x, holder.position.z)  # Rooted in the ground or seabed.
-		holder.rotation.y = rng.randf() * TAU
-	if named:
-		var l := Label3D.new()
-		l.text = name
-		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		l.modulate = label_color
-		l.outline_size = 6
-		l.font_size = 32
-		l.pixel_size = 0.015
-		l.position.y = w.height + 0.5
-		holder.add_child(l)
+		model.set("pace", 0.4)
+	else:
+		model.set("pace", 0.2)
+		w.timer = rng.randf_range(0.0, 4.0)
 	wanderers.append(w)
+	return w
 
 
-func _random_spot(aquatic: bool) -> Vector3:
-	for attempt in 30:
-		var x := rng.randf_range(-SIZE * 0.42, SIZE * 0.42)
-		var z := rng.randf_range(-SIZE * 0.42, SIZE * 0.42)
-		var h := _height_at(x, z)
-		var wet := h < sea_level
-		if wet == aquatic or sea_level < -50.0:
-			return Vector3(x, (sea_level - 0.4 if aquatic else h), z)
+func _add_label(w: Wanderer, color: Color) -> void:
+	var l := Label3D.new()
+	l.text = w.name
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.modulate = color
+	l.outline_size = 8
+	l.font_size = 40
+	l.pixel_size = 0.01
+	l.fixed_size = false
+	l.no_depth_test = true
+	l.position.y = w.height + 0.6
+	w.node.add_child(l)
+	w.label = l
+
+
+func _fits(p: Vector3, aquatic: bool) -> bool:
+	if absf(p.x) > SIZE * 0.47 or absf(p.z) > SIZE * 0.47:
+		return false
+	var h := _height_at(p.x, p.z)
+	if sea_level > -50.0 and (h < sea_level - 0.6) != aquatic:
+		return false
+	return aquatic or not _blocked(Vector2(p.x, p.z), 0.5)
+
+
+func _random_spot(aquatic: bool, avoid_town := false) -> Vector3:
+	for attempt in 60:
+		var x := rng.randf_range(-SIZE * 0.44, SIZE * 0.44)
+		var z := rng.randf_range(-SIZE * 0.44, SIZE * 0.44)
+		var p := Vector3(x, 0, z)
+		if avoid_town and town and attempt < 50 and Vector2(x - town_centre.x, z - town_centre.z).length() < town_radius + 10.0:
+			continue
+		if _fits(p, aquatic) or (sea_level < -50.0 and not aquatic):
+			p.y = _height_at(x, z)
+			return p
 	return Vector3(0, maxf(_height_at(0, 0), sea_level), 0)
 
 
+## Where a creature's feet (or belly, swimming) rest at a point.
+func _ground_for(w: Wanderer, x: float, z: float) -> float:
+	var g := _height_at(x, z)
+	if w.aquatic:
+		return g if w.plant else maxf(g + 0.3, sea_level - maxf(0.6, w.height))
+	return maxf(g, sea_level - w.height * 0.25) if sea_level > -50.0 else g
+
+
+func _blocked(p: Vector2, margin: float) -> bool:
+	for o in obstacles:
+		if p.distance_to(o[0]) < float(o[1]) + margin:
+			return true
+	return false
+
+
+# --- Behaviour ---------------------------------------------------------------------
+
 func _process(delta: float) -> void:
+	_advance_day(delta)
 	for w: Wanderer in wanderers:
 		if w == possessed or w.plant:
 			continue
-		var to := w.target - w.node.position
-		to.y = 0.0
-		if to.length() < 0.5:
-			w.target = _random_spot(w.aquatic)
-			continue
-		var dir := to.normalized()
-		w.node.position += dir * w.speed * delta
-		var ground := _height_at(w.node.position.x, w.node.position.z)
-		w.node.position.y = sea_level - 0.4 if w.aquatic else maxf(ground, sea_level - 0.3)
-		w.node.look_at(w.node.position + dir, Vector3.UP, true)
+		_act(w, delta)
 	if possessed:
 		_drive(delta)
 	else:
-		orbit_yaw += delta * 0.05
-		camera.position = Vector3(sin(orbit_yaw) * 38.0, 22.0, cos(orbit_yaw) * 38.0)
-		camera.look_at(Vector3.ZERO, Vector3.UP)
+		orbit_idle += delta
+		if orbit_idle > 6.0:
+			orbit_yaw += delta * 0.04
+		var focus := town_centre if town else Vector3(0, maxf(_height_at(0, 0), sea_level), 0)
+		var off := Vector3(sin(orbit_yaw) * cos(orbit_pitch), sin(orbit_pitch), cos(orbit_yaw) * cos(orbit_pitch)) * orbit_dist
+		camera.position = focus + off
+		camera.position.y = maxf(camera.position.y, _height_at(camera.position.x, camera.position.z) + 2.0)
+		camera.transform = Transform3D(Basis.looking_at(focus + Vector3(0, 1.5, 0) - camera.position, Vector3.UP), camera.position)
+	_hud_timer -= delta
+	if _hud_timer <= 0.0:
+		_hud_timer = 0.5
+		_update_hud()
+
+
+func _act(w: Wanderer, delta: float) -> void:
+	w.timer -= delta
+	w.scan -= delta
+	if w.scan <= 0.0:
+		w.scan = 0.4 + rng.randf() * 0.2
+		_look_around(w)
+	match w.state:
+		"walk":
+			_walk(w, delta)
+		"hunt":
+			if w.prey == null or w.prey.state == "dead" or not w.prey.node.visible or w.timer <= 0.0 or _in_town(w.prey.node.position, 2.0):
+				_enter_state(w, "rest", rng.randf_range(4.0, 8.0), "catching its breath")
+				return
+			w.target = w.prey.node.position
+			_walk(w, delta)
+		"chat":
+			if w.partner and is_instance_valid(w.partner.node):
+				_face(w, w.partner.node.position - w.node.position, delta)
+			if w.timer <= 0.0 or w.partner == null or w.partner.state != "chat":
+				_end_chat(w)
+		"work":
+			if not w.site.is_empty():
+				_face(w, (w.site["face"] as Vector3) - w.node.position, delta)
+			w.model.position.y = _model_base(w) + absf(sin(w.timer * 5.0)) * 0.04 * w.height
+			if w.timer <= 0.0:
+				w.model.position.y = _model_base(w)
+				_next(w)
+		"inside":
+			if w.timer <= 0.0 and night < 0.5:
+				w.node.visible = true
+				_next(w)
+		"dead":
+			if w.timer <= 0.0:
+				w.model.rotation = Vector3.ZERO
+				var p := _random_spot(w.aquatic, true)
+				w.node.position = Vector3(p.x, _ground_for(w, p.x, p.z), p.z)
+				_next(w)
+		_:
+			if w.timer <= 0.0:
+				_next(w)
+
+
+func _model_base(w: Wanderer) -> float:
+	return w.model.get_meta("base_y", 0.0)
+
+
+## Notices threats and chances: grazers bolt from hunters (and wild ones from
+## people), townsfolk run home from hunters, hunters pick out prey.
+func _look_around(w: Wanderer) -> void:
+	if w.state in ["dead", "inside", "flee"] or (w.state == "walk" and w.mult > 2.0):
+		return
+	var pos := w.node.position
+	if w.role == "hunter":
+		if w.state in ["hunt", "eat", "rest"]:
+			return
+		var best: Wanderer = null
+		var best_d := 22.0
+		for o: Wanderer in wanderers:
+			if o.role != "grazer" or o.state in ["dead", "inside"] or o.species == w.species or o.height > w.height * 1.6:
+				continue
+			var d := pos.distance_to(o.node.position)
+			if d < best_d and not _in_town(o.node.position, 2.0):
+				best_d = d
+				best = o
+		if best:
+			w.prey = best
+			w.mult = 1.8
+			w.target = best.node.position
+			_enter_state(w, "hunt", 14.0, "hunting %s" % best.species)
+		return
+	for o: Wanderer in wanderers:
+		if o == w or o.plant or o.state in ["dead", "inside"]:
+			continue
+		var threat := o.role == "hunter" and o.species != w.species and o.height > w.height * 0.5
+		var wary := w.role == "grazer" and o.role == "villager"
+		var reach := 11.0 if threat else 4.5
+		if not (threat or wary) or pos.distance_to(o.node.position) > reach:
+			continue
+		if w.role == "villager" and not w.home.is_empty():
+			_go(w, w.home["pos"], "home", 2.0, "running home from a %s" % o.species)
+		else:
+			var away := (pos - o.node.position)
+			away.y = 0.0
+			var to := pos + away.normalized() * rng.randf_range(10.0, 16.0)
+			to.x = clampf(to.x, -SIZE * 0.45, SIZE * 0.45)
+			to.z = clampf(to.z, -SIZE * 0.45, SIZE * 0.45)
+			_go(w, to, "", 2.3, "fleeing a %s" % o.species if threat else "shying away")
+		return
+
+
+func _enter_state(w: Wanderer, state: String, time: float, activity: String) -> void:
+	w.state = state
+	w.timer = time
+	_set_activity(w, activity)
+	var pace := 0.2
+	match state:
+		"work":
+			pace = 1.4
+		"chat":
+			pace = 0.6
+		"eat":
+			pace = 1.0
+		"dead":
+			pace = 0.0
+	if state != "walk" and state != "hunt":
+		w.model.set("pace", pace)
+
+
+func _set_activity(w: Wanderer, activity: String) -> void:
+	if w.activity == activity:
+		return
+	w.activity = activity
+	if w.label:
+		w.label.text = "%s\n%s" % [w.name, activity] if activity != "" else w.name
+
+
+func _go(w: Wanderer, to: Vector3, then: String, mult: float, activity: String) -> void:
+	w.target = to
+	w.then = then
+	w.mult = mult
+	w.stuck = 0.0
+	w.last_pos = w.node.position
+	w.state = "walk"
+	w.timer = 40.0
+	_set_activity(w, activity)
+
+
+func _jitter(p: Vector3, r: float) -> Vector3:
+	var a := rng.randf() * TAU
+	return p + Vector3(cos(a), 0, sin(a)) * r * sqrt(rng.randf())
+
+
+## Chooses what a creature does next.
+func _next(w: Wanderer) -> void:
+	w.mult = 1.0
+	w.partner = null
+	w.prey = null
+	match w.role:
+		"villager":
+			_next_villager(w)
+		"swimmer":
+			var to := _jitter(w.herd, 9.0)
+			if _fits(to, true):
+				_go(w, to, "rest", 1.0, "swimming")
+			else:
+				_enter_state(w, "rest", 2.0, "drifting")
+		"hunter":
+			if rng.randf() < 0.35:
+				_enter_state(w, "rest", rng.randf_range(5.0, 10.0), "resting")
+			else:
+				var to := _random_spot(false, true)
+				_go(w, w.node.position.lerp(to, 0.5), "rest", 0.8, "prowling")
+		_:
+			var r := rng.randf()
+			if r < 0.2 and _try_chat(w, 7.0, "nuzzling"):
+				return
+			if r < 0.6:
+				_enter_state(w, "graze", rng.randf_range(5.0, 12.0), "grazing")
+			else:
+				if rng.randf() < 0.15:
+					w.herd = (w.herd + _random_spot(false, true)) * 0.5  # The herd drifts.
+				var to := _jitter(w.herd, 8.0)
+				if _fits(to, false):
+					_go(w, to, "graze", 0.7 + rng.randf() * 0.4, "roaming")
+				else:
+					_enter_state(w, "graze", 3.0, "grazing")
+
+
+func _next_villager(w: Wanderer) -> void:
+	if night > 0.4:
+		if not w.home.is_empty():
+			_go(w, w.home["pos"], "home", 1.2, "heading home for the night")
+		else:
+			_enter_state(w, "rest", 20.0, "sleeping")
+		return
+	var r := rng.randf()
+	if r < 0.15 and not w.home.is_empty():
+		_go(w, w.home["pos"], "home", 1.0, "going home")
+		return
+	if r < 0.45:
+		var gather: Array = sites.filter(func(s): return s["name"] in GATHER)
+		if not gather.is_empty():
+			var s: Dictionary = gather[rng.randi() % gather.size()]
+			w.site = s
+			_go(w, _jitter(s["pos"], 3.0), "gather", 1.0, "walking to the %s" % str(s["name"]).to_lower())
+			return
+	var work: Array = sites.filter(func(s): return not (s["name"] in GATHER) or s["name"] == "Well")
+	if work.is_empty():
+		_enter_state(w, "rest", 6.0, "idling")
+		return
+	var s: Dictionary = work[rng.randi() % work.size()]
+	w.site = s
+	_go(w, _jitter(s["pos"], 2.0 if s["name"] == "Field" else 0.8), "work", 1.0, "walking to the %s" % str(s["name"]).to_lower())
+
+
+func _arrive(w: Wanderer) -> void:
+	w.model.set("pace", 0.2)
+	match w.then:
+		"work":
+			_enter_state(w, "work", rng.randf_range(7.0, 15.0), SITE_DOING.get(w.site.get("name", ""), "working"))
+		"gather":
+			if not _try_chat(w, 9.0, "chatting"):
+				_enter_state(w, "wait", rng.randf_range(5.0, 9.0), "waiting for company")
+		"home":
+			w.node.visible = false
+			_enter_state(w, "inside", rng.randf_range(6.0, 14.0), "at home")
+		"graze":
+			_enter_state(w, "graze", rng.randf_range(5.0, 12.0), "grazing")
+		"rest":
+			_enter_state(w, "rest", rng.randf_range(2.0, 6.0), "resting")
+		_:
+			_next(w)
+
+
+## Pairs up with a nearby idle creature of the same kind to talk (or nuzzle).
+func _try_chat(w: Wanderer, reach: float, doing: String) -> bool:
+	for o: Wanderer in wanderers:
+		if o == w or o == possessed or o.species != w.species or not (o.state in ["wait", "graze", "rest"]):
+			continue
+		if o.node.position.distance_to(w.node.position) > reach:
+			continue
+		var t := rng.randf_range(5.0, 10.0)
+		for x: Wanderer in [w, o]:
+			_enter_state(x, "chat", t, doing)
+			if w.role == "villager":
+				x.bubble = _bubble(x)
+		w.partner = o
+		o.partner = w
+		return true
+	return false
+
+
+func _end_chat(w: Wanderer) -> void:
+	if w.bubble:
+		w.bubble.queue_free()
+		w.bubble = null
+	w.partner = null
+	_next(w)
+
+
+func _bubble(w: Wanderer) -> Label3D:
+	var l := Label3D.new()
+	l.text = "…"
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.font_size = 64
+	l.outline_size = 10
+	l.pixel_size = 0.01
+	l.position.y = w.height + (1.1 if w.label else 0.35)
+	w.node.add_child(l)
+	return l
+
+
+func _in_town(p: Vector3, margin: float) -> bool:
+	return town != null and Vector2(p.x - town_centre.x, p.z - town_centre.z).length() < town_radius + margin
+
+
+func _walk(w: Wanderer, delta: float) -> void:
+	var pos := w.node.position
+	var to := w.target - pos
+	to.y = 0.0
+	var d := to.length()
+	var reach := 0.4 + w.radius * 0.5
+	if w.state == "hunt":
+		reach = w.radius + w.prey.radius + 0.4
+		if d < reach:
+			_pounce(w)
+			return
+	elif d < reach or w.timer <= 0.0:
+		_arrive(w)
+		return
+	var dir := to / maxf(d, 0.001) + _avoid(w, to)
+	dir.y = 0.0
+	dir = dir.normalized()
+	var next := pos + dir * w.speed * w.mult * delta
+	next.x = clampf(next.x, -SIZE * 0.48, SIZE * 0.48)
+	next.z = clampf(next.z, -SIZE * 0.48, SIZE * 0.48)
+	var g := _height_at(next.x, next.z)
+	if sea_level > -50.0 and not w.winged:
+		if w.aquatic and g > sea_level - 0.6:
+			_arrive(w)
+			return
+		if not w.aquatic and g < sea_level - w.height * 0.3:
+			_arrive(w)
+			return
+	if w.winged and w.mult >= 0.9 and d > 6.0:
+		w.altitude = move_toward(w.altitude, clampf(w.height * 2.0, 2.0, 6.0), delta * 2.0)
+	else:
+		w.altitude = move_toward(w.altitude, 0.0, delta * 2.5)
+	next.y = _ground_for(w, next.x, next.z) + w.altitude
+	w.node.position = next
+	_face(w, dir, delta)
+	w.model.set("pace", w.speed * w.mult / maxf(w.height, 0.4) * 1.2)
+	w.stuck += delta
+	if w.stuck > 2.5:
+		if w.node.position.distance_to(w.last_pos) < 0.5:
+			_arrive(w)
+		w.stuck = 0.0
+		w.last_pos = w.node.position
+
+
+## Steering away from buildings (sliding round them towards the goal) and
+## from other creatures.
+func _avoid(w: Wanderer, to: Vector3) -> Vector3:
+	var p := Vector2(w.node.position.x, w.node.position.z)
+	var goal := Vector2(to.x, to.z)
+	var push := Vector2.ZERO
+	if not w.aquatic and w.altitude < 1.0:
+		for o in obstacles:
+			var c: Vector2 = o[0]
+			var r: float = o[1] + w.radius + 0.3
+			var off := p - c
+			var d := off.length()
+			if d > r + 1.2 or d < 0.001:
+				continue
+			var n := off / d
+			var weight := (r + 1.2 - d) / 1.2
+			var tangent := Vector2(-n.y, n.x)
+			if tangent.dot(goal) < 0.0:
+				tangent = -tangent
+			if n.dot(goal) < 0.3:
+				push += tangent * weight * 1.5
+			push += n * weight * (2.5 if d < r else 0.6)
+	for o: Wanderer in wanderers:
+		if o == w or o.plant or not o.node.visible:
+			continue
+		var off := p - Vector2(o.node.position.x, o.node.position.z)
+		var d := off.length()
+		var r := w.radius + o.radius + 0.2
+		if d < r and d > 0.001:
+			push += off / d * (r - d) / r * 1.5
+	return Vector3(push.x, 0, push.y)
+
+
+func _face(w: Wanderer, dir: Vector3, delta: float) -> void:
+	if Vector2(dir.x, dir.z).length() < 0.01:
+		return
+	w.node.rotation.y = lerp_angle(w.node.rotation.y, atan2(dir.x, dir.z), clampf(delta * 6.0, 0.0, 1.0))
+
+
+## The end of a chase: sometimes the hunter brings its prey down and feeds,
+## otherwise the prey bolts.
+func _pounce(w: Wanderer) -> void:
+	var prey := w.prey
+	w.prey = null
+	if rng.randf() < 0.4:
+		prey.model.rotation.z = PI / 2.0
+		prey.node.position.y = _height_at(prey.node.position.x, prey.node.position.z) + prey.radius * 0.6
+		if prey.label:
+			prey.label.text = "%s\n(fallen)" % prey.name
+		_enter_state(prey, "dead", 18.0, "fallen to a %s" % w.species)
+		_enter_state(w, "eat", rng.randf_range(8.0, 14.0), "feeding on %s" % prey.species)
+	else:
+		var away := prey.node.position - w.node.position
+		away.y = 0.0
+		var to := prey.node.position + away.normalized() * 14.0
+		to.x = clampf(to.x, -SIZE * 0.45, SIZE * 0.45)
+		to.z = clampf(to.z, -SIZE * 0.45, SIZE * 0.45)
+		_go(prey, to, "", 2.6, "escaping a %s" % w.species)
+		_enter_state(w, "rest", rng.randf_range(5.0, 9.0), "missed its prey")
 
 
 func _drive(delta: float) -> void:
@@ -319,39 +1226,60 @@ func _drive(delta: float) -> void:
 		input.x += 1.0
 	var facing := Basis(Vector3.UP, look_yaw)
 	if input != Vector3.ZERO:
-		var move := (facing * input).normalized() * w.speed * 1.6 * delta
-		var next := w.node.position + move
+		var move := (facing * input).normalized()
+		move += _avoid(w, move * 3.0) * 0.5
+		move.y = 0.0
+		var next := w.node.position + move * w.speed * 2.2 * delta
 		next.x = clampf(next.x, -SIZE * 0.48, SIZE * 0.48)
 		next.z = clampf(next.z, -SIZE * 0.48, SIZE * 0.48)
 		var ground := _height_at(next.x, next.z)
-		if w.aquatic and ground > sea_level:
+		if w.aquatic and ground > sea_level - 0.4:
 			next = w.node.position
-		next.y = sea_level - 0.4 if w.aquatic else maxf(ground, sea_level - 0.3)
+		next.y = _ground_for(w, next.x, next.z)
 		w.node.position = next
 	w.node.rotation = Vector3(0, look_yaw + PI, 0)
 	# First person: eyes at the front top of the body.
-	var eye := w.node.position + Vector3(0, w.height * 0.85 + 0.2, 0) + facing * Vector3(0, 0, -0.4)
+	var eye := w.node.position + Vector3(0, w.height * 0.9 + 0.1, 0) + facing * Vector3(0, 0, -w.radius * 0.6)
 	camera.position = eye
 	camera.rotation = Vector3(look_pitch, look_yaw, 0)
 
 
 func _update_hud() -> void:
+	var head := "Region (%d, %d) · %.0f K · %d species here · %s" % [region.x, region.y, info["temperature"], info["populations"].size(), _time_name()]
+	if town:
+		var st: Dictionary = info["settlement"]
+		var folk := 0
+		for w: Wanderer in wanderers:
+			folk += 1 if w.role == "villager" else 0
+		head += "\n%s, a %s of the %s (%s era) · %d townsfolk about" % [st.get("name", "?"), str(st.get("tier", "")).to_lower(), st.get("civ", "?"), st.get("era", "?"), folk]
+	title.text = head
 	if possessed:
 		var sh := possessed.sheet
 		hud.text = "Possessing %s — %s %s · HP %d · AC %d · cost %d\nWASD move · drag to look · Esc to release. Possession is display only: it does not change the world." % [
 			possessed.name, sh["size"], sh["type"].to_lower(), sh["hit_points"], sh["armor_class"], sh["cost"]]
 	else:
-		hud.text = "Click a creature to possess it and see the world through its eyes."
+		hud.text = "Drag to orbit · scroll to zoom · hover a creature to see what it is doing · click one to possess it."
 
 
 func possess(w: Wanderer) -> void:
 	if possessed:
 		possessed.node.visible = true
+		possessed.model.set("pace", 0.2)
+		possessed.state = "idle"
+		possessed.timer = 0.5
 	possessed = w
 	if w:
+		if w.bubble:
+			w.bubble.queue_free()
+			w.bubble = null
+		if w.partner:
+			w.partner.timer = 0.0
+		w.altitude = 0.0
+		w.model.rotation = Vector3.ZERO
 		w.node.visible = false
 		look_yaw = w.node.rotation.y - PI
 		look_pitch = 0.0
+		tooltip.visible = false
 	_update_hud()
 
 
@@ -361,29 +1289,64 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 
 func _on_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		dragging = event.pressed
-		if event.pressed and possessed == null:
-			_pick(event.position)
-	elif event is InputEventMouseMotion and dragging and possessed:
-		look_yaw -= event.relative.x * 0.005
-		look_pitch = clampf(look_pitch - event.relative.y * 0.005, -1.2, 1.2)
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				dragging = true
+				drag_moved = 0.0
+			else:
+				dragging = false
+				if possessed == null and drag_moved < 6.0:
+					_pick(event.position)
+		elif event.pressed and possessed == null and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			orbit_dist = clampf(orbit_dist * (0.9 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.1), 8.0, SIZE * 1.1)
+	elif event is InputEventMouseMotion:
+		if dragging:
+			drag_moved += event.relative.length()
+			if possessed:
+				look_yaw -= event.relative.x * 0.005
+				look_pitch = clampf(look_pitch - event.relative.y * 0.005, -1.2, 1.2)
+			else:
+				orbit_idle = 0.0
+				orbit_yaw -= event.relative.x * 0.006
+				orbit_pitch = clampf(orbit_pitch + event.relative.y * 0.005, 0.08, 1.35)
+		elif possessed == null:
+			_hover(event.position)
 
 
-func _pick(pos: Vector2) -> void:
+func _under(pos: Vector2, plants: bool) -> Wanderer:
 	var from := camera.project_ray_origin(pos)
 	var dir := camera.project_ray_normal(pos)
 	var best: Wanderer = null
-	var best_d := 3.0
+	var best_score := 1e9
 	for w: Wanderer in wanderers:
-		if w.plant:
-			continue  # Plants cannot be possessed.
+		if (w.plant and not plants) or not w.node.visible:
+			continue
 		var c := w.node.position + Vector3(0, w.height * 0.5, 0)
 		var t := (c - from).dot(dir)
+		if t < 0.0:
+			continue
 		var d := (from + dir * t).distance_to(c)
-		if d < best_d:
-			best_d = d
+		var reach := maxf(w.height, w.radius * 2.0) * 0.6 + 0.3
+		if d < reach and t < best_score:
+			best_score = t
 			best = w
+	return best
+
+
+func _hover(pos: Vector2) -> void:
+	var w := _under(pos, true)
+	if w == null:
+		tooltip.visible = false
+		return
+	var kind := "plant" if w.plant else ("%s %s" % [w.sheet["size"], w.role]).to_lower()
+	tooltip.text = "%s (%s)%s" % [w.name, kind, ("\n" + w.activity) if w.activity != "" and not w.plant else ""]
+	tooltip.position = pos + Vector2(16, 12)
+	tooltip.visible = true
+
+
+func _pick(pos: Vector2) -> void:
+	var best := _under(pos, false)
 	if best:
 		possess(best)
 
@@ -403,32 +1366,34 @@ func _tier_name() -> String:
 func _level_town_site() -> void:
 	if not _has_town():
 		return
-	town_radius = TIER_RADIUS.get(_tier_name(), 7.0)
-	var land := sea_level + 0.3
+	town_radius = float(TIER_RADIUS.get(_tier_name(), 7.0)) * town_scale
+	var land := sea_level + 0.4
 	var best := Vector2.ZERO
-	var best_score := -1.0
-	for cz in range(-12, 13, 4):
-		for cx in range(-12, 13, 4):
+	var best_score := -1e9
+	var reach := maxf(SIZE * 0.5 - town_radius - 10.0, 0.0)
+	for cz in range(-6, 7):
+		for cx in range(-6, 7):
+			var c := Vector2(cx, cz) * reach / 6.0
 			var score := 0.0
-			for k in 12:
-				var a := TAU * k / 12.0
-				var h := _height_at(cx + cos(a) * town_radius * 0.8, cz + sin(a) * town_radius * 0.8)
-				score += 1.0 if h >= land else 0.0
-			if _height_at(cx, cz) >= land:
-				score += 3.0
-			score -= Vector2(cx, cz).length() * 0.03
+			for k in 16:
+				var a := TAU * k / 16.0
+				for f in [0.5, 1.0]:
+					var h := _height_at(c.x + cos(a) * town_radius * f, c.y + sin(a) * town_radius * f)
+					score += 1.0 if h >= land else 0.0
+			if _height_at(c.x, c.y) >= land:
+				score += 4.0
+			score -= c.length() * 0.04
 			if score > best_score:
 				best_score = score
-				best = Vector2(cx, cz)
+				best = c
 	var plateau := _height_at(best.x, best.y)
 	if sea_level > -50.0:
-		plateau = maxf(plateau, sea_level + 0.5)
-	var step := SIZE / GRID
-	var flat := town_radius + 6.0
-	var blend := town_radius + 11.0
+		plateau = maxf(plateau, sea_level + 0.6)
+	var flat := town_radius + 7.0 * town_scale
+	var blend := flat + 16.0
 	for z in GRID + 1:
 		for x in GRID + 1:
-			var d := Vector2(x * step - SIZE / 2.0 - best.x, z * step - SIZE / 2.0 - best.y).length()
+			var d := Vector2(x * STEP - EXT - best.x, z * STEP - EXT - best.y).length()
 			if d >= blend:
 				continue
 			var t := 1.0 - smoothstep(flat, blend, d)
@@ -449,7 +1414,7 @@ func _mesh(kind: String) -> Mesh:
 			c.top_radius = 0.5
 			c.bottom_radius = 0.5
 			c.height = 1.0
-			c.radial_segments = 10
+			c.radial_segments = 12
 			c.rings = 1
 			m = c
 		"cone":
@@ -457,7 +1422,7 @@ func _mesh(kind: String) -> Mesh:
 			c.top_radius = 0.0
 			c.bottom_radius = 0.5
 			c.height = 1.0
-			c.radial_segments = 10
+			c.radial_segments = 12
 			c.rings = 1
 			m = c
 		"dome":
@@ -469,6 +1434,13 @@ func _mesh(kind: String) -> Mesh:
 			m = sph
 		"prism":
 			m = PrismMesh.new()
+		"rock":
+			var sph := SphereMesh.new()
+			sph.radius = 0.5
+			sph.height = 1.0
+			sph.radial_segments = 7
+			sph.rings = 4
+			m = sph
 	_meshes[kind] = m
 	return m
 
@@ -502,8 +1474,9 @@ func _part(parent: Node3D, kind: String, mat: Material, base: Vector3, size: Vec
 
 
 ## Many copies of one primitive in a single MultiMesh (huts, posts, wall
-## blocks): `xf` holds one Transform3D per copy.
-func _scatter(kind: String, mat: Material, xf: Array) -> void:
+## blocks): `xf` holds one Transform3D per copy, in town space. Props that
+## are not buildings (crops) are left out of the building count.
+func _scatter(kind: String, mat: Material, xf: Array, count := true) -> void:
 	if xf.is_empty():
 		return
 	var mm := MultiMesh.new()
@@ -516,15 +1489,33 @@ func _scatter(kind: String, mat: Material, xf: Array) -> void:
 	inst.multimesh = mm
 	inst.material_override = mat
 	town.add_child(inst)
-	building_count += xf.size()
+	if count:
+		building_count += xf.size()
 
 
-func _ground(x: float, z: float) -> float:
-	return _height_at(x, z)
+## Town space (offsets from the centre in building units) to world space.
+func _world(p: Vector2) -> Vector3:
+	var wx := town_centre.x + p.x * town_scale
+	var wz := town_centre.z + p.y * town_scale
+	return Vector3(wx, _height_at(wx, wz), wz)
 
 
-func _dry(x: float, z: float, margin := 0.15) -> bool:
+## Ground height under a town-space point, in town space.
+func _ground(p: Vector2) -> float:
+	return _world(p).y / town_scale
+
+
+func _dry_world(x: float, z: float, margin := 0.15) -> bool:
 	return sea_level < -50.0 or _height_at(x, z) > sea_level + margin
+
+
+func _dry(p: Vector2, margin := 0.15) -> bool:
+	var w := _world(p)
+	return _dry_world(w.x, w.z, margin)
+
+
+func _add_site(name: String, local: Vector2, face: Vector2) -> void:
+	sites.append({"name": name, "pos": _world(local), "face": _world(face)})
 
 
 func _build_settlement() -> void:
@@ -535,15 +1526,34 @@ func _build_settlement() -> void:
 	var civ_col := Color.html(str(st.get("color", "c8a050")))
 	town = Node3D.new()
 	town.name = "Town"
+	town.position = Vector3(town_centre.x, 0, town_centre.z)
+	town.scale = Vector3.ONE * town_scale
 	world.add_child(town)
 	var brng := RandomNumberGenerator.new()
 	brng.seed = region.x * 7919 + region.y * 104729 + 17
 	var tier := _tier_name()
+	var r_units := town_radius / town_scale
 	var wood := _mat(Color(0.45, 0.32, 0.2))
 	var stone := _mat(Color(0.58, 0.58, 0.6))
 	var dark := _mat(Color(0.3, 0.3, 0.33))
 	var roof := _mat(civ_col.darkened(0.15))
-	var placed: Array = []  # [Vector2 position, footprint radius]
+	window_mat = StandardMaterial3D.new()
+	window_mat.albedo_color = Color(0.12, 0.08, 0.05)
+	window_mat.emission_enabled = true
+	window_mat.emission = Color(1.0, 0.68, 0.32)
+	var placed: Array = [[Vector2.ZERO, 1.6]]  # [town-space position, footprint radius]; the well.
+
+	# The well in the square, where townsfolk meet.
+	var well := Node3D.new()
+	well.position = Vector3(0, _ground(Vector2.ZERO) - 0.05, 0)
+	town.add_child(well)
+	_part(well, "cyl", stone, Vector3.ZERO, Vector3(1.1, 0.45, 1.1))
+	_part(well, "cyl", _mat(Color(0.15, 0.25, 0.35)), Vector3(0, 0.4, 0), Vector3(0.8, 0.06, 0.8))
+	for sx in [-0.45, 0.45]:
+		_part(well, "box", wood, Vector3(sx, 0.4, 0), Vector3(0.08, 0.9, 0.08))
+	_part(well, "prism", roof, Vector3(0, 1.25, 0), Vector3(1.2, 0.4, 0.9))
+	obstacles.append([Vector2(town_centre.x, town_centre.z), 0.6 * town_scale])
+	_add_site("Well", Vector2(0, 1.1), Vector2.ZERO)
 
 	# Larger buildings first, so the small ones fill the gaps.
 	var core: Array = []
@@ -552,62 +1562,76 @@ func _build_settlement() -> void:
 			core.append(n)
 	core.sort_custom(func(a, b): return FOOTPRINT[a] > FOOTPRINT[b])
 	for n in core:
-		var spot = _find_spot(brng, placed, float(FOOTPRINT[n]), 1.0 if n in ["Temple", "Library", "Market"] else 0.0)
+		var foot: float = FOOTPRINT[n]
+		var spot = _find_spot(brng, placed, foot, r_units, 1.0 if n in ["Temple", "Library", "Market"] else 0.0)
 		if spot == null:
 			continue
-		var root := Node3D.new()
 		var local: Vector2 = spot
-		root.position = Vector3(town_centre.x + local.x, 0, town_centre.z + local.y)
-		root.position.y = _ground(root.position.x, root.position.z) - 0.05
+		var root := Node3D.new()
+		root.position = Vector3(local.x, _ground(local) - 0.05, local.y)
 		root.rotation.y = atan2(-local.x, -local.y) + (brng.randf() - 0.5) * 0.3
 		town.add_child(root)
 		_make_building(n, root, civ_col, wood, stone, dark, roof)
-		placed.append([local, float(FOOTPRINT[n])])
+		placed.append([local, foot])
+		var wc := _world(local)
+		obstacles.append([Vector2(wc.x, wc.z), foot * town_scale * (0.6 if n == "Market" else 0.85)])
+		if SITE_DOING.has(n):
+			# The door faces the square (+Z of the building points at the centre).
+			var inward := -local.normalized() if local.length() > 0.01 else Vector2(0, 1)
+			_add_site(n, local + inward * (foot * 0.9 + 0.5), local)
 
-	# Huts, scattered over what is left.
-	var huts: Array = []
+	# Huts, scattered over what is left, each with a door to the square.
+	var hut_xf: Array = []
 	var tops: Array = []
+	var doors: Array = []
 	if "Huts" in names or tier == "Camp":
 		for k in int(TIER_HUTS.get(tier, 6)):
-			var spot = _find_spot(brng, placed, 1.3, 0.0)
+			var spot = _find_spot(brng, placed, 1.3, r_units, 0.0)
 			if spot == null:
 				break
 			var local: Vector2 = spot
 			placed.append([local, 1.3])
-			var gx := town_centre.x + local.x
-			var gz := town_centre.z + local.y
-			var gy := _ground(gx, gz) - 0.05
-			var yaw := brng.randf() * TAU
+			var gy := _ground(local) - 0.05
+			var inward := -local.normalized()
+			var yaw := atan2(inward.x, inward.y)
 			var sc := 0.9 + brng.randf() * 0.3
 			var b := Basis(Vector3.UP, yaw)
-			huts.append(Transform3D(b.scaled_local(Vector3(1.6, 1.0, 1.6) * sc), Vector3(gx, gy + 0.5 * sc, gz)))
-			tops.append(Transform3D(b.scaled_local(Vector3(2.1, 0.9, 2.1) * sc), Vector3(gx, gy + 1.0 * sc + 0.45 * sc, gz)))
-	_scatter("cyl", wood, huts)
+			hut_xf.append(Transform3D(b.scaled_local(Vector3(1.6, 1.1, 1.6) * sc), Vector3(local.x, gy + 0.55 * sc, local.y)))
+			tops.append(Transform3D(b.scaled_local(Vector3(2.1, 0.9, 2.1) * sc), Vector3(local.x, gy + 1.1 * sc + 0.45 * sc, local.y)))
+			var door := local + inward * 0.8 * sc
+			doors.append(Transform3D(b.scaled_local(Vector3(0.42, 0.72, 0.1) * sc), Vector3(door.x, gy + 0.36 * sc, door.y)))
+			var wc := _world(local)
+			obstacles.append([Vector2(wc.x, wc.z), 0.8 * sc * town_scale])
+			huts.append({"name": "Hut", "pos": _world(local + inward * (0.8 * sc + 0.45)), "face": wc})
+	_scatter("cyl", wood, hut_xf)
 	_scatter("cone", _mat(Color(0.72, 0.6, 0.3).lerp(civ_col, 0.35)), tops)
+	_scatter("box", window_mat, doors)
 
 	if "Palisade" in names:
-		_ring(town_radius + 3.0, 1.9, "cyl", _mat(Color(0.5, 0.36, 0.22)), Vector3(0.28, 1.8, 0.28), 0.0, 0.0)
+		_ring(r_units + 3.0, 1.9, "cyl", _mat(Color(0.5, 0.36, 0.22)), Vector3(0.28, 1.8, 0.28), 0.0, 0.0)
 	if "Walls" in names:
-		_ring(town_radius + 5.0, 3.2, "box", stone, Vector3(0.7, 1.8, 2.4), 0.8, 0.25)
+		_ring(r_units + 5.0, 3.2, "box", stone, Vector3(0.7, 1.8, 2.4), 0.8, 0.25)
 	if "Harbour" in names:
 		_build_harbour(wood)
+	if "Granary" in names or tier != "Camp":
+		_build_fields(brng, r_units + (6.5 if "Walls" in names else 4.5))
+	_paint_paths()
 
 
 ## A free spot within the town's reach, as an offset from its centre.
-func _find_spot(brng: RandomNumberGenerator, placed: Array, foot: float, inner_bias: float) -> Variant:
+func _find_spot(brng: RandomNumberGenerator, placed: Array, foot: float, r_units: float, inner_bias: float) -> Variant:
 	for attempt in 80:
-		var reach := town_radius * (0.55 + 0.45 * minf(1.0, attempt / 40.0)) + attempt * 0.06
+		var reach := r_units * (0.55 + 0.45 * minf(1.0, attempt / 40.0)) + attempt * 0.06
 		var r := reach * sqrt(brng.randf())
 		if inner_bias > 0.0:
 			r *= 0.7
-		r = maxf(r, 0.0)
 		var a := brng.randf() * TAU
 		var p := Vector2(cos(a), sin(a)) * r
-		if not _dry(town_centre.x + p.x, town_centre.z + p.y, 0.3):
+		if not _dry(p, 0.3):
 			continue
 		var ok := true
 		for o in placed:
-			if p.distance_to(o[0]) < foot + float(o[1]) + 0.4:
+			if p.distance_to(o[0]) < foot + float(o[1]) + 0.6:
 				ok = false
 				break
 		if ok:
@@ -616,7 +1640,7 @@ func _find_spot(brng: RandomNumberGenerator, placed: Array, foot: float, inner_b
 
 
 ## A ring of posts or blocks around the town; pieces over water are skipped.
-## `chunk` is the arc length of each piece, `gap` the share left open.
+## `chunk` is the arc length of each piece, `gates` the share left open.
 func _ring(radius: float, chunk: float, kind: String, mat: Material, size: Vector3, gates: float, towers_on: float) -> void:
 	var circ := TAU * radius
 	var n := clampi(int(circ / chunk), 12, 56)
@@ -624,20 +1648,21 @@ func _ring(radius: float, chunk: float, kind: String, mat: Material, size: Vecto
 	var towers: Array = []
 	for i in n:
 		var a := TAU * i / n
-		var x := town_centre.x + cos(a) * radius
-		var z := town_centre.z + sin(a) * radius
-		if not _dry(x, z):
+		var p := Vector2(cos(a), sin(a)) * radius
+		if not _dry(p):
 			continue
-		if gates > 0.0 and i % 7 == 6:
-			continue  # A gap in the wall, a gate.
-		var y := _ground(x, z) - 0.1
+		if i % 7 == 6:
+			continue  # A gap in the wall or fence: a gate.
+		var y := _ground(p) - 0.1
 		var b := Basis(Vector3.UP, -a)
 		var sz := size
 		if kind == "box":
 			sz.z = circ / n * (1.0 - gates * 0.3)
 		if towers_on > 0.0 and i % 4 == 0:
-			towers.append(Transform3D(Basis(Vector3.UP, -a).scaled_local(Vector3(1.3, 2.8, 1.3)), Vector3(x, y + 1.4, z)))
-		xf.append(Transform3D(b.scaled_local(sz), Vector3(x, y + sz.y * 0.5, z)))
+			towers.append(Transform3D(Basis(Vector3.UP, -a).scaled_local(Vector3(1.3, 2.8, 1.3)), Vector3(p.x, y + 1.4, p.y)))
+		xf.append(Transform3D(b.scaled_local(sz), Vector3(p.x, y + sz.y * 0.5, p.y)))
+		var w := _world(p)
+		obstacles.append([Vector2(w.x, w.z), maxf(sz.x, sz.z) * 0.55 * town_scale])
 	_scatter(kind, mat, xf)
 	if towers.size() > 0:
 		_scatter("box", _mat(Color(0.5, 0.5, 0.53)), towers)
@@ -652,29 +1677,114 @@ func _build_harbour(wood: Material) -> void:
 	var best_d := 1e9
 	for k in 24:
 		var a := TAU * k / 24.0
-		for d in range(int(town_radius), 30):
+		for d in range(int(town_radius), int(town_radius) + 40):
 			var x := town_centre.x + cos(a) * d
 			var z := town_centre.z + sin(a) * d
 			if absf(x) > SIZE * 0.47 or absf(z) > SIZE * 0.47:
 				break
-			if _height_at(x, z) < sea_level - 0.2:
+			if _height_at(x, z) < sea_level - 0.3:
 				if d < best_d:
 					best_d = d
 					best_a = a
 				break
 	if best_a < 0.0:
 		return
-	var dir := Vector3(cos(best_a), 0, sin(best_a))
-	var shore := town_centre + dir * (best_d - 1.0)
+	var dir := Vector2(cos(best_a), sin(best_a))
+	var shore := dir * (best_d - 1.0) / town_scale
 	var root := Node3D.new()
-	root.position = Vector3(shore.x, sea_level + 0.25, shore.z)
-	root.rotation.y = atan2(dir.x, dir.z)
+	root.position = Vector3(shore.x, (sea_level + 0.3) / town_scale, shore.y)
+	root.rotation.y = atan2(dir.x, dir.y)
 	town.add_child(root)
 	_part(root, "box", wood, Vector3(0, -0.1, 3.0), Vector3(1.6, 0.15, 6.5))
 	for k in 4:
 		for sx in [-0.7, 0.7]:
-			_part(root, "cyl", wood, Vector3(sx, -1.2, 0.6 + k * 1.7), Vector3(0.18, 1.5, 0.18))
+			_part(root, "cyl", wood, Vector3(sx, -1.5, 0.6 + k * 1.7), Vector3(0.18, 1.5, 0.18))
 	_part(root, "box", _mat(Color(0.6, 0.42, 0.25)), Vector3(0, 0.05, 6.4), Vector3(1.2, 0.5, 1.0))
+	_add_site("Harbour", shore - dir * 0.8, shore + dir * 3.0)
+
+
+## Fields just outside the town: rows of crops on flat dry land, where
+## townsfolk work by day.
+func _build_fields(brng: RandomNumberGenerator, ring: float) -> void:
+	var crops: Array = []
+	var ripe := Color(0.78, 0.66, 0.25) if brng.randf() < 0.5 else Color(0.36, 0.55, 0.2)
+	var plots := 0
+	for attempt in 24:
+		if plots >= 3:
+			break
+		var a := brng.randf() * TAU
+		var c := Vector2(cos(a), sin(a)) * (ring + 3.0)
+		var cw := _world(c)
+		if absf(cw.x) > SIZE * 0.44 or absf(cw.z) > SIZE * 0.44 or not _dry(c, 0.5) or _slope_at(cw.x, cw.z) > 0.15:
+			continue
+		var clash := false
+		for s in sites:
+			if s["name"] == "Field" and (s["pos"] as Vector3).distance_to(cw) < 8.0 * town_scale:
+				clash = true
+		if clash or _blocked(Vector2(cw.x, cw.z), 2.0 * town_scale):
+			continue
+		plots += 1
+		var along := Vector2(-sin(a), cos(a))
+		var out := Vector2(cos(a), sin(a))
+		for row in 5:
+			for k in 10:
+				var p := c + along * (k - 4.5) * 0.45 + out * (row - 2) * 0.55
+				var gy := _ground(p)
+				var h := 0.35 + brng.randf() * 0.15
+				crops.append(Transform3D(Basis(Vector3.UP, a).scaled_local(Vector3(0.22, h, 0.22)), Vector3(p.x, gy + h * 0.5, p.y)))
+		_add_site("Field", c - out * 1.6, c)
+		_paint_rect(cw, along, out, 2.6 * town_scale, 1.6 * town_scale, 0.85)
+	_scatter("cone", _mat(ripe), crops, false)
+
+
+func _trodden_at(x: float, z: float) -> float:
+	if trodden == null:
+		return 0.0
+	var px := clampi(int((x / (2.0 * EXT) + 0.5) * trodden.get_width()), 0, trodden.get_width() - 1)
+	var pz := clampi(int((z / (2.0 * EXT) + 0.5) * trodden.get_height()), 0, trodden.get_height() - 1)
+	return trodden.get_pixel(px, pz).r
+
+
+func _paint(x: float, z: float, radius: float, strength: float) -> void:
+	var w := trodden.get_width()
+	var cx := (x / (2.0 * EXT) + 0.5) * w
+	var cz := (z / (2.0 * EXT) + 0.5) * w
+	var r := radius / (2.0 * EXT) * w
+	for pz in range(int(cz - r - 1), int(cz + r + 2)):
+		for px in range(int(cx - r - 1), int(cx + r + 2)):
+			if px < 0 or pz < 0 or px >= w or pz >= w:
+				continue
+			var d := Vector2(px + 0.5 - cx, pz + 0.5 - cz).length()
+			var v := strength * (1.0 - smoothstep(r * 0.5, r + 0.5, d))
+			if v > trodden.get_pixel(px, pz).r:
+				trodden.set_pixel(px, pz, Color(v, v, v))
+
+
+func _paint_line(a: Vector3, b: Vector3, width: float, strength: float) -> void:
+	var n := int(a.distance_to(b) / 0.6) + 1
+	for i in n + 1:
+		var p := a.lerp(b, float(i) / n)
+		_paint(p.x, p.z, width, strength)
+
+
+func _paint_rect(c: Vector3, along: Vector2, out: Vector2, half_a: float, half_o: float, strength: float) -> void:
+	var s := 0.0
+	while s <= 1.0:
+		var o := -half_o + 2.0 * half_o * s
+		var p := c + Vector3(out.x, 0, out.y) * o
+		_paint_line(p - Vector3(along.x, 0, along.y) * half_a, p + Vector3(along.x, 0, along.y) * half_a, 0.8, strength)
+		s += 0.1
+
+
+## Beaten earth: the square, and paths from it to every door and field.
+func _paint_paths() -> void:
+	_paint(town_centre.x, town_centre.z, 3.2 * town_scale, 0.9)
+	for s in sites + huts:
+		_paint_line(town_centre, s["pos"], 0.9, 0.75)
+	var tex := ImageTexture.create_from_image(trodden)
+	var terrain := world.get_node_or_null("Terrain") as MeshInstance3D
+	if terrain:
+		(terrain.material_override as ShaderMaterial).set_shader_parameter("trodden", tex)
 
 
 func _make_building(n: String, root: Node3D, civ: Color, wood: Material, stone: Material, dark: Material, roof: Material) -> void:
@@ -683,6 +1793,7 @@ func _make_building(n: String, root: Node3D, civ: Color, wood: Material, stone: 
 		"Longhouse":
 			_part(root, "box", wood, Vector3.ZERO, Vector3(1.9, 1.3, 5.0))
 			_part(root, "prism", roof, Vector3(0, 1.3, 0), Vector3(2.4, 1.0, 5.3))
+			_part(root, "box", window_mat, Vector3(0, 0, 2.51), Vector3(0.6, 0.85, 0.05))
 		"Workshop", "Forge":
 			var forge := n == "Forge"
 			_part(root, "box", dark if forge else wood, Vector3.ZERO, Vector3(2.6, 1.6, 2.6))
@@ -691,9 +1802,15 @@ func _make_building(n: String, root: Node3D, civ: Color, wood: Material, stone: 
 			if forge:
 				_part(root, "cyl", _mat(Color(1.0, 0.45, 0.1), 2.5), Vector3(0.8, 3.3, 0.8), Vector3(0.4, 0.15, 0.4))
 				_part(root, "box", _mat(Color(1.0, 0.4, 0.1), 2.0), Vector3(0, 0.2, 1.31), Vector3(1.0, 0.7, 0.05))
+				_part(root, "box", dark, Vector3(0.4, 0, 1.9), Vector3(0.5, 0.45, 0.35))  # Anvil.
+			else:
+				_part(root, "box", window_mat, Vector3(0, 0, 1.31), Vector3(0.6, 0.9, 0.05))
+				_part(root, "box", wood, Vector3(-0.8, 0, 1.7), Vector3(0.5, 0.45, 0.5))  # Crates.
+				_part(root, "box", wood, Vector3(-0.2, 0, 1.8), Vector3(0.4, 0.35, 0.4))
 		"Granary":
 			_part(root, "cyl", wood, Vector3.ZERO, Vector3(2.2, 1.6, 2.2))
 			_part(root, "dome", _mat(Color(0.75, 0.62, 0.3)), Vector3(0, 1.4, 0), Vector3(2.4, 1.3, 2.4))
+			_part(root, "box", window_mat, Vector3(0, 0, 1.08), Vector3(0.55, 0.8, 0.05))
 		"Mine":
 			_part(root, "dome", _mat(Color(0.36, 0.28, 0.2)), Vector3(0, -2.0, 0), Vector3(4.2, 4.0, 4.2))
 			_part(root, "box", _mat(Color(0.05, 0.04, 0.04)), Vector3(0, 0, 1.55), Vector3(1.2, 1.0, 0.5))
@@ -711,6 +1828,7 @@ func _make_building(n: String, root: Node3D, civ: Color, wood: Material, stone: 
 		"Library":
 			_part(root, "box", pale, Vector3.ZERO, Vector3(3.0, 0.3, 2.8))
 			_part(root, "box", pale, Vector3(0, 0.3, -0.2), Vector3(2.6, 2.0, 2.0))
+			_part(root, "box", window_mat, Vector3(0, 0.3, 0.81), Vector3(0.7, 1.2, 0.05))
 			for k in 4:
 				_part(root, "cyl", pale, Vector3(-1.1 + k * 0.73, 0.3, 1.0), Vector3(0.28, 2.0, 0.28))
 			_part(root, "prism", roof, Vector3(0, 2.3, 0), Vector3(3.2, 0.9, 2.8))
@@ -727,6 +1845,7 @@ func _make_building(n: String, root: Node3D, civ: Color, wood: Material, stone: 
 			_part(root, "box", pale, Vector3.ZERO, Vector3(5.4, 0.4, 5.4))
 			_part(root, "box", pale, Vector3(0, 0.4, 0), Vector3(4.4, 0.4, 4.4))
 			_part(root, "box", pale, Vector3(0, 0.8, 0), Vector3(3.2, 1.9, 3.2))
+			_part(root, "box", window_mat, Vector3(0, 0.8, 1.61), Vector3(0.8, 1.3, 0.05))
 			_part(root, "cone", roof, Vector3(0, 2.7, 0), Vector3(1.8, 2.8, 1.8))
 		"Wizard's tower":
 			_part(root, "cyl", _mat(Color(0.5, 0.5, 0.62)), Vector3.ZERO, Vector3(1.3, 6.5, 1.3))
@@ -742,6 +1861,7 @@ func _make_building(n: String, root: Node3D, civ: Color, wood: Material, stone: 
 		"Factory":
 			_part(root, "box", _mat(Color(0.4, 0.38, 0.38)), Vector3.ZERO, Vector3(4.5, 2.5, 3.5))
 			_part(root, "box", dark, Vector3(0, 2.5, 0), Vector3(4.7, 0.2, 3.7))
+			_part(root, "box", window_mat, Vector3(0, 0, 1.76), Vector3(1.2, 1.4, 0.05))
 			for k in 2:
 				_part(root, "cyl", _mat(Color(0.5, 0.28, 0.22)), Vector3(-1.3 + k * 2.0, 2.7, -0.9), Vector3(0.8, 4.5, 0.8))
 				_part(root, "cyl", dark, Vector3(-1.3 + k * 2.0, 7.0, -0.9), Vector3(0.95, 0.3, 0.95))

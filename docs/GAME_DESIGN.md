@@ -295,9 +295,9 @@ Not all life has to come from the world's own chemistry. Some beings come from o
     | Factory | Industrial, city or larger |
 
   - **Effects:** walls and barracks each add 10% to a people's strength in that settlement; libraries and markets each add 10% to learning, up to 50%.
-  - The viewer shows a settlement's tier and buildings in the region panel and the Civilizations tab; the region visit draws them on a plateau of dry land (huts by tier, walls and palisades, forges with glowing chimneys, temples, towers and the rest, about 30 pieces for a village and 120 for a town); the globe sizes its pins by tier and gives cities a base.
+  - The viewer shows a settlement's tier and buildings in the region panel and the Civilizations tab; the region visit draws them on a plateau of dry land (huts by tier with doors facing a central square and well, walls and palisades, forges with glowing chimneys, temples, towers, fields of crops outside the town and beaten-earth paths between them, about 30 pieces for a village and 120 for a town). A people builds to its own size: buildings are scaled so a door fits the species that built them (a medium people's hut door is about 2 m high, a large people's about 3 m); the globe sizes its pins by tier and gives cities a base.
 
-![A town in the region visit: huts, temple, forge, granary, mine, palisade and walls](images/town-visit.png)
+![A town in the region visit: townsfolk at the well, huts with doors to the square, temple, forge, mine and longhouse on beaten-earth paths](images/town-visit.png)
 
 ### 4.6 Laws of Reality
 
@@ -409,6 +409,23 @@ Laws can stack. Their interactions are the main source of emergent variety.
 - Tools: add substance, heat/cool, adjust pressure, adjust orbit/rotation/gravity, add/remove moons, meteor/seed delivery, set law, accelerate time, bless/curse, observe (tracking overlays: population, chemistry, mana, civilizations).
 - **Possession:** select any individual at L2 to drop into L3 first-person control. The creature's actual stats and abilities apply. Possession can be used for exploration, guiding a civilization, or testing a future champion.
   - **Prototype (Phase 2):** from the region inspector, **Visit this region** builds a ground-level scene from the region's simulated state: terrain with seas sized to its liquids (lava glows on hot worlds, ice whitens cold ones), sky tinted by the atmosphere, and creatures from its populations (more biomass, more creatures; swimmers stay in the water) with its named individuals labelled. Click one to possess it: first-person view from its eyes, WASD to move, drag to look, its character sheet in the HUD. Following the camera rule (§4.8), the visit is display only; a test checks the world's state hash is unchanged.
+  - **Visit revision (owner feedback: creatures out of scale, nothing interacting, plain ground):**
+    - **Scale in metres.** By size class a creature is Tiny 0.4 m, Small 0.9, Medium 1.7, Large 2.7, Huge 4.8 or Gargantuan 8 m (height if upright, length otherwise). Plants are 1.6 times taller, so a large bloom is a tree. Walking speed comes from the sheet's 5e speed (30 ft a round is 1.5 m/s). The visit covers 140 m of ground (more when a town of giants needs the room), and the terrain reaches beyond it into haze so the region has no hard edge.
+    - **Ground.** A terrain shader blends the following by slope, height above the sea and the region's climate:
+      - grass tinted by the region's dominant plant;
+      - bare earth where little grows;
+      - sand at the shore;
+      - rock on slopes;
+      - snow on cold worlds and cold hilltops;
+      - black basalt with glowing cracks on molten ones.
+      Grass tufts grow in proportion to the region's plant biomass, and rocks are scattered about. Water is clear in the shallows, darker in the depths and foams at the shore. A day passes in 4 minutes, with shadows, dusk and night.
+    - **Life (display only).**
+      - **Townsfolk** are the settlement's own species, numbered by its population. Each has a home hut and keeps a daily round: work at the forge, workshop, granary, mine, temple, harbour or fields; meet others at the well, market or longhouse and talk; go in and out of their huts. At night they go home and the doorways glow.
+      - **Grazers** keep together in herds that drift, graze, nuzzle, and bolt from hunters (wild ones also shy away from people).
+      - **Hunters** prowl outside the town, chase grazers, and sometimes bring one down and feed.
+      - **Swimmers** keep to the water.
+      - **Winged creatures** fly when travelling.
+      - Everyone walks around buildings and each other. Hovering over a creature shows what it is doing. Named individuals' labels show it too.
 
 ![Region visit and first-person possession](images/region-visit-possession.png)
 
@@ -621,7 +638,12 @@ Cost  = clamp(round(Power × 0.85), 1, 1000)
 
 A local, offline prototype (`game-client/arena.gd`), reached from the viewer's **Enter the arena** button:
 - **Teams:** your champions come from your world: its strongest distinct species (any number of copies) and its most renowned named individuals (one each, marked ★). The rival's come from a different world that evolves on the spot (Earth-like, frozen moon or sulfur world, random seed). Both sides pick under the same cost cap (25, 50, 100, 250 or 1000), up to 40 units a side; auto-pick fills a team greedily.
-- **Combat:** the character sheets in real time. One 5e round is 1.5 s of arena time. Units walk to the nearest enemy (keeping apart from allies) and attack with their sheet's attacks: d20 + to-hit against armour class, critical hits on 20, damage dice, resistances, immunities and vulnerabilities. Breath weapons hit the nearest enemies in front, with a save for half, and recharge on 5–6. Regeneration and pack tactics apply.
+- **Combat:** the character sheets in real time. One 5e round is 1.5 s of arena time; offline, the arena plays at half speed by default so a round takes 3 s to watch (pause, ×½, ×1, ×2 and ×4 buttons; online, the server sets the pace).
+- **Readability (owner feedback: battles too quick to follow):**
+  - Units have team-coloured health bars and ground rings, and a header shows each side's standing units and surviving cost.
+  - Attackers lunge and victims flash, with floating damage and healing numbers. Ranged hits and breath weapons draw tracers.
+  - The fallen topple and fade, and a kill feed lists the last kills.
+  - Large armies keep simple shapes but still flash, shrink and topple. Units walk to the nearest enemy (keeping apart from allies) and attack with their sheet's attacks: d20 + to-hit against armour class, critical hits on 20, damage dice, resistances, immunities and vulnerabilities. Breath weapons hit the nearest enemies in front, with a save for half, and recharge on 5–6. Regeneration and pack tactics apply.
 - **Possession:** click one of your units to take control: WASD moves it relative to the follow camera, Space attacks, Q uses its breath weapon, Esc releases it.
 - **Result:** the battle ends when one side is wiped out. The log notes which champions fell; permadeath and looting are not yet applied to the world.
 - **Deterministic core:** the match runs in the Rust core (`sim-core/src/arena.rs`, exposed to Godot as `ArenaSim`) in fixed 0.1 s steps with fixed-point positions. Godot only renders it and forwards player commands (possess, steer, attack, breathe), which are logged with the step they applied on. `Arena::replay` rebuilds a match from the two rosters, the seed and the command log and reaches the same result: the basis for server authority (§6.3). Tested.
@@ -826,6 +848,7 @@ Procedurally generated champions plus player-written laws can produce degenerate
 | — | Globe detail | The 3D globe must be informative: it shows each people's lands and borders, settlements and capitals, city lights at night, wars, renowned individuals, forests, the map overlays, and lets the player pick and hover regions; moons are textured from their own worlds. Detail is added only where it costs no performance |
 | — | Refit cost | Refitting looted gear takes grade + 1 years and a Crafting-era people; no Essence (proposed by Claude, owner may revise) |
 | — | Arena rules | Win by wiping out the enemy or holding the central objective alone; procedurally generated biome battlefields from worlds; matches capped at 10 minutes, after which the side with more surviving cost wins (draw within 5%) (§6.1) |
+| — | Region visit and arena readability | The region visit is in real-world scale (medium creature 1.7 m, buildings sized to their builders), has climate-driven ground, water and a day cycle, and its creatures live display-only routines (townsfolk work, talk and go home; grazers herd and flee; hunters stalk). The arena plays at half speed offline by default with health bars, damage numbers, lunges, death effects, a kill feed and a side-by-side header (§4.7, §6.1a) |
 | — | Ecology | Flora and fauna form a real food chain: plants hold the light niche, animals with nervous systems graze plants instead of photosynthesising, predators eat animals |
 | — | Humanoid sapients | Sapience biases evolution toward a humanoid body plan (two legs, two arms, a head with eyes) in the simulation itself |
 | — | Next work order | Civilizations and equipment together; then re-check cost balance; then the arena revisit, Essence spending, and final art |
