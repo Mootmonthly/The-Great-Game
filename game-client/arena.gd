@@ -269,6 +269,9 @@ func _build_scene() -> void:
 	_overview_camera()
 
 
+const Kit := preload("res://building_kit.gd")
+const PATCH_SHADER := preload("res://shaders/stylized_patch.gdshader")
+
 const GROUND_COLORS := {
 	"Open field": Color(0.55, 0.47, 0.36), "Plains": Color(0.42, 0.55, 0.28), "Forest": Color(0.3, 0.42, 0.22),
 	"Archipelago": Color(0.8, 0.74, 0.5), "Ice field": Color(0.82, 0.88, 0.92), "Lava field": Color(0.22, 0.18, 0.17),
@@ -276,11 +279,8 @@ const GROUND_COLORS := {
 }
 
 
-func _toon(color: Color) -> ShaderMaterial:
-	var m := ShaderMaterial.new()
-	m.shader = preload("res://shaders/creature.gdshader")
-	m.set_shader_parameter("base_color", color)
-	return m
+func _toon(color: Color) -> Material:
+	return Kit.material(color, "plain")
 
 
 func _flat(color: Color, alpha := 1.0, glow := 0.0) -> StandardMaterial3D:
@@ -311,6 +311,45 @@ func _disc(parent: Node3D, pos: Vector3, radius: float, height: float, mat: Mate
 	return n
 
 
+## A MultiMesh of `count` copies of `mesh` (positions/scales given by `place`).
+func _scatter(mesh: Mesh, xforms: Array) -> MultiMeshInstance3D:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = xforms.size()
+	for i in xforms.size():
+		mm.set_instance_transform(i, xforms[i])
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	return mi
+
+
+func _xf(pos: Vector3, yaw: float, scale: Vector3) -> Transform3D:
+	return Transform3D(Basis(Vector3.UP, yaw).scaled(scale), pos)
+
+
+func _patch_material(mode: int, radius: float, seed_v: float, col_a: Color, col_b: Color, col_edge: Color, alpha := 1.0) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = PATCH_SHADER
+	m.set_shader_parameter("mode", mode)
+	m.set_shader_parameter("radius", radius)
+	m.set_shader_parameter("seed", seed_v)
+	m.set_shader_parameter("col_a", col_a)
+	m.set_shader_parameter("col_b", col_b)
+	m.set_shader_parameter("col_edge", col_edge)
+	m.set_shader_parameter("alpha", alpha)
+	return m
+
+
+func _patch_disc(pos: Vector3, pr: float, mat: Material) -> void:
+	var n := MeshInstance3D.new()
+	n.mesh = Kit.disc_mesh(pr * 1.14, 40)
+	n.material_override = mat
+	n.position = pos
+	n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	field_root.add_child(n)
+
+
 ## Ground disc, edge pillars, terrain patches and the shrine for `f` (the
 ## field_json of a match; empty for the default open arena).
 func _build_field(f: Dictionary) -> void:
@@ -321,26 +360,59 @@ func _build_field(f: Dictionary) -> void:
 	field = f
 	field_radius = float(f.get("radius", ARENA_RADIUS))
 	var r := field_radius
-	var floor_mesh := CylinderMesh.new()
-	floor_mesh.top_radius = r + 2.0
-	floor_mesh.bottom_radius = r + 2.5
-	floor_mesh.height = 0.6
-	floor_mesh.radial_segments = 96
+	var biome := str(f.get("biome", "Open field"))
+	var ground_col: Color = GROUND_COLORS.get(biome, GROUND_COLORS["Open field"])
 	var floor_node := MeshInstance3D.new()
-	floor_node.mesh = floor_mesh
-	floor_node.position.y = -0.3
-	floor_node.material_override = _toon(GROUND_COLORS.get(str(f.get("biome", "Open field")), GROUND_COLORS["Open field"]))
+	floor_node.mesh = Kit.ground_mesh(r)
+	floor_node.material_override = Kit.material(ground_col, "ground")
 	field_root.add_child(floor_node)
-	# A ring of pillars marks the edge.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(biome) + int(r * 10.0)
+	# A ring of carved stone pillars marks the edge, with boulders in between.
 	var pillars := 16 if r < 24.0 else 32
+	var pillar_mesh := Kit.scenery("Pillar")
 	for i in pillars:
 		var a := TAU * i / pillars
 		var p := Vector3(cos(a) * (r + 1.2), 0, sin(a) * (r + 1.2))
-		var pillar := _disc(field_root, p, 0.45, 3.0, _toon(Color(0.7, 0.66, 0.6)), 0.78)
+		var pillar := MeshInstance3D.new()
+		pillar.mesh = pillar_mesh
+		pillar.position = p
+		pillar.rotation.y = -a + rng.randf_range(-0.2, 0.2)
+		pillar.scale = Vector3.ONE * rng.randf_range(0.92, 1.08)
 		pillar.name = "Pillar%d" % i
+		field_root.add_child(pillar)
+	var rocks: Array = []
+	for i in pillars:
+		var a2 := TAU * (i + 0.5) / pillars
+		var d := r + 1.2 + rng.randf_range(-0.2, 0.3)
+		rocks.append(_xf(Vector3(cos(a2) * d, 0, sin(a2) * d), rng.randf() * TAU, Vector3.ONE * rng.randf_range(0.55, 1.0)))
+	field_root.add_child(_scatter(Kit.scenery("Boulder", 3), rocks))
+	# Biome ground clutter: grass tufts, or pebbles on bare ground.
+	var grassy := biome == "Open field" or biome == "Plains" or biome == "Forest"
+	var clutter: Array = []
+	for i in clampi(int(r * r * 0.45), 60, 420):
+		var ang := rng.randf() * TAU
+		var dist := sqrt(rng.randf()) * (r + 1.6)
+		var cp := Vector3(cos(ang) * dist, 0, sin(ang) * dist)
+		var covered := false
+		for patch in f.get("patches", []):
+			var pd := Vector2(cp.x - float(patch["x"]), cp.z - float(patch["z"])).length()
+			covered = covered or pd < float(patch["radius"]) * 1.2
+		if covered:
+			continue
+		clutter.append(_xf(cp, rng.randf() * TAU, Vector3.ONE * rng.randf_range(0.7, 1.3)))
+	if grassy:
+		var tuft_mi := _scatter(Kit.scenery("Tuft", 1), clutter)
+		tuft_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		field_root.add_child(tuft_mi)
+	else:
+		var peb_mi := _scatter(Kit.scenery("Pebble", 2), clutter)
+		peb_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		field_root.add_child(peb_mi)
 	for patch in f.get("patches", []):
 		_build_patch(patch)
-	# The central shrine.
+	# The central shrine: stone plinth and rune pillar around a glowing gem; the
+	# ring and gem take the colour of the side holding it.
 	var orad := float(f.get("objective_radius", 3.0))
 	shrine_ring_mat = _flat(Color(0.8, 0.8, 0.75), 0.9)
 	shrine_ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -353,8 +425,22 @@ func _build_field(f: Dictionary) -> void:
 	ring.material_override = shrine_ring_mat
 	ring.position.y = 0.1
 	field_root.add_child(ring)
+	var base := MeshInstance3D.new()
+	base.mesh = Kit.scenery("ShrineBase")
+	base.scale = Vector3.ONE * 1.25
+	field_root.add_child(base)
 	shrine_pillar_mat = _flat(Color(0.8, 0.8, 0.75), 1.0, 0.4)
-	_disc(field_root, Vector3.ZERO, 0.4, 1.8, shrine_pillar_mat, 0.6)
+	shrine_pillar_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var gem := MeshInstance3D.new()
+	gem.mesh = Kit.scenery("Gem")
+	gem.material_override = shrine_pillar_mat
+	gem.position = Vector3(0, 2.3, 0)
+	field_root.add_child(gem)
+	var marks: Array = []
+	for i in 8:
+		var am := TAU * i / 8.0
+		marks.append(_xf(Vector3(cos(am) * (orad + 0.45), 0, sin(am) * (orad + 0.45)), -am, Vector3.ONE * 0.3))
+	field_root.add_child(_scatter(Kit.scenery("Pillar"), marks))
 	shrine_tint = -2
 	if camera:
 		_overview_camera()
@@ -363,37 +449,45 @@ func _build_field(f: Dictionary) -> void:
 func _build_patch(patch: Dictionary) -> void:
 	var pos := Vector3(float(patch["x"]), 0, float(patch["z"]))
 	var pr := float(patch["radius"])
-	match str(patch["ground"]):
+	var seed_v := float(hash(Vector2(pos.x, pos.z)) % 997)
+	var ground := str(patch["ground"])
+	match ground:
 		"water":
-			_disc(field_root, pos + Vector3(0, 0.03, 0), pr, 0.04, _flat(Color(0.2, 0.45, 0.9), 0.55))
+			_patch_disc(pos + Vector3(0, 0.03, 0), pr, _patch_material(0, pr, seed_v, Color(0.1, 0.36, 0.78), Color(0.35, 0.72, 0.95), Color(0.92, 0.98, 1.0), 0.88))
 		"lava":
-			_disc(field_root, pos + Vector3(0, 0.04, 0), pr, 0.05, _flat(Color(1.0, 0.45, 0.05), 1.0, 2.0))
+			_patch_disc(pos + Vector3(0, 0.04, 0), pr, _patch_material(1, pr, seed_v, Color(0.9, 0.22, 0.04), Color(1.0, 0.55, 0.1), Color(0.1, 0.06, 0.05)))
 		"ice":
-			_disc(field_root, pos + Vector3(0, 0.03, 0), pr, 0.04, _flat(Color(0.85, 0.94, 1.0), 0.9))
+			_patch_disc(pos + Vector3(0, 0.03, 0), pr, _patch_material(2, pr, seed_v, Color(0.62, 0.82, 0.96), Color(0.86, 0.96, 1.0), Color(1.0, 1.0, 1.0)))
 		"trees":
-			_disc(field_root, pos + Vector3(0, 0.02, 0), pr, 0.03, _flat(Color(0.1, 0.28, 0.1)))
+			_patch_disc(pos + Vector3(0, 0.02, 0), pr, _patch_material(3, pr, seed_v, Color(0.14, 0.36, 0.14), Color(0.24, 0.5, 0.2), Color(0.36, 0.55, 0.2)))
 			var trng := RandomNumberGenerator.new()
 			trng.seed = hash(Vector2(pos.x, pos.z)) + 7
-			var trunk_mat := _toon(Color(0.4, 0.27, 0.15))
-			var leaf_mat := _toon(Color(0.12, 0.38, 0.14))
+			var pines: Array = []
+			var oaks: Array = []
 			for i in clampi(int(pr * pr * 0.35), 3, 24):
 				var ang := trng.randf() * TAU
 				var dist := sqrt(trng.randf()) * pr * 0.9
 				var tp := pos + Vector3(cos(ang) * dist, 0, sin(ang) * dist)
-				var h := 1.4 + trng.randf() * 0.8
-				_disc(field_root, tp, 0.12, h * 0.4, trunk_mat)
-				var cone := CylinderMesh.new()
-				cone.top_radius = 0.0
-				cone.bottom_radius = 0.55 + trng.randf() * 0.2
-				cone.height = h
-				cone.radial_segments = 8
-				var cn := MeshInstance3D.new()
-				cn.mesh = cone
-				cn.material_override = leaf_mat
-				cn.position = tp + Vector3(0, h * 0.4 + h * 0.5, 0)
-				field_root.add_child(cn)
+				var sc := trng.randf_range(0.55, 0.78)
+				var t := _xf(tp, trng.randf() * TAU, Vector3(sc, sc * trng.randf_range(0.95, 1.15), sc))
+				if trng.randf() < 0.6:
+					pines.append(t)
+				else:
+					oaks.append(t)
+			if pines.size() > 0:
+				field_root.add_child(_scatter(Kit.scenery("Pine", 1), pines))
+			if oaks.size() > 0:
+				field_root.add_child(_scatter(Kit.scenery("Oak", 1), oaks))
 		"rock":
-			_disc(field_root, pos, pr, 1.6, _toon(Color(0.5, 0.5, 0.52)), 0.85)
+			var rn := MeshInstance3D.new()
+			rn.mesh = Kit.rock_cluster(pr, int(seed_v) + 5)
+			rn.position = pos
+			field_root.add_child(rn)
+	if ground == "water" or ground == "lava" or ground == "ice":
+		var rim := MeshInstance3D.new()
+		rim.mesh = Kit.patch_rim(ground, pr, int(seed_v) + 11)
+		rim.position = pos
+		field_root.add_child(rim)
 
 
 ## Tints the shrine with the colour of the side holding it.
@@ -787,7 +881,7 @@ func _spawn(entry: Dictionary, team: int, simple := false) -> void:
 		_simple_count[team] += 1
 		units.append(u)
 		return
-	var model := CreatureBuilder.build(entry["detail"])
+	var model := CreatureBuilder.build(entry["detail"], entry.get("sheet", {}))
 	var box := CreatureBuilder.bounds(model)
 	var extent: float = max(box.size.x, max(box.size.y, box.size.z))
 	var s: float = SIZE_SCALE.get(size, 1.0) / max(extent, 0.01)

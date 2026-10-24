@@ -260,6 +260,10 @@ pub struct CharacterSheet {
     /// Gear from the being's civilization, described.
     #[serde(default)]
     pub equipment: Vec<String>,
+    /// Each piece of gear as (name, slot), for drawing it on the body.
+    /// Older saved sheets have none.
+    #[serde(default)]
+    pub gear: Vec<(String, String)>,
     /// The fantasy archetype it matches, if any (§4.4), e.g. "Dragon".
     #[serde(default)]
     pub archetype: Option<String>,
@@ -1062,6 +1066,7 @@ fn build(world: &World, s: &Species, ind: Option<&Individual>) -> CharacterSheet
         frighten_dc: otherworldly.then(|| 8 + proficiency + modifier(charisma)),
         class: class.map(|c| format!("{} {level}", c.name())),
         equipment: gear.iter().map(|g| g.describe()).collect(),
+        gear: gear.iter().map(|g| (g.name.clone(), format!("{:?}", g.slot).to_lowercase())).collect(),
         archetype: None,
         cost: CostBreakdown::default(),
     };

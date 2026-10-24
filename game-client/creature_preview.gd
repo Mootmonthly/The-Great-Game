@@ -47,13 +47,14 @@ func _ready() -> void:
 	viewport.add_child(camera)
 
 
-func show_species(detail: Dictionary) -> void:
-	if int(detail["id"]) == shown_id:
+func show_species(detail: Dictionary, sheet: Dictionary = {}) -> void:
+	var key := hash([int(detail["id"]), sheet.get("gear", [])])
+	if key == shown_id:
 		return
-	shown_id = int(detail["id"])
+	shown_id = key
 	if creature:
 		creature.queue_free()
-	creature = CreatureBuilder.build(detail)
+	creature = CreatureBuilder.build(detail, sheet)
 	stage.add_child(creature)
 	# Fit the model to the turntable.
 	var box := CreatureBuilder.bounds(creature)
