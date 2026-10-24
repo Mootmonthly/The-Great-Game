@@ -69,29 +69,50 @@ fn walls_make_a_settlement_harder_to_take_and_replay_holds() {
     }
 }
 
-/// Big settlements found daughter villages in their own region: a region
-/// can hold several settlements, all of one people, whose shares of that
-/// people add up to one (docs/GAME_DESIGN.md §4.5).
+/// Big settlements found daughter villages in their own region, and
+/// neighbouring peoples settle beside each other: a region holds up to
+/// MAX_PER_REGION settlements, and the shares of each species' people there
+/// add up to one across every kingdom (docs/GAME_DESIGN.md §4.5).
 #[test]
-fn regions_hold_several_settlements_of_one_people() {
+fn regions_hold_several_settlements() {
     let w = settled("earthlike", 1, 4800);
+    let mut crowded = 0;
+    for r in 0..sim_core::world::REGION_COUNT {
+        let here = w.settlements_at(r);
+        assert!(here.len() <= sim_core::civ::MAX_PER_REGION);
+        crowded += (here.len() > 1) as usize;
+        let mut species: Vec<u32> = here.iter().map(|(c, _)| c.species).collect();
+        species.sort_unstable();
+        species.dedup();
+        for sp in species {
+            let total = here.iter().filter(|(c, _)| c.species == sp).fold(Fx::ZERO, |a, (_, s)| a + s.share);
+            assert!((total.to_f64() - 1.0).abs() < 0.01, "shares of a species in a region add up to one: {}", total.to_f64());
+        }
+    }
+    assert!(crowded > 0, "some region holds more than one settlement");
+}
+
+/// Kingdoms that share land fall out, allies join each other's wars, and a
+/// region can be held by more than one people.
+#[test]
+fn kingdoms_share_regions_and_ally() {
     let mut shared = 0;
-    for c in w.living_civs() {
-        let mut regions: Vec<usize> = c.settlements.iter().map(|s| s.region).collect();
-        regions.sort_unstable();
-        regions.dedup();
-        for r in regions {
-            let here: Vec<_> = c.settlements.iter().filter(|s| s.region == r).collect();
-            assert!(here.len() <= sim_core::civ::MAX_PER_REGION);
-            let total = here.iter().fold(Fx::ZERO, |a, s| a + s.share);
-            assert!((total.to_f64() - 1.0).abs() < 0.01, "shares in a region add up to one: {}", total.to_f64());
-            shared += (here.len() > 1) as usize;
-            for o in w.living_civs().filter(|o| o.id != c.id) {
-                assert!(!o.settlements.iter().any(|s| s.region == r), "one people per region");
+    let mut allied = 0;
+    for seed in 1..=3 {
+        let w = settled("earthlike", seed, 4800);
+        for r in 0..sim_core::world::REGION_COUNT {
+            let mut ids: Vec<u32> = w.settlements_at(r).iter().map(|(c, _)| c.id).collect();
+            ids.sort_unstable();
+            ids.dedup();
+            shared += (ids.len() > 1) as usize;
+        }
+        for c in w.living_civs() {
+            for rel in &c.relations {
+                assert!(!(rel.allied && rel.at_war), "allies are never at war with each other");
+                allied += rel.allied as usize;
             }
         }
     }
-    assert!(shared > 0, "some region holds more than one settlement");
-    let r = w.living_civs().flat_map(|c| c.settlements.iter()).find(|s| w.settlements_at(s.region).len() > 1).unwrap().region;
-    assert!(w.settlements_at(r).len() > 1 && w.settlement_at(r).is_some());
+    println!("regions held by several peoples: {shared}, alliances: {allied}");
+    assert!(shared > 0, "some region is shared by rival kingdoms");
 }

@@ -533,21 +533,43 @@ impl SimWorld {
                 })
             })
             .collect();
-        let enemies: Vec<Value> = w
-            .settlement_at(i)
-            .map(|(c, _)| {
-                c.relations
-                    .iter()
-                    .filter(|r| r.at_war)
-                    .filter_map(|r| w.civilization(r.other).filter(|o| o.is_alive()))
-                    .map(|o| json!({"civ_id": o.id, "name": o.name, "species_id": o.species, "color": hex(o.color), "era": sim_core::civ::ERAS[w.era(o)].0}))
-                    .collect()
+        // The peoples here, each with whom it is at war and allied; and the
+        // peoples elsewhere at war with any of them (who send warbands).
+        let mut here_ids: Vec<u32> = w.settlements_at(i).iter().map(|(c, _)| c.id).collect();
+        here_ids.dedup();
+        let civ_json = |o: &sim_core::civ::Civilization| json!({"civ_id": o.id, "name": o.name, "species_id": o.species, "color": hex(o.color), "era": sim_core::civ::ERAS[w.era(o)].0});
+        let living_ids = |c: &sim_core::civ::Civilization, keep: &dyn Fn(&sim_core::civ::Relation) -> bool| -> Vec<u32> {
+            c.relations.iter().filter(|r| keep(r) && w.civilization(r.other).is_some_and(|o| o.is_alive())).map(|r| r.other).collect()
+        };
+        let peoples: Vec<Value> = here_ids
+            .iter()
+            .filter_map(|&id| w.civilization(id))
+            .map(|c| {
+                let mut v = civ_json(c);
+                v["at_war_with"] = json!(living_ids(c, &|r| r.at_war));
+                v["allied_with"] = json!(living_ids(c, &|r| r.allied));
+                v
             })
-            .unwrap_or_default();
+            .collect();
+        let mut enemies: Vec<Value> = Vec::new();
+        for &id in &here_ids {
+            let Some(c) = w.civilization(id) else { continue };
+            for other in living_ids(c, &|r| r.at_war) {
+                if here_ids.contains(&other) {
+                    continue;
+                }
+                if let Some(o) = w.civilization(other) {
+                    let mut v = civ_json(o);
+                    v["against"] = json!(id);
+                    enemies.push(v);
+                }
+            }
+        }
         to_gstring(json!({
             "x": x, "y": y,
             "settlement": settlement,
             "settlements": settlements,
+            "peoples": peoples,
             "enemies": enemies,
             "liquid_amount": liquid,
             "liquid_color": liquid_color.map(hex),

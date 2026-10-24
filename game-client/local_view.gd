@@ -60,6 +60,10 @@ class Town:
 	var huts: Array = []
 	var defended := false
 	var alarmed := 0.0
+	## The people who live here, their species and how big they build.
+	var civ_id := -1
+	var species := -1
+	var scale := 2.0
 
 
 class Wanderer:
@@ -649,7 +653,7 @@ func _build_ground_cover() -> void:
 ## paths need checking.
 func _near_town(x: float, z: float, extra := 0.0) -> bool:
 	for t: Town in towns:
-		if Vector2(x - t.centre.x, z - t.centre.z).length() < t.radius + 18.0 * town_scale + extra:
+		if Vector2(x - t.centre.x, z - t.centre.z).length() < t.radius + 18.0 * t.scale + extra:
 			return true
 	return false
 
@@ -773,16 +777,47 @@ func _multimesh(mesh: Mesh, mat: Material, xf: Array, colors: Array = []) -> Mul
 func _find_builders() -> void:
 	if not _has_town():
 		return
-	var civ_id := int(info["settlement"].get("civ_id", -1))
-	for c in JSON.parse_string(sim.civilizations_json()):
-		if int(c["id"]) == civ_id and c.get("species_id") != null:
-			civ_species = int(c["species_id"])
+	for c in info.get("peoples", []):
+		civ_species_of[int(c["civ_id"])] = int(c["species_id"])
+		civ_names[int(c["civ_id"])] = str(c["name"])
+		for o in c.get("at_war_with", []):
+			_war_pairs[_pair(int(c["civ_id"]), int(o))] = true
+	for e in info.get("enemies", []):
+		_war_pairs[_pair(int(e["civ_id"]), int(e["against"]))] = true
+	var main_civ := int(info["settlement"].get("civ_id", -1))
+	if civ_species_of.is_empty():
+		for c in JSON.parse_string(sim.civilizations_json()):
+			if int(c["id"]) == main_civ and c.get("species_id") != null:
+				civ_species_of[main_civ] = int(c["species_id"])
+	civ_species = civ_species_of.get(main_civ, -1)
+	town_scale = _scale_of(civ_species)
+
+
+var civ_species_of := {}
+var civ_names := {}
+var _war_pairs := {}
+var _scales := {}
+
+
+func _pair(a: int, b: int) -> String:
+	return "%d:%d" % [mini(a, b), maxi(a, b)]
+
+
+func _at_war(a: int, b: int) -> bool:
+	return _war_pairs.has(_pair(a, b))
+
+
+## How big a species builds: doors fit the people who built them.
+func _scale_of(species: int) -> float:
+	if _scales.has(species):
+		return _scales[species]
 	var builder_m := 1.7
-	if civ_species >= 0:
-		var sh = JSON.parse_string(sim.sheet_json("species", civ_species))
+	if species >= 0:
+		var sh = JSON.parse_string(sim.sheet_json("species", species))
 		if sh != null:
 			builder_m = SIZE_METRES.get(sh["size"], 1.7)
-	town_scale = clampf(2.0 * builder_m / 1.7, 1.2, 8.0)
+	_scales[species] = clampf(2.0 * builder_m / 1.7, 1.2, 8.0)
+	return _scales[species]
 
 
 func _spawn_life() -> void:
@@ -809,8 +844,8 @@ func _spawn_life() -> void:
 				if _plant_count() < MAX_PLANTS:
 					_add_wanderer(detail, sheet, p["name"], "plant", stand)
 			continue
-		if id == civ_species and town:
-			continue  # The townsfolk are spawned with their town below.
+		if civ_species_of.values().has(id) and town:
+			continue  # The townsfolk are spawned with their towns below.
 		if animals >= 14:
 			continue
 		animals += 1
@@ -823,12 +858,12 @@ func _spawn_life() -> void:
 			for k in maxi(total / herds, 1):
 				var w := _add_wanderer(detail, sheet, p["name"], _role(detail, p["description"]), herd)
 				w.herd = herd
-	if not towns.is_empty() and civ_species >= 0:
-		var detail = JSON.parse_string(sim.species_detail_json(civ_species))
-		var sheet = JSON.parse_string(sim.sheet_json("species", civ_species))
-		if detail != null and sheet != null:
-			var budget := 64
-			for t: Town in towns:
+	if not towns.is_empty():
+		var budget := 72
+		for t: Town in towns:
+			var detail = JSON.parse_string(sim.species_detail_json(t.species))
+			var sheet = JSON.parse_string(sim.sheet_json("species", t.species))
+			if detail != null and sheet != null:
 				var pop: float = t.info.get("population", 4.0)
 				var n := (1 + rng.randi() % 2) if t.farm else (clampi(int(pop), 4, 22) if t == towns[0] else clampi(int(pop), 2, 10))
 				for k in mini(n, budget):
@@ -847,8 +882,13 @@ func _spawn_life() -> void:
 		if detail == null or sheet == null:
 			continue
 		var w: Wanderer
-		if sid == civ_species and town:
-			w = _add_villager(detail, sheet, x["title"], rng.randi(), towns[0])
+		var home_town: Town = null
+		for t: Town in towns:
+			if t.species == sid and not t.farm:
+				home_town = t
+				break
+		if home_town:
+			w = _add_villager(detail, sheet, x["title"], rng.randi(), home_town)
 		else:
 			w = _add_wanderer(detail, sheet, x["title"], _role(detail, str(detail.get("description", ""))), _spot_near(home_focus, 120.0, false))
 		_add_label(w, Color(1.0, 0.85, 0.35))
@@ -1046,7 +1086,7 @@ func _add_villager(detail: Dictionary, sheet: Dictionary, name: String, k: int, 
 	var w := _add_wanderer(detail, sheet, name, "villager", start)
 	w.home = home
 	w.town = t
-	w.team = 0
+	w.team = t.civ_id + 10
 	w.brave = rng.randf() < 0.5
 	w.timer = rng.randf_range(0.0, 3.0)
 	return w
@@ -1204,7 +1244,7 @@ func _process(delta: float) -> void:
 		notice.modulate.a = clampf(_notice_time / 1.5, 0.0, 1.0)
 	for t: Town in towns:
 		t.alarmed -= delta
-	if not enemies.is_empty():
+	if not _war_pairs.is_empty() and not towns.is_empty():
 		_war_timer -= delta
 		if _war_timer <= 0.0:
 			_war_timer = rng.randf_range(150.0, 240.0)
@@ -1392,8 +1432,15 @@ func _look_around(w: Wanderer) -> void:
 
 # --- Fighting (display only) ---------------------------------------------------
 
+## Teams: -1 none, 2 a raiding beast (against everyone with a side), and
+## 10 + civilization id for a people's folk and warriors, who fight the
+## peoples they are at war with.
 func _hostile(a: Wanderer, b: Wanderer) -> bool:
-	return a.team >= 0 and b.team >= 0 and a.team != b.team
+	if a.team < 0 or b.team < 0 or a.team == b.team:
+		return false
+	if a.team == 2 or b.team == 2:
+		return true
+	return _at_war(a.team - 10, b.team - 10)
 
 
 func _nearest_hostile(w: Wanderer, reach: float) -> Wanderer:
@@ -1433,7 +1480,7 @@ func _fight(w: Wanderer, delta: float) -> void:
 		w.foe = null
 		_after_fight(w)
 		return
-	if w.team != 0 and w.hp < w.max_hp * 0.3:
+	if w.role != "villager" and w.hp < w.max_hp * 0.3:
 		_break_off(w)
 		return
 	var to := f.node.position - w.node.position
@@ -1460,7 +1507,7 @@ func _strike(a: Wanderer, b: Wanderer) -> void:
 		var dmg := maxi(1, roundi(a.dpr * rng.randf_range(0.6, 1.4) * (2.0 if roll == 20 else 1.0)))
 		b.hp -= dmg
 		b.flash = 0.25
-		_float_text(b, str(dmg), Color(1.0, 0.4, 0.3) if b.team == 0 else Color(1.0, 0.85, 0.3))
+		_float_text(b, str(dmg), Color(1.0, 0.4, 0.3) if b.role == "villager" else Color(1.0, 0.85, 0.3))
 		if b.hp <= 0:
 			_fall(b, a)
 			return
@@ -1469,7 +1516,7 @@ func _strike(a: Wanderer, b: Wanderer) -> void:
 	# The struck fight back, and their town takes up arms.
 	if b.foe == null and b != possessed and b.state != "dead":
 		_engage(b, a)
-	if b.team == 0 and b.town:
+	if b.role == "villager" and b.town:
 		_alarm(b.town, a)
 
 
@@ -1519,7 +1566,7 @@ func _recover(w: Wanderer) -> void:
 
 func _after_fight(w: Wanderer) -> void:
 	var o := _nearest_hostile(w, 25.0)
-	if o and (w.team != 0 or w.guard or w.brave):
+	if o and (w.role != "villager" or w.guard or w.brave):
 		_engage(w, o)
 		return
 	w.model.set("pace", 0.2)
@@ -1552,7 +1599,8 @@ func _alarm(t: Town, attacker: Wanderer) -> void:
 		if w.role != "villager" or w.state in ["dead", "fight"] or w == possessed:
 			continue
 		var d := w.node.position.distance_to(attacker.node.position)
-		if w.guard and (w.town == t or d < 300.0):
+		var kin := w.town != null and w.town.civ_id == t.civ_id
+		if w.guard and kin and (w.town == t or d < 300.0):
 			_engage(w, attacker)
 		elif w.town == t and d < 40.0 and w.state != "inside":
 			if w.brave:
@@ -1627,30 +1675,54 @@ func _notice(text: String) -> void:
 
 ## A warband of a people at war with this region's owners marches on one of
 ## its towns, pillages, and fights whoever stands in its way.
+## A warband marches on a town of a people at war: from a people elsewhere
+## (it comes in from the edge of the region) or from a rival kingdom here
+## (it sets out from that kingdom's own town).
 func _spawn_warband() -> void:
-	var targets: Array = towns.filter(func(t): return not t.farm)
-	if enemies.is_empty() or targets.is_empty():
+	var options: Array = []  # [attacker civ id, attacker name, species, target Town, from Town or null]
+	for e in enemies:
+		for t: Town in towns:
+			if not t.farm and t.civ_id == int(e["against"]):
+				options.append([int(e["civ_id"]), str(e["name"]), int(e["species_id"]), t, null])
+	for a: Town in towns:
+		for t: Town in towns:
+			if not a.farm and not t.farm and a.civ_id != t.civ_id and _at_war(a.civ_id, t.civ_id) and a == _first_town(a.civ_id):
+				options.append([a.civ_id, civ_names.get(a.civ_id, "?"), a.species, t, a])
+	if options.is_empty():
 		return
-	var e: Dictionary = enemies[rng.randi() % enemies.size()]
-	var detail = JSON.parse_string(sim.species_detail_json(int(e["species_id"])))
-	var sheet = JSON.parse_string(sim.sheet_json("species", int(e["species_id"])))
+	var o: Array = options[rng.randi() % options.size()]
+	var detail = JSON.parse_string(sim.species_detail_json(int(o[2])))
+	var sheet = JSON.parse_string(sim.sheet_json("species", int(o[2])))
 	if detail == null or sheet == null:
 		return
-	var t: Town = targets[rng.randi() % targets.size()]
-	var a := rng.randf() * TAU
-	var spawn := _spot_near(t.centre + Vector3(cos(a), 0, sin(a)) * (t.radius + 180.0), 50.0, false)
+	var t: Town = o[3]
+	var from: Town = o[4]
+	var spawn: Vector3
+	if from:
+		spawn = _spot_near(from.centre, from.radius + 12.0, false)
+	else:
+		var a := rng.randf() * TAU
+		spawn = _spot_near(t.centre + Vector3(cos(a), 0, sin(a)) * (t.radius + 180.0), 50.0, false)
 	var n := 4 + rng.randi() % 5
-	var band := {"civ": str(e["name"]), "town": t, "spawn": spawn, "size": n, "lost": 0, "pillaged": 0, "retreat": false}
+	var civ_name: String = o[1]
+	var band := {"civ": civ_name, "town": t, "spawn": spawn, "size": n, "lost": 0, "pillaged": 0, "retreat": false}
 	for k in n:
-		var r := _add_wanderer(detail, sheet, "%s warrior of the %s" % [detail["name"], e["name"]], "raider", spawn)
-		r.team = 1
+		var r := _add_wanderer(detail, sheet, "%s warrior of the %s" % [detail["name"], civ_name], "raider", spawn)
+		r.team = int(o[0]) + 10
 		r.warband = band
 		r.timer = 0.3 + k * 0.3
 		_arm(r)
 		if k == 0:
 			_add_label(r, Color(1.0, 0.5, 0.45))
-			r.label.text = "Warband of the %s" % e["name"]
-	_notice("A warband of the %s marches on %s!" % [e["name"], t.name])
+			r.label.text = "Warband of the %s" % civ_name
+	_notice("A warband of the %s marches on %s%s!" % [civ_name, t.name, (" from " + from.name) if from else ""])
+
+
+func _first_town(civ_id: int) -> Town:
+	for t: Town in towns:
+		if t.civ_id == civ_id and not t.farm:
+			return t
+	return null
 
 
 func _next_raider(w: Wanderer) -> void:
@@ -1670,7 +1742,8 @@ func _next_raider(w: Wanderer) -> void:
 		return
 	var s: Dictionary = t.sites[rng.randi() % t.sites.size()]
 	w.site = s
-	_go(w, _jitter(s["pos"], 2.0), "pillage", 1.4, "marching on %s" % t.name)
+	var far := w.node.position.distance_to(t.centre) > t.radius + 40.0
+	_go(w, _jitter(s["pos"], 2.0), "pillage", 1.8 if far else 1.3, "marching on %s" % t.name)
 
 
 func _enter_state(w: Wanderer, state: String, time: float, activity: String) -> void:
@@ -1706,7 +1779,8 @@ func _go(w: Wanderer, to: Vector3, then: String, mult: float, activity: String) 
 	w.stuck = 0.0
 	w.last_pos = w.node.position
 	w.state = "walk"
-	w.timer = 40.0
+	# Long enough to get there (with detours), so walks end on arrival.
+	w.timer = 20.0 + w.node.position.distance_to(to) / maxf(w.speed * mult, 0.2) * 1.6
 	_set_activity(w, activity)
 
 
@@ -1758,7 +1832,7 @@ func _next_villager(w: Wanderer) -> void:
 	if w.guard and t:
 		# Guards walk the edge of town, day and night.
 		var a := rng.randf() * TAU
-		var post := t.centre + Vector3(cos(a), 0, sin(a)) * (t.radius + rng.randf_range(1.0, 4.0) * town_scale)
+		var post := t.centre + Vector3(cos(a), 0, sin(a)) * (t.radius + rng.randf_range(1.0, 4.0) * t.scale)
 		if _fits(post, false):
 			_go(w, post, "work", 1.0, "on patrol")
 			w.site = {"name": "Post", "face": post + Vector3(cos(a), 0, sin(a)) * 10.0}
@@ -2024,8 +2098,23 @@ func _update_hud() -> void:
 		var farms := towns.filter(func(t): return t.farm).size()
 		head += "\n%s, a %s of the %s (%s era)%s · %d farmstead%s · %d townsfolk about" % [st.get("name", "?"), str(st.get("tier", "")).to_lower(), st.get("civ", "?"), st.get("era", "?"),
 			(" · %d village%s nearby" % [villages, "" if villages == 1 else "s"]) if villages > 0 else "", farms, "" if farms == 1 else "s", folk]
-		if not enemies.is_empty():
-			head += "\nAt war with the %s" % ", the ".join(enemies.map(func(e): return str(e["name"])))
+		if civ_names.size() > 1:
+			var names: Array = []
+			for id in civ_names:
+				var n := towns.filter(func(t): return t.civ_id == id and not t.farm).size()
+				names.append("the %s (%d settlement%s)" % [civ_names[id], n, "" if n == 1 else "s"])
+			head += "\nKingdoms here: " + ", ".join(names)
+		var wars: Array = []
+		var ids: Array = civ_names.keys()
+		for i in ids.size():
+			for j in range(i + 1, ids.size()):
+				if _at_war(ids[i], ids[j]):
+					wars.append("the %s and the %s are at war" % [civ_names[ids[i]], civ_names[ids[j]]])
+		for e in enemies:
+			wars.append("the %s are at war with the %s" % [civ_names.get(int(e["against"]), "?"), e["name"]])
+		if not wars.is_empty():
+			var line := "; ".join(wars)
+			head += "\n" + line.left(1).to_upper() + line.substr(1)
 	title.text = head
 	if possessed:
 		var sh := possessed.sheet
@@ -2179,14 +2268,17 @@ func _plan_towns() -> void:
 		var t := Town.new()
 		t.info = st
 		t.name = str(st.get("name", "?"))
-		t.radius = float(TIER_RADIUS.get(str(st.get("tier", "Village")), 7.0)) * town_scale
+		t.civ_id = int(st.get("civ_id", -1))
+		t.species = civ_species_of.get(t.civ_id, civ_species)
+		t.scale = _scale_of(t.species)
+		t.radius = float(TIER_RADIUS.get(str(st.get("tier", "Village")), 7.0)) * t.scale
 		var b: Array = st.get("buildings", [])
 		t.defended = "Walls" in b or "Palisade" in b or "Barracks" in b
 		var spot = _site_score_best(t.radius, Vector3.ZERO, 0.0, 240.0, 13) if k == 0 else _site_near(t.radius, towns[0].centre, 170.0, 480.0)
 		if spot == null:
 			continue
 		var c: Vector2 = spot
-		t.centre = Vector3(c.x, _level(c, t.radius + 7.0 * town_scale, 24.0), c.y)
+		t.centre = Vector3(c.x, _level(c, t.radius + 7.0 * t.scale, 24.0), c.y)
 		towns.append(t)
 	if towns.is_empty():
 		return
@@ -2199,7 +2291,7 @@ func _plan_towns() -> void:
 		if placed >= want:
 			break
 		var near: Town = towns[rng.randi() % towns.size()]
-		var spot = _site_near(5.0 * town_scale, near.centre, near.radius + 40.0, near.radius + 260.0)
+		var spot = _site_near(5.0 * near.scale, near.centre, near.radius + 40.0, near.radius + 260.0)
 		if spot == null:
 			continue
 		var c: Vector2 = spot
@@ -2207,7 +2299,10 @@ func _plan_towns() -> void:
 		f.farm = true
 		f.name = "a farmstead of %s" % near.name
 		f.info = near.info
-		f.radius = 5.0 * town_scale
+		f.civ_id = near.civ_id
+		f.species = near.species
+		f.scale = near.scale
+		f.radius = 5.0 * near.scale
 		f.centre = Vector3(c.x, _level(c, f.radius + 2.0, 10.0), c.y)
 		towns.append(f)
 		placed += 1
@@ -2242,7 +2337,7 @@ func _site_near(radius: float, around: Vector3, dmin: float, dmax: float) -> Var
 			continue
 		var clear := true
 		for t: Town in towns:
-			if c.distance_to(Vector2(t.centre.x, t.centre.z)) < t.radius + radius + 14.0 * town_scale + (0.0 if t.farm else 25.0):
+			if c.distance_to(Vector2(t.centre.x, t.centre.z)) < t.radius + radius + 14.0 * t.scale + (0.0 if t.farm else 25.0):
 				clear = false
 				break
 		if not clear:
@@ -2420,6 +2515,7 @@ func _build_settlement() -> void:
 		var t: Town = towns[k]
 		town_centre = t.centre
 		town_radius = t.radius
+		town_scale = t.scale
 		sites = []
 		huts = []
 		if t.farm:
@@ -2432,12 +2528,28 @@ func _build_settlement() -> void:
 		_paint_paths()
 		if k > 0:
 			_paint_line(t.centre, towns[0].centre, 1.3, 0.55)  # The road to town.
+	for t: Town in towns:
+		if t.farm:
+			continue
+		var banner := Label3D.new()
+		banner.text = "%s\n%s" % [t.name, civ_names.get(t.civ_id, str(t.info.get("civ", "")))]
+		banner.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		banner.modulate = Color.html(str(t.info.get("color", "ffffff"))).lightened(0.35)
+		banner.outline_size = 10
+		banner.font_size = 36
+		banner.fixed_size = true
+		banner.pixel_size = 0.0011
+		banner.no_depth_test = true
+		banner.visibility_range_begin = t.radius + 30.0
+		banner.position = t.centre + Vector3(0, 14.0 * t.scale, 0)
+		world.add_child(banner)
 	terrain_mat.set_shader_parameter("trodden", ImageTexture.create_from_image(trodden))
 	terrain_mat.set_shader_parameter("trodden_origin", trodden_origin)
 	terrain_mat.set_shader_parameter("trodden_half", trodden_half)
 	town = towns[0].node
 	town_centre = towns[0].centre
 	town_radius = towns[0].radius
+	town_scale = towns[0].scale
 	sites = towns[0].sites
 	huts = towns[0].huts
 

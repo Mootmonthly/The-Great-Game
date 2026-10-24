@@ -204,6 +204,8 @@ pub struct Relation {
     pub opinion: Fx,
     pub at_war: bool,
     pub war_since: u64,
+    /// Allies come to each other's aid in war.
+    pub allied: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -272,12 +274,30 @@ impl Civilization {
             opinion: Fx::ZERO,
             at_war: false,
             war_since: 0,
+            allied: false,
         });
         self.relations.last_mut().unwrap()
     }
 
     pub fn at_war_with(&self, other: u32) -> bool {
         self.relations.iter().any(|r| r.other == other && r.at_war)
+    }
+
+    pub fn allied_with(&self, other: u32) -> bool {
+        self.relations.iter().any(|r| r.other == other && r.allied)
+    }
+
+    /// How many regions it shares with another people.
+    fn shared_regions(&self, other: &Civilization) -> usize {
+        let mut regions: Vec<usize> = self
+            .settlements
+            .iter()
+            .filter(|a| other.settlements.iter().any(|b| b.region == a.region))
+            .map(|a| a.region)
+            .collect();
+        regions.sort_unstable();
+        regions.dedup();
+        regions.len()
     }
 
     fn borders(&self, other: &Civilization) -> bool {
@@ -395,8 +415,8 @@ impl World {
     /// Strength bonus for each region a civilization has settled:
     /// (species, multiplier). Tools and organisation make a people
     /// stronger at home.
-    pub(crate) fn settled_bonus(&self) -> Vec<Option<(u32, Fx)>> {
-        let mut out = vec![None; REGION_COUNT];
+    pub(crate) fn settled_bonus(&self) -> Vec<Vec<(u32, Fx)>> {
+        let mut out: Vec<Vec<(u32, Fx)>> = vec![Vec::new(); REGION_COUNT];
         for c in self.living_civs() {
             let bonus = Fx::ONE + Fx::ratio(15, 100) * Fx::from_int(self.era(c) as i64);
             for s in &c.settlements {
@@ -405,8 +425,9 @@ impl World {
                 let b = self.buildings(c, s);
                 let defence = Fx::ratio(10, 100) * Fx::from_int(b.contains(&Building::Walls) as i64 + b.contains(&Building::Barracks) as i64);
                 let m = bonus + defence;
-                if out[s.region].is_none_or(|(_, o)| m > o) {
-                    out[s.region] = Some((c.species, m));
+                match out[s.region].iter_mut().find(|(sp, _)| *sp == c.species) {
+                    Some(e) => e.1 = e.1.max(m),
+                    None => out[s.region].push((c.species, m)),
                 }
             }
         }
@@ -421,9 +442,16 @@ impl World {
             .fold(Fx::ZERO, |a, p| a + p.biomass)
     }
 
-    fn settled(&self, region: usize) -> bool {
+    /// How many settlements (of every people) stand in a region.
+    fn settlements_in(&self, region: usize) -> usize {
         self.living_civs()
-            .any(|c| c.settlements.iter().any(|s| s.region == region))
+            .map(|c| c.settlements.iter().filter(|s| s.region == region).count())
+            .sum()
+    }
+
+    /// Whether a people already has a settlement in a region.
+    fn holds(&self, k: usize, region: usize) -> bool {
+        self.civs[k].settlements.iter().any(|s| s.region == region)
     }
 
     /// Once a year: found, grow, advance, split, deal and fight.
@@ -452,8 +480,10 @@ impl World {
             .filter(|&id| self.civ_of_species(id).is_none())
             .collect();
         for species in candidates {
+            // The capital goes where the species is most numerous, in a
+            // region with room for another settlement.
             let Some(capital) = (0..REGION_COUNT)
-                .filter(|&r| !self.settled(r))
+                .filter(|&r| self.settlements_in(r) < MAX_PER_REGION)
                 .max_by_key(|&r| (self.species_biomass(r, species), std::cmp::Reverse(r)))
             else {
                 continue;
@@ -468,7 +498,15 @@ impl World {
                 cohesion: t.sociability,
                 caution: t.fear,
             };
-            self.new_civilization(species, culture, None, vec![capital]);
+            let first = Settlement {
+                region: capital,
+                name: self.new_name(),
+                population: self.species_biomass(capital, species),
+                founded_tick: self.tick,
+                share: Fx::ONE,
+            };
+            self.new_civilization(species, culture, None, vec![first]);
+            self.normalise_shares(capital, species);
         }
     }
 
@@ -477,7 +515,7 @@ impl World {
         species: u32,
         culture: Culture,
         parent: Option<u32>,
-        regions: Vec<usize>,
+        settlements: Vec<Settlement>,
     ) -> u32 {
         let id = self.next_civ_id;
         self.next_civ_id += 1;
@@ -489,16 +527,6 @@ impl World {
         } else {
             color
         };
-        let settlements = regions
-            .into_iter()
-            .map(|region| Settlement {
-                region,
-                name: self.new_name(),
-                population: self.species_biomass(region, species),
-                founded_tick: self.tick,
-                share: Fx::ONE,
-            })
-            .collect();
         self.civs.push(Civilization {
             id,
             species,
@@ -535,17 +563,19 @@ impl World {
         }
     }
 
-    /// Rescales a people's shares so they add up to one in every region it
-    /// holds (after settlements are lost, taken or founded).
-    fn normalise_shares(&mut self, k: usize) {
-        let c = &mut self.civs[k];
-        for i in 0..c.settlements.len() {
-            let region = c.settlements[i].region;
-            if c.settlements[..i].iter().any(|s| s.region == region) {
-                continue;
-            }
-            let total = c.settlements.iter().filter(|s| s.region == region).fold(Fx::ZERO, |a, s| a + s.share);
-            if total > Fx::ZERO && total != Fx::ONE {
+    /// Rescales the shares of every settlement of `species` in `region`,
+    /// whichever people holds it, so they add up to one: two kingdoms of
+    /// one species in a region split its people between them.
+    fn normalise_shares(&mut self, region: usize, species: u32) {
+        let total = self
+            .civs
+            .iter()
+            .filter(|c| c.is_alive() && c.species == species)
+            .flat_map(|c| c.settlements.iter())
+            .filter(|s| s.region == region)
+            .fold(Fx::ZERO, |a, s| a + s.share);
+        if total > Fx::ZERO && total != Fx::ONE {
+            for c in self.civs.iter_mut().filter(|c| c.is_alive() && c.species == species) {
                 for s in c.settlements.iter_mut().filter(|s| s.region == region) {
                     s.share = s.share / total;
                 }
@@ -553,16 +583,33 @@ impl World {
         }
     }
 
+    /// Normalises the shares in every region a people holds.
+    fn normalise_all(&mut self, k: usize) {
+        let species = self.civs[k].species;
+        let mut regions: Vec<usize> = self.civs[k].settlements.iter().map(|s| s.region).collect();
+        regions.sort_unstable();
+        regions.dedup();
+        for r in regions {
+            self.normalise_shares(r, species);
+        }
+    }
+
     fn grow_civilization(&mut self, k: usize) {
         let species = self.civs[k].species;
         // Settlements follow the people: they shrink, grow or are lost.
         self.settle_populations(k);
+        let lost: Vec<usize> = self.civs[k].settlements.iter().filter(|s| s.population < Fx::HALF).map(|s| s.region).collect();
         self.civs[k].settlements.retain(|s| s.population >= Fx::HALF);
         if self.civs[k].settlements.is_empty() {
             self.civs[k].fallen_tick = Some(self.tick);
+        }
+        for r in lost {
+            self.normalise_shares(r, species);
+        }
+        if self.civs[k].settlements.is_empty() {
             return;
         }
-        self.normalise_shares(k);
+        self.normalise_all(k);
         self.settle_populations(k);
 
         // Expansion into neighbouring land where the species lives.
@@ -572,25 +619,33 @@ impl World {
                 .rng
                 .chance(Fx::ratio(15, 100) + culture.openness * Fx::ratio(3, 10))
         {
-            let mut best: Option<(Fx, usize)> = None;
+            // Land nobody holds is best; land with room beside other peoples
+            // will do. Settling beside kin takes a share of their people.
+            let mut best: Option<(bool, Fx, usize)> = None;
             for s in &self.civs[k].settlements {
                 for r in neighbours(s.region) {
                     let b = self.species_biomass(r, species);
-                    if b >= Fx::ONE && !self.settled(r) && best.is_none_or(|(bb, br)| (b, r) > (bb, br))
-                    {
-                        best = Some((b, r));
+                    let n = self.settlements_in(r);
+                    if b < Fx::ONE || n >= MAX_PER_REGION || self.holds(k, r) {
+                        continue;
+                    }
+                    let key = (n == 0, b, r);
+                    if best.is_none_or(|bb| key > bb) {
+                        best = Some(key);
                     }
                 }
             }
-            if let Some((b, region)) = best {
+            if let Some((empty, b, region)) = best {
                 let name = self.new_name();
+                let share = if empty { Fx::ONE } else { Fx::ratio(1, 4) };
                 self.civs[k].settlements.push(Settlement {
                     region,
                     name,
-                    population: b,
+                    population: b * share,
                     founded_tick: self.tick,
-                    share: Fx::ONE,
+                    share,
                 });
+                self.normalise_shares(region, species);
             }
         }
 
@@ -601,7 +656,7 @@ impl World {
             .iter()
             .enumerate()
             .filter(|(_, s)| s.population >= Fx::from_int(DAUGHTER_AT))
-            .filter(|(_, s)| self.civs[k].settlements.iter().filter(|o| o.region == s.region).count() < MAX_PER_REGION)
+            .filter(|(_, s)| self.settlements_in(s.region) < MAX_PER_REGION)
             .max_by_key(|(i, s)| (s.population, std::cmp::Reverse(*i)))
             .map(|(i, _)| i);
         if let Some(i) = big {
@@ -678,15 +733,15 @@ impl World {
                     i,
                 )
             });
-            let leaving: Vec<usize> = order[..n / 2].to_vec();
-            let mut regions: Vec<usize> = leaving
-                .iter()
-                .map(|&i| self.civs[k].settlements[i].region)
-                .collect();
-            regions.sort();
-            self.civs[k]
-                .settlements
-                .retain(|s| !regions.contains(&s.region));
+            // The farthest half leaves, settlement by settlement: a region
+            // can end up split between the old kingdom and the new.
+            let mut leaving: Vec<usize> = order[..n / 2].to_vec();
+            leaving.sort_unstable();
+            let mut departing = Vec::new();
+            for &i in leaving.iter().rev() {
+                departing.push(self.civs[k].settlements.remove(i));
+            }
+            departing.reverse();
             let drift = |rng: &mut crate::rng::Rng, v: Fx| {
                 (v + rng.spread() * Fx::ratio(2, 10)).clamp(Fx::ZERO, Fx::ONE)
             };
@@ -699,7 +754,7 @@ impl World {
             let parent = self.civs[k].id;
             let tech = self.civs[k].tech;
             let arcana = self.civs[k].arcana;
-            let id = self.new_civilization(species, new_culture, Some(parent), regions);
+            let id = self.new_civilization(species, new_culture, Some(parent), departing);
             let child = self.civs.len() - 1;
             self.civs[child].tech = tech;
             self.civs[child].arcana = arcana;
@@ -722,19 +777,35 @@ impl World {
                 let kin = self.civs[a].species == self.civs[b].species;
                 // Shared faith warms relations; rival faiths sour them.
                 let faith = match (self.civs[a].faith, self.civs[b].faith) {
-                    (Some(x), Some(y)) if x == y => Fx::ratio(4, 100),
-                    (Some(_), Some(_)) => -Fx::ratio(3, 100),
+                    (Some(x), Some(y)) if x == y => Fx::ratio(2, 10),
+                    (Some(_), Some(_)) => -Fx::ratio(15, 100),
                     _ => Fx::ZERO,
                 };
-                let drift = (ca.similarity(&cb) - Fx::HALF) * Fx::ratio(1, 10)
-                    - if kin { Fx::ZERO } else { Fx::ratio(5, 100) }
-                    - (ca.caution + cb.caution) * Fx::ratio(2, 100)
-                    + faith;
+                // Sharing land breeds friction; markets on both sides breed
+                // trade and goodwill; a common enemy draws peoples together.
+                let shared = self.civs[a].shared_regions(&self.civs[b]) as i64;
+                let trades = |k: usize| self.civs[k].settlements.iter().any(|s| self.buildings(&self.civs[k], s).contains(&Building::Market));
+                let trade = if trades(a) && trades(b) { Fx::ratio(15, 100) } else { Fx::ZERO };
+                let common_foe = self.civs[a].relations.iter().any(|r| r.at_war && self.civs[b].at_war_with(r.other));
+                let at_war_now = self.civs[a].at_war_with(self.civs[b].id);
+                // Opinion moves a tenth of the way each year toward what
+                // these things make of it, with a little chance.
+                let target = (ca.similarity(&cb) - Fx::HALF) * Fx::ratio(12, 10)
+                    + if kin { Fx::ratio(15, 100) } else { -Fx::ratio(2, 10) }
+                    - (ca.caution + cb.caution) * Fx::ratio(1, 10)
+                    - (ca.militarism + cb.militarism) * Fx::ratio(3, 10)
+                    - Fx::ratio(1, 10)
+                    - Fx::ratio(15, 100) * Fx::from_int(shared.min(3))
+                    + trade
+                    + faith
+                    + if common_foe { Fx::ratio(35, 100) } else { Fx::ZERO }
+                    - if at_war_now { Fx::ratio(3, 10) } else { Fx::ZERO };
                 let (ida, idb) = (self.civs[a].id, self.civs[b].id);
                 let tick = self.tick;
+                let nudge = self.rng.spread() * Fx::ratio(5, 100);
                 let opinion = {
                     let r = self.civs[a].relation_mut(idb);
-                    r.opinion = (r.opinion + drift).clamp(-Fx::ONE, Fx::ONE);
+                    r.opinion = (r.opinion + (target - r.opinion) * Fx::ratio(1, 10) + nudge).clamp(-Fx::ONE, Fx::ONE);
                     r.opinion
                 };
                 self.civs[b].relation_mut(ida).opinion = opinion;
@@ -749,21 +820,64 @@ impl World {
                     && warlike > Fx::ratio(35, 100)
                     && self.rng.chance(warlike * Fx::ratio(1, 10))
                 {
-                    for (k, other) in [(a, idb), (b, ida)] {
-                        let r = self.civs[k].relation_mut(other);
-                        r.at_war = true;
-                        r.war_since = tick;
-                    }
+                    self.declare_war(a, b);
                 } else if at_war {
+                    // War-weariness: every lost battle makes peace likelier.
                     let years = (tick - self.civs[a].relation_mut(idb).war_since) / TICKS_PER_YEAR;
-                    if years >= 10 || self.rng.chance(Fx::ratio(1, 10)) {
+                    let weary = Fx::ratio(1, 10) + Fx::ratio(2, 100) * Fx::from_int((self.civs[a].battles_lost.min(self.civs[b].battles_lost) as i64).min(10));
+                    if years >= 10 || self.rng.chance(weary) {
                         for (k, other) in [(a, idb), (b, ida)] {
                             let r = self.civs[k].relation_mut(other);
                             r.at_war = false;
                             r.opinion = r.opinion.max(-Fx::ratio(2, 10));
                         }
                     }
+                } else {
+                    // Friends ally, and so do peoples fighting a common
+                    // enemy; allies who fall out part ways.
+                    let allied = self.civs[a].allied_with(idb);
+                    let ally = !allied
+                        && ((opinion > Fx::ratio(3, 10) && self.rng.chance(Fx::ratio(15, 100)))
+                            || (common_foe && opinion > -Fx::ratio(3, 10) && self.rng.chance(Fx::ratio(3, 10))));
+                    let part = allied && opinion < -Fx::ratio(2, 10);
+                    if ally || part {
+                        for (k, other) in [(a, idb), (b, ida)] {
+                            self.civs[k].relation_mut(other).allied = ally;
+                        }
+                    }
                 }
+            }
+        }
+    }
+
+    /// `a` and `b` go to war, and their allies (unless allied to both)
+    /// join in on their side.
+    fn declare_war(&mut self, a: usize, b: usize) {
+        let tick = self.tick;
+        let mut pairs = vec![(a, b)];
+        let living: Vec<usize> = (0..self.civs.len()).filter(|&k| self.civs[k].is_alive()).collect();
+        let (ida, idb) = (self.civs[a].id, self.civs[b].id);
+        for &x in &living {
+            if x == a || x == b {
+                continue;
+            }
+            let with_a = self.civs[x].allied_with(ida);
+            let with_b = self.civs[x].allied_with(idb);
+            if with_a && !with_b {
+                pairs.push((x, b));
+            } else if with_b && !with_a {
+                pairs.push((x, a));
+            }
+        }
+        for (p, q) in pairs {
+            let (idp, idq) = (self.civs[p].id, self.civs[q].id);
+            for (k, other) in [(p, idq), (q, idp)] {
+                let r = self.civs[k].relation_mut(other);
+                if !r.at_war {
+                    r.at_war = true;
+                    r.war_since = tick;
+                }
+                r.allied = false;
             }
         }
     }
@@ -813,10 +927,17 @@ impl World {
         let region = self.civs[loser].settlements[li].region;
         let loser_species = self.civs[loser].species;
         let tick = self.tick;
-        // The fighting kills.
+        // The fighting kills the loser's people there (its share of its
+        // species, which may share the region with kin of another kingdom).
+        let share = self.civs[loser]
+            .settlements
+            .iter()
+            .filter(|s| s.region == region)
+            .fold(Fx::ZERO, |a, s| a + s.share)
+            .min(Fx::ONE);
         for p in &mut self.regions[region].populations {
             if p.species == loser_species {
-                p.biomass = p.biomass * Fx::ratio(6, 10);
+                p.biomass -= p.biomass * share * Fx::ratio(4, 10);
             }
         }
         // Those who lived through it remember.
@@ -827,18 +948,15 @@ impl World {
         }
         self.civs[winner].battles_won += 1;
         self.civs[loser].battles_lost += 1;
-        // A region falls as a whole: every settlement the loser has there
-        // is taken (by kin) or razed (by strangers) if together they are
-        // small and the loser holds land elsewhere.
-        let held = self.civs[loser].settlements.iter().filter(|s| s.region == region);
-        let small = held.fold(Fx::ZERO, |a, s| a + s.population) < Fx::from_int(3);
-        let elsewhere = self.civs[loser].settlements.iter().any(|s| s.region != region);
-        if small && elsewhere {
-            let (lost, kept): (Vec<Settlement>, Vec<Settlement>) =
-                std::mem::take(&mut self.civs[loser].settlements).into_iter().partition(|s| s.region == region);
-            self.civs[loser].settlements = kept;
+        // A small settlement falls: taken by kin, razed by strangers (its
+        // share of the people goes to whoever else of its kind lives there).
+        let small = self.civs[loser].settlements[li].population < Fx::from_int(3);
+        if small && self.civs[loser].settlements.len() > 1 {
+            let s = self.civs[loser].settlements.remove(li);
             if self.civs[winner].species == loser_species {
-                self.civs[winner].settlements.extend(lost);
+                self.civs[winner].settlements.push(s);
+            } else {
+                self.normalise_shares(region, loser_species);
             }
         }
     }

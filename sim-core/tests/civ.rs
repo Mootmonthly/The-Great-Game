@@ -34,9 +34,9 @@ fn sapient_species_found_civilizations() {
                 "settlements stand where the people live"
             );
         }
-        // No two peoples share a region.
-        for o in w.living_civs().filter(|o| o.id != c.id) {
-            assert!(!o.settlements.iter().any(|x| c.settlements.iter().any(|y| y.region == x.region)));
+        // Peoples may share a region, but it holds only so many settlements.
+        for st in &c.settlements {
+            assert!(w.settlements_at(st.region).len() <= sim_core::civ::MAX_PER_REGION);
         }
     }
 }
