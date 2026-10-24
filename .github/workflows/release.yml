@@ -67,6 +67,7 @@ jobs:
           & $godot --headless --path game-client --export-release "Windows Desktop" ..\build\TheGreatGame\TheGreatGame.exe
           if (-not (Test-Path build\TheGreatGame\TheGreatGame.exe)) { throw "export failed: no TheGreatGame.exe" }
           if (-not (Test-Path build\TheGreatGame\TheGreatGame.pck)) { throw "export failed: no TheGreatGame.pck" }
+          if (-not (Test-Path build\TheGreatGame\TheGreatGame.console.exe)) { throw "export failed: no TheGreatGame.console.exe" }
           if (-not (Test-Path build\TheGreatGame\great_game_ext.dll)) {
             Copy-Item target\release\great_game_ext.dll build\TheGreatGame\
           }
