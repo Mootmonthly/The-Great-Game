@@ -29,7 +29,13 @@ A 2D prototype of the world simulation. Seed a planet with substances, tune its 
 - **Named individuals:** up to 300 beings with their own brains, personalities, relationships and memories. They travel, flee, fight and befriend each other; friends mourn and hold grudges. Each shows a Charisma preview for the future character sheet.
 - **Determinism:** the simulation uses only integer (fixed-point) maths and a seeded random generator. A world is fully described by its seed plus the list of player actions. Saving a world saves that list, and loading replays it. This is the basis of server-side anti-cheat.
 
-### Run the world viewer (Windows)
+### Download (Windows)
+
+Ready-built Windows versions are on the [Releases page](https://github.com/Mootmonthly/The-Great-Game/releases). Download `TheGreatGame-windows-x64.zip`, unzip it anywhere, and run `TheGreatGame.exe`. Nothing else needs installing. The build is not code-signed, so if Windows SmartScreen warns about an unknown publisher, choose **More info**, then **Run anyway**.
+
+A release is built and published automatically when a version tag (`v0.1.0`, `v0.2.0`, …) is pushed (`.github/workflows/release.yml`).
+
+### Run the world viewer from source (Windows)
 
 1. **Install Git:** download from https://git-scm.com/download/win and install with the default options.
 2. **Install Rust:** download `rustup-init.exe` from https://rustup.rs and run it. If it offers to install the Visual Studio C++ build tools, accept. They are needed to compile Rust on Windows. Accept the default Rust installation.

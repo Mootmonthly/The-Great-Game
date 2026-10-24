@@ -1,0 +1,106 @@
+name: Release
+
+# Builds the Windows game: the Rust extension and arena server on a Windows
+# runner, then a Godot export, zipped. On a pull request that touches the
+# release setup the zip is kept as a build artifact to check; on a pushed
+# `v*` tag it is published as a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "game-client/export_presets.cfg"
+      - "game-client/great_game.gdextension"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: "4.6.2"
+
+jobs:
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Godot extension and arena server
+        run: cargo build -p great_game_ext -p arena-server --release
+
+      - name: Download Godot and export templates
+        shell: pwsh
+        run: |
+          $v = $env:GODOT_VERSION
+          $base = "https://github.com/godotengine/godot/releases/download/$v-stable"
+          Invoke-WebRequest "$base/Godot_v$v-stable_win64.exe.zip" -OutFile godot.zip
+          Expand-Archive godot.zip -DestinationPath godot
+          Invoke-WebRequest "$base/Godot_v$v-stable_export_templates.tpz" -OutFile templates.zip
+          Expand-Archive templates.zip -DestinationPath templates
+          $dest = "$env:APPDATA\Godot\export_templates\$v.stable"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item templates\templates\windows_* $dest
+          Copy-Item templates\templates\version.txt $dest
+
+      # The extension's library lives in ../target during development; for
+      # the export it is copied into the project and pointed at there.
+      - name: Place the extension inside the project
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path game-client\bin | Out-Null
+          Copy-Item target\release\great_game_ext.dll game-client\bin\
+          (Get-Content game-client\great_game.gdextension) `
+            -replace 'res://\.\./target/release/great_game_ext\.dll', 'res://bin/great_game_ext.dll' |
+            Set-Content game-client\great_game.gdextension
+
+      - name: Import and export the project
+        shell: pwsh
+        run: |
+          $godot = (Get-ChildItem godot\*_console.exe)[0].FullName
+          New-Item -ItemType Directory -Force -Path build\TheGreatGame | Out-Null
+          # Opens the editor once so it imports the project, then quits.
+          & $godot --headless --path game-client --editor --quit-after 300
+          & $godot --headless --path game-client --export-release "Windows Desktop" ..\build\TheGreatGame\TheGreatGame.exe
+          if (-not (Test-Path build\TheGreatGame\TheGreatGame.exe)) { throw "export failed: no TheGreatGame.exe" }
+          if (-not (Test-Path build\TheGreatGame\TheGreatGame.pck)) { throw "export failed: no TheGreatGame.pck" }
+          if (-not (Test-Path build\TheGreatGame\great_game_ext.dll)) {
+            Copy-Item target\release\great_game_ext.dll build\TheGreatGame\
+          }
+          Get-ChildItem build\TheGreatGame
+
+      - name: Add the arena server and notes, and zip
+        shell: pwsh
+        run: |
+          Copy-Item target\release\arena-server.exe build\TheGreatGame\
+          @"
+          The Great Game (Windows x64)
+
+          Run TheGreatGame.exe to start the world viewer. Seed a planet, tune
+          it, press Play and watch life evolve; visit regions, open the arena.
+          TheGreatGame.console.exe does the same with a console window for logs.
+
+          arena-server.exe is the online arena server, only needed to host
+          your own online matches (see the repository's docs/HOSTING.md).
+
+          If Windows SmartScreen warns about an unknown publisher, choose
+          "More info" then "Run anyway": the build is not code-signed.
+          "@ | Set-Content build\TheGreatGame\README.txt
+          Compress-Archive -Path build\TheGreatGame -DestinationPath TheGreatGame-windows-x64.zip
+          Get-Item TheGreatGame-windows-x64.zip
+
+      - name: Keep the zip as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TheGreatGame-windows-x64
+          path: TheGreatGame-windows-x64.zip
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: TheGreatGame-windows-x64.zip
+          generate_release_notes: true
