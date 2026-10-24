@@ -13,6 +13,11 @@ on:
       - "game-client/export_presets.cfg"
       - "game-client/great_game.gdextension"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create on this commit (e.g. v0.1.0); empty builds only"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -100,8 +105,11 @@ jobs:
           path: TheGreatGame-windows-x64.zip
 
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.tag, 'v')
         uses: softprops/action-gh-release@v2
         with:
+          # A hand-started run names its tag; the release creates it here.
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: TheGreatGame-windows-x64.zip
           generate_release_notes: true
