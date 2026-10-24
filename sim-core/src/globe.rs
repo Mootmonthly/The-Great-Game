@@ -143,9 +143,14 @@ impl World {
         for c in self.living_civs() {
             let era = self.era(c);
             let era_light = [0.08, 0.2, 0.35, 0.5, 0.7, 1.0][era.min(5)];
+            // Lights by everyone living in the region, brighter at the capital.
+            let mut pops = vec![0.0; REGION_COUNT];
+            for s in &c.settlements {
+                pops[s.region] += s.population.to_f64();
+            }
             for (k, s) in c.settlements.iter().enumerate() {
-                let pop = (s.population.to_f64() / 20.0).min(1.0);
-                let capital = if k == 0 { 1.3 } else { 1.0 };
+                let pop = (pops[s.region] / 20.0).min(1.0);
+                let capital = if k == 0 || c.settlements.first().is_some_and(|f| f.region == s.region) { 1.3 } else { 1.0 };
                 out[s.region] = Some((rgb(c.color), (pop * era_light * capital).min(1.0)));
             }
         }

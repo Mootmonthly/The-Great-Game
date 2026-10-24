@@ -519,9 +519,36 @@ impl SimWorld {
                 "buildings": w.buildings(c, s).iter().map(|b| b.name()).collect::<Vec<_>>(),
             })
         });
+        // Every settlement here (the first-founded first) and the peoples
+        // its owners are at war with, for the region visit.
+        let settlements: Vec<Value> = w
+            .settlements_at(i)
+            .into_iter()
+            .map(|(c, s)| {
+                json!({
+                    "name": s.name, "civ": c.name, "civ_id": c.id, "population": s.population.to_f64(),
+                    "tier": s.tier().name(), "capital": c.capital().is_some_and(|cap| std::ptr::eq(cap, s)),
+                    "era": sim_core::civ::ERAS[w.era(c)].0, "color": hex(c.color),
+                    "buildings": w.buildings(c, s).iter().map(|b| b.name()).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        let enemies: Vec<Value> = w
+            .settlement_at(i)
+            .map(|(c, _)| {
+                c.relations
+                    .iter()
+                    .filter(|r| r.at_war)
+                    .filter_map(|r| w.civilization(r.other).filter(|o| o.is_alive()))
+                    .map(|o| json!({"civ_id": o.id, "name": o.name, "species_id": o.species, "color": hex(o.color), "era": sim_core::civ::ERAS[w.era(o)].0}))
+                    .collect()
+            })
+            .unwrap_or_default();
         to_gstring(json!({
             "x": x, "y": y,
             "settlement": settlement,
+            "settlements": settlements,
+            "enemies": enemies,
             "liquid_amount": liquid,
             "liquid_color": liquid_color.map(hex),
             "ice_amount": ice,
@@ -934,9 +961,14 @@ impl SimWorld {
         let i = index(coord(x, WIDTH) as usize, coord(y, HEIGHT) as usize);
         let r = &w.regions[i];
         let mut bits = vec![format!("{:.0} K", r.temperature.to_f64())];
-        if let Some(c) = w.living_civs().find(|c| c.settlements.iter().any(|s| s.region == i)) {
-            let s = c.settlements.iter().find(|s| s.region == i).unwrap();
-            bits.push(format!("{} of the {} ({:.1}k)", s.name, c.name, s.population.to_f64()));
+        let here = w.settlements_at(i);
+        if let Some((c, s)) = here.first() {
+            let more = match here.len() - 1 {
+                0 => String::new(),
+                1 => " and 1 village".into(),
+                n => format!(" and {n} villages"),
+            };
+            bits.push(format!("{} of the {} ({:.1}k){more}", s.name, c.name, s.population.to_f64()));
         }
         if let Some((id, total)) = w.dominant_species(i) {
             if let Some(sp) = w.species_by_id(id) {

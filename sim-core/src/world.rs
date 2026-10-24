@@ -298,7 +298,7 @@ fn elements_of(substances: &[Substance]) -> Vec<String> {
 
 /// Bumped whenever the world's stored form or rules change, so old
 /// snapshots are not trusted.
-const SNAPSHOT_VERSION: u32 = 7;
+const SNAPSHOT_VERSION: u32 = 8;
 
 #[derive(Serialize)]
 struct SnapshotRef<'a> {
@@ -989,6 +989,7 @@ impl World {
             for s in &c.settlements {
                 h.u64(s.region as u64);
                 h.i64(s.population.0);
+                h.i64(s.share.0);
             }
             for r in &c.relations {
                 h.u64(r.other as u64 | (r.at_war as u64) << 40);

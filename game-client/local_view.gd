@@ -42,6 +42,24 @@ const SIZE_METRES := {"Tiny": 0.4, "Small": 0.9, "Medium": 1.7, "Large": 2.7, "H
 const DAY_LENGTH := 240.0
 ## Living (swaying, hoverable) plants; the rest of each species is forest.
 const MAX_PLANTS := 30
+## Seconds between blows in a fight (a 5e round, sped up for watching).
+const BLOW_TIME := 2.0
+
+
+## A settlement or farmstead in the visit: where it stands, how far it
+## reaches (metres), its scene node, and the places its folk go.
+class Town:
+	extends RefCounted
+	var info: Dictionary = {}
+	var name := ""
+	var farm := false
+	var centre := Vector3.ZERO
+	var radius := 0.0
+	var node: Node3D
+	var sites: Array = []
+	var huts: Array = []
+	var defended := false
+	var alarmed := 0.0
 
 
 class Wanderer:
@@ -78,6 +96,28 @@ class Wanderer:
 	var last_pos := Vector3.ZERO
 	var label: Label3D
 	var bubble: Label3D
+	## The town or farmstead a townsperson belongs to.
+	var town: Town
+	var guard := false
+	## Combat (display only), from the character sheet: hit points, armour
+	## class, attack bonus and average damage a round; the side it fights
+	## for (-1 none, 0 the townsfolk, 1 a warband, 2 a raiding hunter);
+	## its current foe and time to its next blow.
+	var hp := 10
+	var max_hp := 10
+	var ac := 10
+	var to_hit := 2
+	var dpr := 3.0
+	var team := -1
+	var foe: Wanderer
+	var cd := 0.0
+	var lunge := 0.0
+	var flash := 0.0
+	var mats: Array = []
+	var warband: Dictionary = {}
+	var gone := false
+	## Brave townsfolk stand and fight; the rest run home.
+	var brave := false
 	var altitude := 0.0
 
 
@@ -138,6 +178,13 @@ var town_scale := 2.0
 var building_count := 0
 var town: Node3D
 var civ_species := -1
+## Every settlement and farmstead here; the first is the first-founded town.
+var towns: Array = []
+var notice: Label
+var _notice_time := 0.0
+var _war_timer := 0.0
+## Peoples at war with this region's owners: {civ_id, name, species_id, color}.
+var enemies: Array = []
 ## Places townsfolk go: {name, kind, pos, face} in world space.
 var sites: Array = []
 var huts: Array = []
@@ -160,7 +207,8 @@ const SITE_DOING := {"Forge": "smithing at the forge", "Workshop": "crafting in 
 	"Mine": "digging in the mine", "Market": "trading at the market", "Library": "reading in the library",
 	"Barracks": "drilling at the barracks", "Temple": "praying at the temple", "Shrine": "praying at the shrine",
 	"Wizard's tower": "studying at the tower", "Factory": "working at the factory", "Longhouse": "feasting in the longhouse",
-	"Harbour": "mending nets at the harbour", "Field": "tending the fields", "Well": "drawing water at the well"}
+	"Harbour": "mending nets at the harbour", "Field": "tending the fields", "Well": "drawing water at the well",
+	"Post": "standing guard"}
 const GATHER := ["Well", "Market", "Longhouse"]
 
 
@@ -200,6 +248,8 @@ func _build() -> void:
 	_build_ground_cover()
 	_update_grass(cam_focus, true)
 	_spawn_life()
+	enemies = info.get("enemies", []) if not towns.is_empty() else []
+	_war_timer = rng.randf_range(35.0, 70.0)
 
 	camera = Camera3D.new()
 	camera.fov = 55.0
@@ -226,6 +276,18 @@ func _build() -> void:
 	back.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	back.pressed.connect(close)
 	bar.add_child(back)
+	notice = Label.new()
+	notice.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	notice.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	notice.position.y = 90
+	notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	notice.add_theme_font_size_override("font_size", 24)
+	notice.add_theme_color_override("font_color", Color(1.0, 0.85, 0.55))
+	notice.add_theme_constant_override("outline_size", 8)
+	notice.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	notice.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	notice.modulate.a = 0.0
+	add_child(notice)
 	tooltip = Label.new()
 	tooltip.visible = false
 	tooltip.add_theme_constant_override("outline_size", 6)
@@ -440,7 +502,7 @@ func _build_terrain() -> void:
 	inner.sort()
 	sea_level = inner[int(wet_share * (inner.size() - 1))] if wet_share > 0.02 else -100.0
 
-	_level_town_site()
+	_plan_towns()
 	palette = _make_palette()
 	if float(palette["snow_height"]) == 0.0:
 		var top := -100.0
@@ -583,8 +645,13 @@ func _build_ground_cover() -> void:
 		_multimesh(_mesh("rock"), _mat(rc.lightened(0.05)), rock_xf).name = "Rocks"
 
 
-func _near_town(x: float, z: float) -> bool:
-	return town != null and Vector2(x - town_centre.x, z - town_centre.z).length() < trodden_half + 4.0
+## Whether a point is near enough to a town or farmstead that buildings and
+## paths need checking.
+func _near_town(x: float, z: float, extra := 0.0) -> bool:
+	for t: Town in towns:
+		if Vector2(x - t.centre.x, z - t.centre.z).length() < t.radius + 18.0 * town_scale + extra:
+			return true
+	return false
 
 
 ## Grows grass in the cells around `focus` and drops cells left behind; at
@@ -629,7 +696,7 @@ func _grass_cell(k: Vector2i) -> MultiMeshInstance3D:
 	var centre := Vector3(x0 + GRASS_CELL * 0.5, 0, z0 + GRASS_CELL * 0.5)
 	if absf(centre.x) > EXT or absf(centre.z) > EXT:
 		return null
-	var near := town != null and Vector2(centre.x - town_centre.x, centre.z - town_centre.z).length() < trodden_half + GRASS_CELL
+	var near := _near_town(centre.x, centre.z, GRASS_CELL)
 	var snow: float = palette["snow_height"]
 	var xf: Array = []
 	var tints: Array = []
@@ -756,13 +823,23 @@ func _spawn_life() -> void:
 			for k in maxi(total / herds, 1):
 				var w := _add_wanderer(detail, sheet, p["name"], _role(detail, p["description"]), herd)
 				w.herd = herd
-	if town and civ_species >= 0:
+	if not towns.is_empty() and civ_species >= 0:
 		var detail = JSON.parse_string(sim.species_detail_json(civ_species))
 		var sheet = JSON.parse_string(sim.sheet_json("species", civ_species))
 		if detail != null and sheet != null:
-			var pop: float = info["settlement"].get("population", 6.0)
-			for k in clampi(int(pop), 4, 24):
-				_add_villager(detail, sheet, detail["name"], k)
+			var budget := 64
+			for t: Town in towns:
+				var pop: float = t.info.get("population", 4.0)
+				var n := (1 + rng.randi() % 2) if t.farm else (clampi(int(pop), 4, 22) if t == towns[0] else clampi(int(pop), 2, 10))
+				for k in mini(n, budget):
+					_add_villager(detail, sheet, detail["name"], k, t)
+				budget -= n
+				if t.defended:
+					# Guards keep watch at the edge of a walled or garrisoned town.
+					for k in (4 if "Barracks" in t.info.get("buildings", []) else 2):
+						var g := _add_villager(detail, sheet, "%s guard" % detail["name"], k, t)
+						g.guard = true
+						_arm(g)
 	for x in info["individuals_here"]:
 		var sid := int(x["species_id"])
 		var detail = JSON.parse_string(sim.species_detail_json(sid))
@@ -771,7 +848,7 @@ func _spawn_life() -> void:
 			continue
 		var w: Wanderer
 		if sid == civ_species and town:
-			w = _add_villager(detail, sheet, x["title"], rng.randi())
+			w = _add_villager(detail, sheet, x["title"], rng.randi(), towns[0])
 		else:
 			w = _add_wanderer(detail, sheet, x["title"], _role(detail, str(detail.get("description", ""))), _spot_near(home_focus, 120.0, false))
 		_add_label(w, Color(1.0, 0.85, 0.35))
@@ -957,19 +1034,41 @@ func _role(detail: Dictionary, description: String) -> String:
 	return "hunter" if description.ends_with("Hunter") else "grazer"
 
 
-func _add_villager(detail: Dictionary, sheet: Dictionary, name: String, k: int) -> Wanderer:
-	var start: Vector3 = town_centre
+func _add_villager(detail: Dictionary, sheet: Dictionary, name: String, k: int, t: Town) -> Wanderer:
+	var start: Vector3 = t.centre
 	var home: Dictionary = {}
-	if not huts.is_empty():
-		home = huts[posmod(k, huts.size())]
+	if not t.huts.is_empty():
+		home = t.huts[posmod(k, t.huts.size())]
 		start = home["pos"]
-	elif not sites.is_empty():
-		start = sites[posmod(k, sites.size())]["pos"]
+	elif not t.sites.is_empty():
+		start = t.sites[posmod(k, t.sites.size())]["pos"]
 	start += Vector3(rng.randf_range(-1.5, 1.5), 0, rng.randf_range(-1.5, 1.5))
 	var w := _add_wanderer(detail, sheet, name, "villager", start)
 	w.home = home
+	w.town = t
+	w.team = 0
+	w.brave = rng.randf() < 0.5
 	w.timer = rng.randf_range(0.0, 3.0)
 	return w
+
+
+## A guard's spear, held upright at its side.
+func _arm(w: Wanderer) -> void:
+	var h := w.height
+	if h < w.radius * 1.6:
+		return  # Only upright creatures carry spears.
+	var shaft := MeshInstance3D.new()
+	shaft.mesh = _mesh("cyl")
+	shaft.material_override = _mat(Color(0.42, 0.3, 0.18))
+	shaft.scale = Vector3(0.05 * h, 1.15 * h, 0.05 * h)
+	shaft.position = Vector3(w.radius * 0.9, 0.58 * h, 0.1 * h)
+	w.node.add_child(shaft)
+	var tip := MeshInstance3D.new()
+	tip.mesh = _mesh("cone")
+	tip.material_override = _mat(Color(0.75, 0.76, 0.8))
+	tip.scale = Vector3(0.09 * h, 0.16 * h, 0.09 * h)
+	tip.position = Vector3(w.radius * 0.9, 1.23 * h, 0.1 * h)
+	w.node.add_child(tip)
 
 
 func _add_wanderer(detail: Dictionary, sheet: Dictionary, name: String, role: String, near: Vector3) -> Wanderer:
@@ -993,6 +1092,7 @@ func _add_wanderer(detail: Dictionary, sheet: Dictionary, name: String, role: St
 	model.scale = Vector3.ONE * s
 	model.position = Vector3(-box.get_center().x * s, -box.position.y * s, -box.get_center().z * s)
 	model.set_meta("base_y", model.position.y)
+	model.set_meta("base_z", model.position.z)
 	w.height = box.size.y * s
 	w.radius = maxf(box.size.x, box.size.z) * s * 0.45
 	w.model = model
@@ -1000,6 +1100,12 @@ func _add_wanderer(detail: Dictionary, sheet: Dictionary, name: String, role: St
 	holder.add_child(model)
 	world.add_child(holder)
 	w.node = holder
+	w.max_hp = maxi(int(sheet.get("hit_points", 10)), 1)
+	w.hp = w.max_hp
+	w.ac = int(sheet.get("armor_class", 10))
+	for a in sheet.get("attacks", []):
+		w.to_hit = maxi(w.to_hit, int(a.get("to_hit", 2)))
+	w.dpr = maxf(1.0, float(sheet.get("cost_breakdown", {}).get("damage_per_round", 3.0)))
 	# 5e speeds are feet per six-second round.
 	var feet := maxi(int(sheet["speed"]["walk"]), int(sheet["speed"]["swim"]) if w.aquatic else 0)
 	w.speed = clampf(float(maxi(feet, 10)) * 0.3048 / 6.0, 0.4, 4.0)
@@ -1092,6 +1198,23 @@ func _process(delta: float) -> void:
 				_act(w, delta * 4.0)
 		else:
 			_act(w, delta)
+	_update_floats(delta)
+	if notice and _notice_time > 0.0:
+		_notice_time -= delta
+		notice.modulate.a = clampf(_notice_time / 1.5, 0.0, 1.0)
+	for t: Town in towns:
+		t.alarmed -= delta
+	if not enemies.is_empty():
+		_war_timer -= delta
+		if _war_timer <= 0.0:
+			_war_timer = rng.randf_range(150.0, 240.0)
+			_spawn_warband()
+	if wanderers.any(func(x): return x.gone):
+		for x: Wanderer in wanderers.filter(func(x): return x.gone):
+			if possessed == x:
+				possess(null)
+			x.node.queue_free()
+		wanderers = wanderers.filter(func(x): return not x.gone)
 	if possessed:
 		_drive(delta)
 		_update_grass(possessed.node.position)
@@ -1139,14 +1262,18 @@ func _pan(delta: float) -> void:
 func _act(w: Wanderer, delta: float) -> void:
 	w.timer -= delta
 	w.scan -= delta
+	_animate_hits(w, delta)
 	if w.scan <= 0.0:
 		w.scan = 0.4 + rng.randf() * 0.2
 		_look_around(w)
 	match w.state:
 		"walk":
 			_walk(w, delta)
+		"fight":
+			_fight(w, delta)
 		"hunt":
-			if w.prey == null or w.prey.state == "dead" or not w.prey.node.visible or w.timer <= 0.0 or _in_town(w.prey.node.position, 2.0):
+			if w.prey == null or w.prey.state == "dead" or not w.prey.node.visible or w.timer <= 0.0 or _in_town(w.prey.node.position, 2.0, false):
+				w.team = -1
 				_enter_state(w, "rest", rng.randf_range(4.0, 8.0), "catching its breath")
 				return
 			w.target = w.prey.node.position
@@ -1169,10 +1296,7 @@ func _act(w: Wanderer, delta: float) -> void:
 				_next(w)
 		"dead":
 			if w.timer <= 0.0:
-				w.model.rotation = Vector3.ZERO
-				var p := _random_spot(w.aquatic, true)
-				w.node.position = Vector3(p.x, _ground_for(w, p.x, p.z), p.z)
-				_next(w)
+				_recover(w)
 		_:
 			if w.timer <= 0.0:
 				_next(w)
@@ -1183,11 +1307,24 @@ func _model_base(w: Wanderer) -> float:
 
 
 ## Notices threats and chances: grazers bolt from hunters (and wild ones from
-## people), townsfolk run home from hunters, hunters pick out prey.
+## people), guards and brave townsfolk take on raiders while the rest run
+## home, warbands fall on whoever they meet, hunters pick out prey (and now
+## and then a lone farmer).
 func _look_around(w: Wanderer) -> void:
-	if w.state in ["dead", "inside", "flee"] or (w.state == "walk" and w.mult > 2.0):
+	if w.gone or w.state in ["dead", "inside", "fight"] or (w.state == "walk" and w.mult > 2.0):
 		return
 	var pos := w.node.position
+	if w.role == "raider":
+		if w.warband.get("retreat", false):
+			return
+		var o := _nearest_hostile(w, 24.0)
+		if o:
+			_engage(w, o)
+			return
+		for t: Town in towns:
+			if not t.farm and t.alarmed <= 0.0 and pos.distance_to(t.centre) < t.radius + 45.0:
+				_alarm(t, w)
+		return
 	if w.role == "hunter":
 		if w.state in ["hunt", "eat", "rest"]:
 			return
@@ -1200,12 +1337,39 @@ func _look_around(w: Wanderer) -> void:
 			if d < best_d and not _in_town(o.node.position, 2.0):
 				best_d = d
 				best = o
+		if best == null and rng.randf() < 0.05:
+			# A raid: a townsperson alone out in the fields or at a farmstead.
+			best_d = 30.0
+			for o: Wanderer in wanderers:
+				if o.role != "villager" or o.guard or not o.node.visible or o.state in ["dead", "inside", "fight"] or o.height > w.height * 1.5:
+					continue
+				var d := pos.distance_to(o.node.position)
+				if d < best_d and not _in_town(o.node.position, 0.0, false):
+					best_d = d
+					best = o
+			if best:
+				w.team = 2
+				w.prey = best
+				w.mult = 1.8
+				_enter_state(w, "hunt", 20.0, "stalking %s" % best.name)
+				_notice("A %s is stalking %s near %s!" % [w.species, best.name, best.town.name if best.town else "the town"])
+				return
 		if best:
 			w.prey = best
 			w.mult = 1.8
 			w.target = best.node.position
 			_enter_state(w, "hunt", 14.0, "hunting %s" % best.species)
 		return
+	if w.role == "villager":
+		var foe := _nearest_hostile(w, 40.0 if w.guard else 10.0)
+		if foe:
+			if w.guard or w.brave:
+				_engage(w, foe)
+			elif not w.home.is_empty():
+				_go(w, w.home["pos"], "home", 2.2, "fleeing from a %s" % foe.species)
+			return
+		if w.guard:
+			return
 	for o: Wanderer in wanderers:
 		if o == w or o.plant or o.state in ["dead", "inside"]:
 			continue
@@ -1224,6 +1388,289 @@ func _look_around(w: Wanderer) -> void:
 			to.z = clampf(to.z, -SIZE * 0.45, SIZE * 0.45)
 			_go(w, to, "", 2.3, "fleeing a %s" % o.species if threat else "shying away")
 		return
+
+
+# --- Fighting (display only) ---------------------------------------------------
+
+func _hostile(a: Wanderer, b: Wanderer) -> bool:
+	return a.team >= 0 and b.team >= 0 and a.team != b.team
+
+
+func _nearest_hostile(w: Wanderer, reach: float) -> Wanderer:
+	var best: Wanderer = null
+	var best_d := reach
+	for o: Wanderer in wanderers:
+		if o == w or o.gone or not o.node.visible or o.state in ["dead", "inside"] or not _hostile(w, o):
+			continue
+		var d := w.node.position.distance_to(o.node.position)
+		if d < best_d:
+			best_d = d
+			best = o
+	return best
+
+
+func _engage(a: Wanderer, b: Wanderer) -> void:
+	if a == possessed or a.state == "dead":
+		return
+	if a.bubble:
+		a.bubble.queue_free()
+		a.bubble = null
+	if a.partner:
+		a.partner.timer = 0.0
+		a.partner = null
+	a.node.visible = true
+	a.foe = b
+	a.cd = rng.randf_range(0.2, 0.9)
+	a.mult = 1.6
+	_enter_state(a, "fight", 45.0, "fighting %s" % (b.name if b.label else "a " + b.species))
+
+
+## Close in on the foe and strike once a round; beasts and raiders break off
+## when badly hurt.
+func _fight(w: Wanderer, delta: float) -> void:
+	var f := w.foe
+	if f == null or f.gone or f.state == "dead" or not f.node.visible or w.timer <= 0.0:
+		w.foe = null
+		_after_fight(w)
+		return
+	if w.team != 0 and w.hp < w.max_hp * 0.3:
+		_break_off(w)
+		return
+	var to := f.node.position - w.node.position
+	to.y = 0.0
+	var reach := w.radius + f.radius + 0.7
+	if to.length() > reach:
+		w.target = f.node.position
+		_move(w, to, delta, false)
+		return
+	_face(w, to, delta)
+	w.model.set("pace", 0.9)
+	w.cd -= delta
+	if w.cd <= 0.0:
+		w.cd = BLOW_TIME * rng.randf_range(0.85, 1.15)
+		_strike(w, f)
+
+
+## One blow: d20 plus the attack bonus against armour class, damage about
+## the sheet's damage per round (doubled on a 20).
+func _strike(a: Wanderer, b: Wanderer) -> void:
+	a.lunge = 0.3
+	var roll := rng.randi_range(1, 20)
+	if roll == 20 or (roll > 1 and roll + a.to_hit >= b.ac):
+		var dmg := maxi(1, roundi(a.dpr * rng.randf_range(0.6, 1.4) * (2.0 if roll == 20 else 1.0)))
+		b.hp -= dmg
+		b.flash = 0.25
+		_float_text(b, str(dmg), Color(1.0, 0.4, 0.3) if b.team == 0 else Color(1.0, 0.85, 0.3))
+		if b.hp <= 0:
+			_fall(b, a)
+			return
+	else:
+		_float_text(b, "miss", Color(0.85, 0.85, 0.85))
+	# The struck fight back, and their town takes up arms.
+	if b.foe == null and b != possessed and b.state != "dead":
+		_engage(b, a)
+	if b.team == 0 and b.town:
+		_alarm(b.town, a)
+
+
+func _fall(b: Wanderer, a: Wanderer) -> void:
+	b.foe = null
+	b.prey = null
+	b.lunge = 0.0
+	b.model.position.z = b.model.get_meta("base_z", 0.0)
+	b.model.rotation.z = PI / 2.0
+	b.node.position.y = _height_at(b.node.position.x, b.node.position.z) + b.radius * 0.6
+	if b.bubble:
+		b.bubble.queue_free()
+		b.bubble = null
+	_enter_state(b, "dead", 45.0 if b.role == "villager" else 20.0, "fallen to %s" % (a.name if a.label else "a " + a.species))
+	if b.label:
+		b.label.text = "%s\n(fallen)" % b.name
+	if b.role == "raider" and not b.warband.is_empty():
+		b.warband["lost"] = int(b.warband["lost"]) + 1
+		if not b.warband["retreat"] and int(b.warband["lost"]) * 2 >= int(b.warband["size"]):
+			b.warband["retreat"] = true
+			_notice("The warband of the %s breaks and flees %s!" % [b.warband["civ"], (b.warband["town"] as Town).name])
+	if a.role == "hunter" and a.team == 2:
+		a.team = -1
+		a.foe = null
+		_enter_state(a, "eat", rng.randf_range(8.0, 12.0), "feeding")
+
+
+## The fallen get up again: townsfolk at home, nursed back to health;
+## beasts elsewhere; raiders are gone for good.
+func _recover(w: Wanderer) -> void:
+	w.model.rotation = Vector3.ZERO
+	if w.role == "raider":
+		w.gone = true
+		return
+	w.hp = w.max_hp
+	var p: Vector3
+	if w.role == "villager":
+		p = w.home.get("pos", w.town.centre if w.town else town_centre)
+	else:
+		p = _random_spot(w.aquatic, true)
+	w.node.position = Vector3(p.x, _ground_for(w, p.x, p.z), p.z)
+	if w.label:
+		w.label.text = w.name
+	w.activity = ""
+	_next(w)
+
+
+func _after_fight(w: Wanderer) -> void:
+	var o := _nearest_hostile(w, 25.0)
+	if o and (w.team != 0 or w.guard or w.brave):
+		_engage(w, o)
+		return
+	w.model.set("pace", 0.2)
+	if w.team == 2:
+		w.team = -1
+	_next(w)
+
+
+func _break_off(w: Wanderer) -> void:
+	w.foe = null
+	if w.role == "raider" and not w.warband.is_empty():
+		_go(w, w.warband["spawn"], "leave", 1.8, "fleeing, wounded")
+		return
+	w.team = -1
+	var away := w.node.position - w.target
+	away.y = 0.0
+	var to := w.node.position + (away.normalized() if away.length() > 0.1 else Vector3.FORWARD) * 40.0
+	to.x = clampf(to.x, -SIZE * 0.45, SIZE * 0.45)
+	to.z = clampf(to.z, -SIZE * 0.45, SIZE * 0.45)
+	_go(w, to, "rest", 2.0, "fleeing, wounded")
+
+
+## A town takes up arms: its guards (and any within reach) go for the
+## attacker, its brave folk nearby join in, the rest run home.
+func _alarm(t: Town, attacker: Wanderer) -> void:
+	if t.alarmed > 0.0 or attacker.state == "dead":
+		return
+	t.alarmed = 30.0
+	for w: Wanderer in wanderers:
+		if w.role != "villager" or w.state in ["dead", "fight"] or w == possessed:
+			continue
+		var d := w.node.position.distance_to(attacker.node.position)
+		if w.guard and (w.town == t or d < 300.0):
+			_engage(w, attacker)
+		elif w.town == t and d < 40.0 and w.state != "inside":
+			if w.brave:
+				_engage(w, attacker)
+			elif not w.home.is_empty():
+				_go(w, w.home["pos"], "home", 2.2, "running for shelter")
+
+
+## Lunges and hit flashes.
+func _animate_hits(w: Wanderer, delta: float) -> void:
+	if w.lunge > 0.0:
+		w.lunge = maxf(w.lunge - delta, 0.0)
+		w.model.position.z = w.model.get_meta("base_z", 0.0) + sin((0.3 - w.lunge) / 0.3 * PI) * maxf(w.radius, 0.3) * 0.6
+	if w.flash > 0.0:
+		if w.mats.is_empty():
+			for m in w.model.find_children("*", "MeshInstance3D", true, false):
+				var sm := (m as MeshInstance3D).material_override as ShaderMaterial
+				if sm:
+					w.mats.append([sm, sm.get_shader_parameter("glow_color"), sm.get_shader_parameter("glow")])
+		w.flash = maxf(w.flash - delta, 0.0)
+		for e in w.mats:
+			var sm: ShaderMaterial = e[0]
+			if w.flash > 0.0:
+				sm.set_shader_parameter("glow_color", Color(1.0, 0.25, 0.15))
+				sm.set_shader_parameter("glow", 3.0 * w.flash / 0.25)
+			else:
+				sm.set_shader_parameter("glow_color", e[1])
+				sm.set_shader_parameter("glow", e[2])
+
+
+var _floats: Array = []
+
+
+## A number (or "miss") that rises from a creature and fades.
+func _float_text(w: Wanderer, text: String, color: Color) -> void:
+	if _floats.size() > 30 or w.node.position.distance_squared_to(camera.position) > 90000.0:
+		return
+	var l := Label3D.new()
+	l.text = text
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.modulate = color
+	l.outline_size = 10
+	l.font_size = 56
+	l.pixel_size = 0.012
+	l.no_depth_test = true
+	l.position = w.node.position + Vector3(rng.randf_range(-0.3, 0.3), w.height + 0.4, rng.randf_range(-0.3, 0.3))
+	world.add_child(l)
+	_floats.append([l, 1.2])
+
+
+func _update_floats(delta: float) -> void:
+	for i in range(_floats.size() - 1, -1, -1):
+		var e: Array = _floats[i]
+		var l: Label3D = e[0]
+		e[1] = float(e[1]) - delta
+		l.position.y += delta * 1.2
+		l.modulate.a = clampf(float(e[1]) / 0.6, 0.0, 1.0)
+		if float(e[1]) <= 0.0:
+			l.queue_free()
+			_floats.remove_at(i)
+
+
+func _notice(text: String) -> void:
+	if notice == null:
+		return
+	notice.text = text
+	notice.modulate.a = 1.0
+	_notice_time = 6.0
+
+
+# --- War ---------------------------------------------------------------------
+
+## A warband of a people at war with this region's owners marches on one of
+## its towns, pillages, and fights whoever stands in its way.
+func _spawn_warband() -> void:
+	var targets: Array = towns.filter(func(t): return not t.farm)
+	if enemies.is_empty() or targets.is_empty():
+		return
+	var e: Dictionary = enemies[rng.randi() % enemies.size()]
+	var detail = JSON.parse_string(sim.species_detail_json(int(e["species_id"])))
+	var sheet = JSON.parse_string(sim.sheet_json("species", int(e["species_id"])))
+	if detail == null or sheet == null:
+		return
+	var t: Town = targets[rng.randi() % targets.size()]
+	var a := rng.randf() * TAU
+	var spawn := _spot_near(t.centre + Vector3(cos(a), 0, sin(a)) * (t.radius + 180.0), 50.0, false)
+	var n := 4 + rng.randi() % 5
+	var band := {"civ": str(e["name"]), "town": t, "spawn": spawn, "size": n, "lost": 0, "pillaged": 0, "retreat": false}
+	for k in n:
+		var r := _add_wanderer(detail, sheet, "%s warrior of the %s" % [detail["name"], e["name"]], "raider", spawn)
+		r.team = 1
+		r.warband = band
+		r.timer = 0.3 + k * 0.3
+		_arm(r)
+		if k == 0:
+			_add_label(r, Color(1.0, 0.5, 0.45))
+			r.label.text = "Warband of the %s" % e["name"]
+	_notice("A warband of the %s marches on %s!" % [e["name"], t.name])
+
+
+func _next_raider(w: Wanderer) -> void:
+	var b := w.warband
+	if b.is_empty() or b["retreat"]:
+		_go(w, b.get("spawn", w.node.position), "leave", 1.3, "retreating")
+		return
+	var o := _nearest_hostile(w, 30.0)
+	if o:
+		_engage(w, o)
+		return
+	var t: Town = b["town"]
+	if int(b["pillaged"]) >= int(b["size"]) * 2 or t.sites.is_empty():
+		b["retreat"] = true
+		_notice("The warband of the %s withdraws from %s with its plunder." % [b["civ"], t.name])
+		_go(w, b["spawn"], "leave", 1.2, "carrying off plunder")
+		return
+	var s: Dictionary = t.sites[rng.randi() % t.sites.size()]
+	w.site = s
+	_go(w, _jitter(s["pos"], 2.0), "pillage", 1.4, "marching on %s" % t.name)
 
 
 func _enter_state(w: Wanderer, state: String, time: float, activity: String) -> void:
@@ -1276,6 +1723,8 @@ func _next(w: Wanderer) -> void:
 	match w.role:
 		"villager":
 			_next_villager(w)
+		"raider":
+			_next_raider(w)
 		"swimmer":
 			var to := _jitter(w.herd, 14.0)
 			if _fits(to, true):
@@ -1304,6 +1753,18 @@ func _next(w: Wanderer) -> void:
 
 
 func _next_villager(w: Wanderer) -> void:
+	var t := w.town
+	var here: Array = t.sites if t else sites
+	if w.guard and t:
+		# Guards walk the edge of town, day and night.
+		var a := rng.randf() * TAU
+		var post := t.centre + Vector3(cos(a), 0, sin(a)) * (t.radius + rng.randf_range(1.0, 4.0) * town_scale)
+		if _fits(post, false):
+			_go(w, post, "work", 1.0, "on patrol")
+			w.site = {"name": "Post", "face": post + Vector3(cos(a), 0, sin(a)) * 10.0}
+		else:
+			_enter_state(w, "rest", 4.0, "keeping watch")
+		return
 	if night > 0.4:
 		if not w.home.is_empty():
 			_go(w, w.home["pos"], "home", 1.2, "heading home for the night")
@@ -1314,14 +1775,16 @@ func _next_villager(w: Wanderer) -> void:
 	if r < 0.15 and not w.home.is_empty():
 		_go(w, w.home["pos"], "home", 1.0, "going home")
 		return
-	if r < 0.45:
-		var gather: Array = sites.filter(func(s): return s["name"] in GATHER)
-		if not gather.is_empty():
+	if r < 0.45 or (t and t.farm and r < 0.55):
+		# Farmers walk into the first town to meet people.
+		var meet: Array = towns[0].sites if t and t.farm and not towns.is_empty() else here
+		var gather: Array = meet.filter(func(s): return s["name"] in GATHER)
+		if not gather.is_empty() and (not (t and t.farm) or rng.randf() < 0.3):
 			var s: Dictionary = gather[rng.randi() % gather.size()]
 			w.site = s
 			_go(w, _jitter(s["pos"], 3.0), "gather", 1.0, "walking to the %s" % str(s["name"]).to_lower())
 			return
-	var work: Array = sites.filter(func(s): return not (s["name"] in GATHER) or s["name"] == "Well")
+	var work: Array = here.filter(func(s): return not (s["name"] in GATHER) or s["name"] == "Well")
 	if work.is_empty():
 		_enter_state(w, "rest", 6.0, "idling")
 		return
@@ -1345,6 +1808,11 @@ func _arrive(w: Wanderer) -> void:
 			_enter_state(w, "graze", rng.randf_range(5.0, 12.0), "grazing")
 		"rest":
 			_enter_state(w, "rest", rng.randf_range(2.0, 6.0), "resting")
+		"pillage":
+			w.warband["pillaged"] = int(w.warband["pillaged"]) + 1
+			_enter_state(w, "work", rng.randf_range(6.0, 10.0), "pillaging the %s" % str(w.site.get("name", "town")).to_lower())
+		"leave":
+			w.gone = true
 		_:
 			_next(w)
 
@@ -1387,8 +1855,12 @@ func _bubble(w: Wanderer) -> Label3D:
 	return l
 
 
-func _in_town(p: Vector3, margin: float) -> bool:
-	return town != null and Vector2(p.x - town_centre.x, p.z - town_centre.z).length() < town_radius + margin
+## Whether a point is within a settlement (and, with `farms`, a farmstead).
+func _in_town(p: Vector3, margin: float, farms := true) -> bool:
+	for t: Town in towns:
+		if (farms or not t.farm) and Vector2(p.x - t.centre.x, p.z - t.centre.z).length() < t.radius + margin:
+			return true
+	return false
 
 
 func _walk(w: Wanderer, delta: float) -> void:
@@ -1405,6 +1877,15 @@ func _walk(w: Wanderer, delta: float) -> void:
 	elif d < reach or w.timer <= 0.0:
 		_arrive(w)
 		return
+	_move(w, to, delta, true)
+
+
+## One step towards `to` (an offset), steering round buildings and others;
+## blocked by water (or out of it, for swimmers). `arrive` ends the walk when
+## blocked or stuck.
+func _move(w: Wanderer, to: Vector3, delta: float, arrive: bool) -> void:
+	var pos := w.node.position
+	var d := to.length()
 	var dir := to / maxf(d, 0.001) + _avoid(w, to)
 	dir.y = 0.0
 	dir = dir.normalized()
@@ -1413,11 +1894,9 @@ func _walk(w: Wanderer, delta: float) -> void:
 	next.z = clampf(next.z, -SIZE * 0.48, SIZE * 0.48)
 	var g := _height_at(next.x, next.z)
 	if sea_level > -50.0 and not w.winged:
-		if w.aquatic and g > sea_level - 0.6:
-			_arrive(w)
-			return
-		if not w.aquatic and g < sea_level - w.height * 0.3:
-			_arrive(w)
+		if (w.aquatic and g > sea_level - 0.6) or (not w.aquatic and g < sea_level - w.height * 0.3):
+			if arrive:
+				_arrive(w)
 			return
 	if w.winged and w.mult >= 0.9 and d > 6.0:
 		w.altitude = move_toward(w.altitude, clampf(w.height * 2.0, 2.0, 6.0), delta * 2.0)
@@ -1429,7 +1908,7 @@ func _walk(w: Wanderer, delta: float) -> void:
 	w.model.set("pace", w.speed * w.mult / maxf(w.height, 0.4) * 1.2)
 	w.stuck += delta
 	if w.stuck > 2.5:
-		if w.node.position.distance_to(w.last_pos) < 0.5:
+		if arrive and w.node.position.distance_to(w.last_pos) < 0.5:
 			_arrive(w)
 		w.stuck = 0.0
 		w.last_pos = w.node.position
@@ -1481,6 +1960,10 @@ func _face(w: Wanderer, dir: Vector3, delta: float) -> void:
 func _pounce(w: Wanderer) -> void:
 	var prey := w.prey
 	w.prey = null
+	if prey.role == "villager":
+		_engage(w, prey)
+		_strike(w, prey)
+		return
 	if rng.randf() < 0.4:
 		prey.model.rotation.z = PI / 2.0
 		prey.node.position.y = _height_at(prey.node.position.x, prey.node.position.z) + prey.radius * 0.6
@@ -1500,6 +1983,7 @@ func _pounce(w: Wanderer) -> void:
 
 func _drive(delta: float) -> void:
 	var w := possessed
+	w.cd = maxf(w.cd - delta, 0.0)
 	var input := Vector3.ZERO
 	if Input.is_key_pressed(KEY_W):
 		input.z -= 1.0
@@ -1531,16 +2015,21 @@ func _drive(delta: float) -> void:
 
 func _update_hud() -> void:
 	var head := "Region (%d, %d) · %.0f K · %d species here · %s" % [region.x, region.y, info["temperature"], info["populations"].size(), _time_name()]
-	if town:
-		var st: Dictionary = info["settlement"]
+	if not towns.is_empty():
+		var st: Dictionary = towns[0].info
 		var folk := 0
 		for w: Wanderer in wanderers:
-			folk += 1 if w.role == "villager" else 0
-		head += "\n%s, a %s of the %s (%s era) · %d townsfolk about" % [st.get("name", "?"), str(st.get("tier", "")).to_lower(), st.get("civ", "?"), st.get("era", "?"), folk]
+			folk += 1 if w.role == "villager" and w.state != "dead" else 0
+		var villages := towns.filter(func(t): return not t.farm).size() - 1
+		var farms := towns.filter(func(t): return t.farm).size()
+		head += "\n%s, a %s of the %s (%s era)%s · %d farmstead%s · %d townsfolk about" % [st.get("name", "?"), str(st.get("tier", "")).to_lower(), st.get("civ", "?"), st.get("era", "?"),
+			(" · %d village%s nearby" % [villages, "" if villages == 1 else "s"]) if villages > 0 else "", farms, "" if farms == 1 else "s", folk]
+		if not enemies.is_empty():
+			head += "\nAt war with the %s" % ", the ".join(enemies.map(func(e): return str(e["name"])))
 	title.text = head
 	if possessed:
 		var sh := possessed.sheet
-		hud.text = "Possessing %s — %s %s · HP %d · AC %d · cost %d\nWASD move (Shift to run) · drag to look · Esc to release. Possession is display only: it does not change the world." % [
+		hud.text = "Possessing %s — %s %s · HP %d · AC %d · cost %d\nWASD move (Shift to run) · Space to strike · drag to look · Esc to release. Possession is display only: it does not change the world." % [
 			possessed.name, sh["size"], sh["type"].to_lower(), sh["hit_points"], sh["armor_class"], sh["cost"]]
 	else:
 		hud.text = "WASD to travel (Shift faster) · drag to orbit · scroll to zoom · H to return%s\nHover a creature to see what it is doing · click one to possess it." % (" to town" if town else "")
@@ -1574,6 +2063,30 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		possess(null)
 	elif event is InputEventKey and event.pressed and event.keycode in [KEY_H, KEY_HOME] and possessed == null:
 		cam_focus = home_focus
+	elif event is InputEventKey and event.pressed and event.keycode == KEY_SPACE and possessed:
+		_player_strike()
+
+
+## The possessed creature strikes whatever is in front of it.
+func _player_strike() -> void:
+	var w := possessed
+	if w.cd > 0.0:
+		return
+	var facing := Vector3(-sin(look_yaw), 0, -cos(look_yaw))
+	var best: Wanderer = null
+	var best_d := 1e9
+	for o: Wanderer in wanderers:
+		if o == w or o.plant or not o.node.visible or o.state in ["dead", "inside"]:
+			continue
+		var to := o.node.position - w.node.position
+		to.y = 0.0
+		var d := to.length()
+		if d < w.radius + o.radius + 1.2 and to.normalized().dot(facing) > 0.3 and d < best_d:
+			best_d = d
+			best = o
+	w.cd = BLOW_TIME * 0.6
+	if best:
+		_strike(w, best)
 
 
 func _on_input(event: InputEvent) -> void:
@@ -1649,48 +2162,130 @@ func _tier_name() -> String:
 	return str(info["settlement"].get("tier", "Village"))
 
 
-## Picks the driest, most central ground for the settlement and levels it into
-## a plateau, so every building stands flat on the ground, never in water.
-func _level_town_site() -> void:
+## Where every settlement and farmstead stands. The first-founded town takes
+## the driest ground near the middle; its daughter villages stand a few
+## hundred metres off; farmsteads (more for a bigger people) are scattered
+## between. Each site is levelled so buildings stand flat and dry.
+func _plan_towns() -> void:
 	if not _has_town():
 		return
-	town_radius = float(TIER_RADIUS.get(_tier_name(), 7.0)) * town_scale
-	var land := sea_level + 0.4
-	var best := Vector2.ZERO
+	var list: Array = info.get("settlements", [])
+	if list.is_empty():
+		list = [info["settlement"]]
+	var total_pop := 0.0
+	for k in list.size():
+		var st: Dictionary = list[k]
+		total_pop += float(st.get("population", 1.0))
+		var t := Town.new()
+		t.info = st
+		t.name = str(st.get("name", "?"))
+		t.radius = float(TIER_RADIUS.get(str(st.get("tier", "Village")), 7.0)) * town_scale
+		var b: Array = st.get("buildings", [])
+		t.defended = "Walls" in b or "Palisade" in b or "Barracks" in b
+		var spot = _site_score_best(t.radius, Vector3.ZERO, 0.0, 240.0, 13) if k == 0 else _site_near(t.radius, towns[0].centre, 170.0, 480.0)
+		if spot == null:
+			continue
+		var c: Vector2 = spot
+		t.centre = Vector3(c.x, _level(c, t.radius + 7.0 * town_scale, 24.0), c.y)
+		towns.append(t)
+	if towns.is_empty():
+		return
+	town_centre = towns[0].centre
+	town_radius = towns[0].radius
+	# Farmsteads: one for every few thousand people, up to ten.
+	var want := clampi(int(total_pop / 2.5), 2, 10)
+	var placed := 0
+	for attempt in want * 6:
+		if placed >= want:
+			break
+		var near: Town = towns[rng.randi() % towns.size()]
+		var spot = _site_near(5.0 * town_scale, near.centre, near.radius + 40.0, near.radius + 260.0)
+		if spot == null:
+			continue
+		var c: Vector2 = spot
+		var f := Town.new()
+		f.farm = true
+		f.name = "a farmstead of %s" % near.name
+		f.info = near.info
+		f.radius = 5.0 * town_scale
+		f.centre = Vector3(c.x, _level(c, f.radius + 2.0, 10.0), c.y)
+		towns.append(f)
+		placed += 1
+
+
+## The best-scoring dry spot for a site of `radius` on a grid of candidates
+## within `reach` of `around`.
+func _site_score_best(radius: float, around: Vector3, _dmin: float, reach: float, n: int) -> Variant:
+	var best: Variant = null
 	var best_score := -1e9
-	var reach := 240.0
-	for cz in range(-6, 7):
-		for cx in range(-6, 7):
-			var c := Vector2(cx, cz) * reach / 6.0
-			var score := 0.0
-			for k in 16:
-				var a := TAU * k / 16.0
-				for f in [0.5, 1.0]:
-					var h := _height_at(c.x + cos(a) * town_radius * f, c.y + sin(a) * town_radius * f)
-					score += 1.0 if h >= land else 0.0
-			if _height_at(c.x, c.y) >= land:
-				score += 4.0
-			score -= c.length() * 0.04
+	var half := n / 2
+	for cz in range(-half, half + 1):
+		for cx in range(-half, half + 1):
+			var c := Vector2(around.x, around.z) + Vector2(cx, cz) * reach / half
+			var score := _site_score(c, radius) - c.distance_to(Vector2(around.x, around.z)) * 0.04
 			if score > best_score:
 				best_score = score
 				best = c
-	var plateau := _height_at(best.x, best.y)
+	return best
+
+
+## A good spot for a site of `radius` between `dmin` and `dmax` from
+## `around`, clear of every other site; null if there is none.
+func _site_near(radius: float, around: Vector3, dmin: float, dmax: float) -> Variant:
+	var best: Variant = null
+	var best_score := 30.0
+	for attempt in 50:
+		var a := rng.randf() * TAU
+		var d := rng.randf_range(dmin, dmax)
+		var c := Vector2(around.x, around.z) + Vector2(cos(a), sin(a)) * d
+		if absf(c.x) > SIZE * 0.42 or absf(c.y) > SIZE * 0.42:
+			continue
+		var clear := true
+		for t: Town in towns:
+			if c.distance_to(Vector2(t.centre.x, t.centre.z)) < t.radius + radius + 14.0 * town_scale + (0.0 if t.farm else 25.0):
+				clear = false
+				break
+		if not clear:
+			continue
+		var score := _site_score(c, radius) - _slope_at(c.x, c.y) * 40.0
+		if score > best_score:
+			best_score = score
+			best = c
+	return best
+
+
+## How dry a round site is: dry samples on two rings and at the centre.
+func _site_score(c: Vector2, radius: float) -> float:
+	var land := sea_level + 0.4
+	var score := 0.0
+	for k in 16:
+		var a := TAU * k / 16.0
+		for f in [0.5, 1.0]:
+			score += 1.0 if _height_at(c.x + cos(a) * radius * f, c.y + sin(a) * radius * f) >= land else 0.0
+	if _height_at(c.x, c.y) >= land:
+		score += 4.0
+	return score
+
+
+## Levels the ground into a plateau `flat` metres across around `c`,
+## blending back to the land over `blend` metres; returns its height.
+func _level(c: Vector2, flat: float, blend_width: float) -> float:
+	var plateau := _height_at(c.x, c.y)
 	if sea_level > -50.0:
 		plateau = maxf(plateau, sea_level + 0.6)
-	var flat := town_radius + 7.0 * town_scale
-	var blend := flat + 24.0
-	var gx := int((best.x + EXT) / STEP)
-	var gz := int((best.y + EXT) / STEP)
+	var blend := flat + blend_width
+	var gx := int((c.x + EXT) / STEP)
+	var gz := int((c.y + EXT) / STEP)
 	var cells := int(blend / STEP) + 2
 	for z in range(maxi(gz - cells, 0), mini(gz + cells, GRID) + 1):
 		for x in range(maxi(gx - cells, 0), mini(gx + cells, GRID) + 1):
-			var d := Vector2(x * STEP - EXT - best.x, z * STEP - EXT - best.y).length()
+			var d := Vector2(x * STEP - EXT - c.x, z * STEP - EXT - c.y).length()
 			if d >= blend:
 				continue
 			var t := 1.0 - smoothstep(flat, blend, d)
 			var i := z * (GRID + 1) + x
 			heights[i] = lerpf(heights[i], plateau, t)
-	town_centre = Vector3(best.x, plateau, best.y)
+	return plateau
 
 
 func _mesh(kind: String) -> Mesh:
@@ -1809,32 +2404,124 @@ func _add_site(name: String, local: Vector2, face: Vector2) -> void:
 	sites.append({"name": name, "pos": _world(local), "face": _world(face)})
 
 
+## Builds every settlement and farmstead, the paths in and around them and
+## the roads that join them to the first town.
 func _build_settlement() -> void:
-	if not _has_town():
+	if towns.is_empty():
 		return
-	var st: Dictionary = info["settlement"]
+	window_mat = StandardMaterial3D.new()
+	window_mat.albedo_color = Color(0.12, 0.08, 0.05)
+	window_mat.emission_enabled = true
+	window_mat.emission = Color(1.0, 0.68, 0.32)
+	trodden_origin = Vector2.ZERO
+	trodden_half = SIZE * 0.5
+	trodden = Image.create(2048, 2048, false, Image.FORMAT_L8)
+	for k in towns.size():
+		var t: Town = towns[k]
+		town_centre = t.centre
+		town_radius = t.radius
+		sites = []
+		huts = []
+		if t.farm:
+			_build_farm(t, k)
+		else:
+			_build_town(t, k)
+		t.node = town
+		t.sites = sites
+		t.huts = huts
+		_paint_paths()
+		if k > 0:
+			_paint_line(t.centre, towns[0].centre, 1.3, 0.55)  # The road to town.
+	terrain_mat.set_shader_parameter("trodden", ImageTexture.create_from_image(trodden))
+	terrain_mat.set_shader_parameter("trodden_origin", trodden_origin)
+	terrain_mat.set_shader_parameter("trodden_half", trodden_half)
+	town = towns[0].node
+	town_centre = towns[0].centre
+	town_radius = towns[0].radius
+	sites = towns[0].sites
+	huts = towns[0].huts
+
+
+## A farmstead: a house with a lit door, a fenced field of crops and a
+## haystack, where a farming family works by day.
+func _build_farm(t: Town, k: int) -> void:
+	var brng := RandomNumberGenerator.new()
+	brng.seed = region.x * 7919 + region.y * 104729 + 31 * k
+	var civ_col := Color.html(str(t.info.get("color", "c8a050")))
+	town = Node3D.new()
+	town.name = "Farm"
+	town.position = Vector3(t.centre.x, 0, t.centre.z)
+	town.scale = Vector3.ONE * town_scale
+	world.add_child(town)
+	var wood := _mat(Color(0.45, 0.32, 0.2))
+	var yaw := brng.randf() * TAU
+	var fwd := Vector2(sin(yaw), cos(yaw))
+	var side := Vector2(fwd.y, -fwd.x)
+	var house := Node3D.new()
+	house.position = Vector3(0, _ground(Vector2.ZERO) - 0.05, 0)
+	house.rotation.y = yaw
+	town.add_child(house)
+	_part(house, "box", wood, Vector3.ZERO, Vector3(2.2, 1.2, 1.7))
+	_part(house, "prism", _mat(Color(0.72, 0.6, 0.3).lerp(civ_col, 0.3)), Vector3(0, 1.2, 0), Vector3(2.6, 0.9, 1.9))
+	_part(house, "box", window_mat, Vector3(0, 0, 0.86), Vector3(0.45, 0.75, 0.05))
+	var hay := Node3D.new()
+	var hp := -side * 1.9
+	hay.position = Vector3(hp.x, _ground(hp) - 0.05, hp.y)
+	town.add_child(hay)
+	_part(hay, "dome", _mat(Color(0.82, 0.7, 0.35)), Vector3.ZERO, Vector3(1.1, 1.2, 1.1))
+	var wc := _world(Vector2.ZERO)
+	obstacles.append([Vector2(wc.x, wc.z), 1.3 * town_scale])
+	huts.append({"name": "Hut", "pos": _world(fwd * 1.4), "face": wc})
+	# The field in front of the house, fenced.
+	var field := fwd * 4.2
+	var crops: Array = []
+	var posts: Array = []
+	var ripe := Color(0.78, 0.66, 0.25) if brng.randf() < 0.5 else Color(0.36, 0.55, 0.2)
+	for row in 5:
+		for c in 8:
+			var p := field + side * (c - 3.5) * 0.45 + fwd * (row - 2) * 0.5
+			var h := 0.32 + brng.randf() * 0.15
+			crops.append(Transform3D(Basis(Vector3.UP, yaw).scaled_local(Vector3(0.2, h, 0.2)), Vector3(p.x, _ground(p) + h * 0.5, p.y)))
+	for e in 24:
+		var u := float(e) / 24.0 * 4.0
+		var q := Vector2.ZERO
+		if u < 1.0:
+			q = side * lerpf(-2.1, 2.1, u) + fwd * -1.4
+		elif u < 2.0:
+			q = side * 2.1 + fwd * lerpf(-1.4, 1.4, u - 1.0)
+		elif u < 3.0:
+			q = side * lerpf(2.1, -2.1, u - 2.0) + fwd * 1.4
+		else:
+			q = side * -2.1 + fwd * lerpf(1.4, -1.4, u - 3.0)
+		if u >= 0.4 and u < 0.6:
+			continue  # The gate faces the house.
+		var p := field + q
+		posts.append(Transform3D(Basis().scaled(Vector3(0.08, 0.6, 0.08)), Vector3(p.x, _ground(p) + 0.3, p.y)))
+	_scatter("cone", _mat(ripe), crops, false)
+	_scatter("box", wood, posts)
+	_add_site("Field", field - fwd * 0.6, field)
+	_add_site("Field", field + side * 1.2, field)
+	var fw := _world(field)
+	_paint_rect(fw, side, fwd, 2.2 * town_scale, 1.5 * town_scale, 0.8)
+
+
+func _build_town(t: Town, k: int) -> void:
+	var st: Dictionary = t.info
 	var names: Array = st["buildings"]
 	var civ_col := Color.html(str(st.get("color", "c8a050")))
 	town = Node3D.new()
-	town.name = "Town"
+	town.name = "Town" if k == 0 else "Village"
 	town.position = Vector3(town_centre.x, 0, town_centre.z)
 	town.scale = Vector3.ONE * town_scale
 	world.add_child(town)
 	var brng := RandomNumberGenerator.new()
-	brng.seed = region.x * 7919 + region.y * 104729 + 17
-	var tier := _tier_name()
+	brng.seed = region.x * 7919 + region.y * 104729 + 17 + 101 * k
+	var tier := str(st.get("tier", "Village"))
 	var r_units := town_radius / town_scale
 	var wood := _mat(Color(0.45, 0.32, 0.2))
 	var stone := _mat(Color(0.58, 0.58, 0.6))
 	var dark := _mat(Color(0.3, 0.3, 0.33))
 	var roof := _mat(civ_col.darkened(0.15))
-	window_mat = StandardMaterial3D.new()
-	window_mat.albedo_color = Color(0.12, 0.08, 0.05)
-	window_mat.emission_enabled = true
-	window_mat.emission = Color(1.0, 0.68, 0.32)
-	trodden_origin = Vector2(town_centre.x, town_centre.z)
-	trodden_half = town_radius + 16.0 * town_scale
-	trodden = Image.create(512, 512, false, Image.FORMAT_L8)
 	var placed: Array = [[Vector2.ZERO, 1.6]]  # [town-space position, footprint radius]; the well.
 
 	# The well in the square, where townsfolk meet.
@@ -1879,7 +2566,7 @@ func _build_settlement() -> void:
 	var tops: Array = []
 	var doors: Array = []
 	if "Huts" in names or tier == "Camp":
-		for k in int(TIER_HUTS.get(tier, 6)):
+		for h in int(TIER_HUTS.get(tier, 6)):
 			var spot = _find_spot(brng, placed, 1.3, r_units, 0.0)
 			if spot == null:
 				break
@@ -1909,7 +2596,6 @@ func _build_settlement() -> void:
 		_build_harbour(wood)
 	if "Granary" in names or tier != "Camp":
 		_build_fields(brng, r_units + (6.5 if "Walls" in names else 4.5))
-	_paint_paths()
 
 
 ## A free spot within the town's reach, as an offset from its centre.
@@ -2075,12 +2761,9 @@ func _paint_rect(c: Vector3, along: Vector2, out: Vector2, half_a: float, half_o
 
 ## Beaten earth: the square, and paths from it to every door and field.
 func _paint_paths() -> void:
-	_paint(town_centre.x, town_centre.z, 3.2 * town_scale, 0.9)
+	_paint(town_centre.x, town_centre.z, (1.6 if town.name == "Farm" else 3.2) * town_scale, 0.9)
 	for s in sites + huts:
 		_paint_line(town_centre, s["pos"], 0.9, 0.75)
-	terrain_mat.set_shader_parameter("trodden", ImageTexture.create_from_image(trodden))
-	terrain_mat.set_shader_parameter("trodden_origin", trodden_origin)
-	terrain_mat.set_shader_parameter("trodden_half", trodden_half)
 
 
 func _make_building(n: String, root: Node3D, civ: Color, wood: Material, stone: Material, dark: Material, roof: Material) -> void:
