@@ -47,6 +47,31 @@ class Unit:
 	var simple := false
 	var mm_index := -1
 	var color := Color.WHITE
+	## Presentation state: the simulation's latest position and facing, the
+	## smoothed ones drawn, and timers (seconds) for the attack lunge, hit
+	## flash and death animation (negative while not running).
+	var seen := false
+	var has_breath := false
+	var breath_ready := false
+	var target_pos := Vector3.ZERO
+	var vis_pos := Vector3.ZERO
+	var target_yaw := 0.0
+	var yaw := 0.0
+	var lunge_t := -1.0
+	var lunge_dir := Vector3.ZERO
+	var flash_t := -1.0
+	var death_t := -1.0
+	var shown_frac := 1.0
+	## Modelled units only: the part that lunges, topples and shrinks, the
+	## meshes that take the flash overlay, and the decorations.
+	var body: Node3D
+	var meshes: Array = []
+	var flash_mat: StandardMaterial3D
+	var ring_mat: StandardMaterial3D
+	var disc_mat: StandardMaterial3D
+	var bar: MeshInstance3D
+	var dirty := true
+	var flash_color := Color.WHITE
 
 
 var sim: RefCounted
@@ -65,7 +90,13 @@ var cap := 100
 var units: Array = []
 var running := false
 var finished := false
+## Playback speed relative to the normal pace (0 pauses). Offline battles
+## run at OFFLINE_PACE of arena time at x1; online the server sets the pace.
 var speed := 1.0
+const OFFLINE_PACE := 0.5
+const SPEEDS := [0.0, 0.5, 1.0, 2.0, 4.0]
+const SPEED_NAMES := ["⏸", "×½", "×1", "×2", "×4"]
+var speed_buttons: Array = []
 var possessed := -1
 var arena_sim: RefCounted
 var tick_budget := 0.0
@@ -142,6 +173,43 @@ var battlefield_select: OptionButton
 var biomes: Array = []
 var probe: RefCounted
 var _simple_count := [0, 0]
+
+# Battle presentation (health bars, hit effects, kill feed, header).
+const TEAM_COLORS := [Color(0.35, 0.7, 1.0), Color(1.0, 0.4, 0.35)]
+## Floating numbers, tracers and puffs alive at once; big battles hit the cap.
+const MAX_NUMBERS := 40
+const MAX_TRACERS := 24
+const MAX_PUFFS := 30
+## Hit effects derived per sync; the rest of a big battle's hits are skipped.
+const MAX_HITS_PER_SYNC := 24
+const KILL_FEED_LINES := 6
+const KILL_FEED_SECONDS := 9.0
+## Show name labels over units only in small battles.
+const LABELS_BELOW := 30
+const DEATH_TIME := 1.2
+const LUNGE_TIME := 0.34
+const FLASH_TIME := 0.28
+var ring_mms: Array = [null, null]
+var bar_mats: Array = [null, null]
+var bar_mesh: QuadMesh
+var number_pool: Array = []
+var tracer_pool: Array = []
+var puff_pool: Array = []
+var fx_root: Node3D
+var puff_mesh: SphereMesh
+var tracer_mesh: BoxMesh
+var kill_feed: Array = []
+var kill_label: RichTextLabel
+var kill_feed_timer := 0.0
+var hud: Control
+var header_bars: Array = []
+var header_labels: Array = []
+var start_units := [0, 0]
+var start_cost := [0, 0]
+var hits_flip := 0
+var active_numbers: Array = []
+var active_tracers: Array = []
+var active_puffs: Array = []
 
 
 func open(world_sim: RefCounted) -> void:
@@ -684,7 +752,9 @@ func _process(delta: float) -> void:
 	if net:
 		_poll_net()
 	if running and not finished:
-		step(delta * speed)
+		step(delta * speed * (1.0 if online else OFFLINE_PACE))
+	if running:
+		_animate(delta)
 	_update_camera(delta)
 
 
@@ -710,7 +780,7 @@ func _spawn(entry: Dictionary, team: int, simple := false) -> void:
 	if simple:
 		# Large armies: a bare position holder; the side's MultiMesh draws it.
 		u.simple = true
-		u.color = Color.html("#" + str(entry["detail"]["color"]).trim_prefix("#")).lerp(Color(0.35, 0.7, 1.0) if team == my_team else Color(1.0, 0.4, 0.35), 0.35)
+		u.color = Color.html("#" + str(entry["detail"]["color"]).trim_prefix("#")).lerp(_team_color(team), 0.55)
 		u.node = Node3D.new()
 		world.add_child(u.node)
 		u.mm_index = _simple_count[team]
@@ -724,31 +794,90 @@ func _spawn(entry: Dictionary, team: int, simple := false) -> void:
 	model.scale = Vector3.ONE * s
 	model.position = Vector3(-box.get_center().x * s, -box.position.y * s, -box.get_center().z * s)
 	var holder := Node3D.new()
-	holder.add_child(model)
-	# Team ring on the ground: blue for you, red for the rival.
+	u.body = Node3D.new()
+	holder.add_child(u.body)
+	u.body.add_child(model)
+	for m in model.find_children("*", "MeshInstance3D", true, false):
+		u.meshes.append(m)
+	u.flash_mat = StandardMaterial3D.new()
+	u.flash_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	u.flash_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	u.flash_mat.albedo_color = Color(1, 1, 1, 0)
+	var team_col := _team_color(team)
+	# Team marking on the ground: a translucent disc inside a bright ring.
+	var size_r: float = SIZE_SCALE.get(size, 1.0) * 0.38
 	var ring := MeshInstance3D.new()
 	var torus := TorusMesh.new()
-	var size_r: float = SIZE_SCALE.get(size, 1.0) * 0.55
 	torus.inner_radius = size_r
-	torus.outer_radius = size_r + 0.12
+	torus.outer_radius = size_r + 0.1
 	ring.mesh = torus
-	var ring_mat := StandardMaterial3D.new()
-	ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	ring_mat.albedo_color = Color(0.35, 0.7, 1.0) if team == my_team else Color(1.0, 0.4, 0.35)
-	ring.material_override = ring_mat
-	ring.position.y = 0.05
+	u.ring_mat = StandardMaterial3D.new()
+	u.ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	u.ring_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	u.ring_mat.albedo_color = team_col
+	ring.material_override = u.ring_mat
+	ring.position.y = 0.06
+	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	holder.add_child(ring)
+	var disc := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = size_r
+	cyl.bottom_radius = size_r
+	cyl.height = 0.02
+	cyl.radial_segments = 24
+	cyl.rings = 1
+	disc.mesh = cyl
+	u.disc_mat = StandardMaterial3D.new()
+	u.disc_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	u.disc_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	u.disc_mat.albedo_color = Color(team_col, 0.2)
+	disc.material_override = u.disc_mat
+	disc.position.y = 0.03
+	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	holder.add_child(disc)
+	# Health bar and name label above the head.
+	var top: float = SIZE_SCALE.get(size, 1.0) + 0.35
+	u.bar = MeshInstance3D.new()
+	u.bar.mesh = _bar_mesh()
+	u.bar.material_override = _bar_material(team)
+	u.bar.scale = Vector3.ONE * clampf(SIZE_SCALE.get(size, 1.0) * 0.55, 0.9, 2.0)
+	u.bar.position.y = top
+	u.bar.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	holder.add_child(u.bar)
 	world.add_child(holder)
 	u.node = holder
 	u.label = Label3D.new()
 	u.label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	u.label.font_size = 28
-	u.label.pixel_size = 0.02
+	u.label.pixel_size = 0.014
 	u.label.outline_size = 6
+	u.label.no_depth_test = true
 	u.label.modulate = Color(0.6, 0.85, 1.0) if team == my_team else Color(1.0, 0.6, 0.55)
-	u.label.position = Vector3(0, SIZE_SCALE.get(size, 1.0) + 0.4, 0)
+	u.label.position = Vector3(0, top + 0.5, 0)
 	holder.add_child(u.label)
 	units.append(u)
+
+
+func _team_color(team: int) -> Color:
+	return TEAM_COLORS[0 if team == my_team else 1]
+
+
+func _bar_mesh() -> QuadMesh:
+	if bar_mesh == null:
+		bar_mesh = QuadMesh.new()
+		bar_mesh.size = Vector2(1.5, 0.2)
+	return bar_mesh
+
+
+## One health-bar material per side (the fill fraction is per instance).
+func _bar_material(team: int) -> ShaderMaterial:
+	if bar_mats[team] == null:
+		var m := ShaderMaterial.new()
+		m.shader = preload("res://shaders/arena_bar.gdshader")
+		m.set_shader_parameter("team_color", _team_color(team))
+		m.render_priority = 5
+		bar_mats[team] = m
+	return bar_mats[team]
 
 
 ## Removes the previous match's units and simple-shape instances.
@@ -761,6 +890,21 @@ func _clear_units() -> void:
 			multimeshes[i].queue_free()
 			multimeshes[i] = null
 	_simple_count = [0, 0]
+	for i in 2:
+		if ring_mms[i]:
+			ring_mms[i].queue_free()
+			ring_mms[i] = null
+	bar_mats = [null, null]
+	if fx_root:
+		fx_root.queue_free()
+		fx_root = null
+	number_pool.clear()
+	tracer_pool.clear()
+	puff_pool.clear()
+	kill_feed.clear()
+	active_numbers.clear()
+	active_tracers.clear()
+	active_puffs.clear()
 	if possess_marker:
 		possess_marker.queue_free()
 		possess_marker = null
@@ -787,6 +931,27 @@ func _make_multimesh(team: int, count: int) -> void:
 	inst.custom_aabb = AABB(Vector3(-200, -5, -200), Vector3(400, 20, 400))
 	world.add_child(inst)
 	multimeshes[team] = inst
+	# Flat team-coloured rings on the ground under every unit of the side.
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.62
+	ring.outer_radius = 0.78
+	ring.rings = 16
+	ring.ring_segments = 6
+	var rmat := StandardMaterial3D.new()
+	rmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	rmat.vertex_color_use_as_albedo = true
+	ring.material = rmat
+	var rmm := MultiMesh.new()
+	rmm.transform_format = MultiMesh.TRANSFORM_3D
+	rmm.use_colors = true
+	rmm.mesh = ring
+	rmm.instance_count = count
+	var rinst := MultiMeshInstance3D.new()
+	rinst.multimesh = rmm
+	rinst.custom_aabb = inst.custom_aabb
+	rinst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	world.add_child(rinst)
+	ring_mms[team] = rinst
 
 
 ## Sets up the field and the unit models once a match's roster is known.
@@ -826,8 +991,11 @@ func _start_battle() -> void:
 
 
 func _build_battle_ui() -> void:
+	if is_instance_valid(hud):
+		hud.queue_free()
+	_build_hud()
 	battle_ui = VBoxContainer.new()
-	battle_ui.position = Vector2(12, 12)
+	battle_ui.position = Vector2(12, 72)
 	add_child(battle_ui)
 	status_label = Label.new()
 	status_label.add_theme_font_size_override("font_size", 18)
@@ -850,11 +1018,20 @@ func _build_battle_ui() -> void:
 			find_online_match())
 		row.add_child(rejoin_button)
 	else:
-		for sp in [1.0, 2.0, 4.0]:
+		# Pause and playback speed; the current one stays highlighted.
+		var group := ButtonGroup.new()
+		speed_buttons.clear()
+		for i in SPEEDS.size():
 			var b := Button.new()
-			b.text = "×%d" % int(sp)
-			b.pressed.connect(func(): speed = sp)
+			b.text = SPEED_NAMES[i]
+			b.toggle_mode = true
+			b.button_group = group
+			b.custom_minimum_size = Vector2(44, 0)
+			b.tooltip_text = "Pause" if SPEEDS[i] == 0.0 else "Playback speed %s" % SPEED_NAMES[i]
+			b.button_pressed = is_equal_approx(SPEEDS[i], speed)
+			b.pressed.connect(func(): speed = SPEEDS[i])
 			row.add_child(b)
+			speed_buttons.append(b)
 	var back := Button.new()
 	back.text = "Back to world"
 	back.pressed.connect(close)
@@ -864,9 +1041,80 @@ func _build_battle_ui() -> void:
 	battle_ui.add_child(help_label)
 	log_label = RichTextLabel.new()
 	log_label.bbcode_enabled = true
-	log_label.custom_minimum_size = Vector2(620, 220)
+	log_label.custom_minimum_size = Vector2(560, 170)
 	log_label.scroll_following = true
+	log_label.add_theme_font_size_override("normal_font_size", 13)
+	log_label.add_theme_font_size_override("bold_font_size", 13)
+	var log_bg := StyleBoxFlat.new()
+	log_bg.bg_color = Color(0, 0, 0, 0.35)
+	log_bg.set_content_margin_all(6)
+	log_label.add_theme_stylebox_override("normal", log_bg)
 	battle_ui.add_child(log_label)
+
+
+## The header (each side's standing units and surviving cost, with bars) and
+## the kill feed, in a full-screen overlay that lets clicks through.
+func _build_hud() -> void:
+	hud = Control.new()
+	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(hud)
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.position.y = 8
+	hud.add_child(panel)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 24)
+	panel.add_child(row)
+	header_bars.clear()
+	header_labels.clear()
+	for side in 2:
+		var v := VBoxContainer.new()
+		v.custom_minimum_size = Vector2(230, 0)
+		v.add_theme_constant_override("separation", 2)
+		var l := Label.new()
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if side == 0 else HORIZONTAL_ALIGNMENT_RIGHT
+		l.add_theme_font_size_override("font_size", 16)
+		l.add_theme_color_override("font_color", TEAM_COLORS[side].lightened(0.2))
+		v.add_child(l)
+		header_labels.append(l)
+		var bars := []
+		for kind in 2:
+			var bar := ProgressBar.new()
+			bar.show_percentage = false
+			bar.custom_minimum_size = Vector2(0, 9 if kind == 0 else 6)
+			bar.max_value = 1.0
+			bar.value = 1.0
+			bar.fill_mode = ProgressBar.FILL_BEGIN_TO_END if side == 0 else ProgressBar.FILL_END_TO_BEGIN
+			var fill := StyleBoxFlat.new()
+			fill.bg_color = TEAM_COLORS[side] if kind == 0 else TEAM_COLORS[side].darkened(0.35)
+			var back := StyleBoxFlat.new()
+			back.bg_color = Color(0.1, 0.1, 0.12, 0.9)
+			bar.add_theme_stylebox_override("fill", fill)
+			bar.add_theme_stylebox_override("background", back)
+			v.add_child(bar)
+			bars.append(bar)
+		header_bars.append(bars)
+		row.add_child(v)
+	kill_label = RichTextLabel.new()
+	kill_label.bbcode_enabled = true
+	kill_label.fit_content = true
+	kill_label.scroll_active = false
+	kill_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	kill_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	kill_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	kill_label.offset_left = -400.0
+	kill_label.offset_right = -12.0
+	kill_label.offset_top = 64.0
+	kill_label.add_theme_font_size_override("normal_font_size", 15)
+	kill_label.add_theme_constant_override("outline_size", 4)
+	kill_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	hud.add_child(kill_label)
+	start_units = [0, 0]
+	start_cost = [0, 0]
+	kill_feed.clear()
 
 
 func _log(text: String) -> void:
@@ -896,50 +1144,80 @@ func _decided_by(mine: float, theirs: float) -> String:
 	return ""
 
 
-## Copies the simulation state onto the scene.
+## Copies the simulation state onto the scene and derives the hit, death and
+## kill-feed effects from what changed since the last sync (the state exposes
+## hit points, not who struck whom, so attackers are inferred).
 func _sync() -> void:
 	state = JSON.parse_string(arena_sim.state_json())
 	var su: Array = state["units"]
+	var events: Array = JSON.parse_string(arena_sim.events_json())
 	var alive_n := [0, 0]
-	var mm_dirty := [false, false]
+	## Unit index -> hit point change this sync (negative: damage).
+	var deltas := {}
+	var died: Array = []
+	var breathers: Array = []
 	for i in units.size():
 		var u: Unit = units[i]
 		var d: Dictionary = su[i]
+		var was_alive := u.alive
+		var prev_hp := u.hp
 		u.alive = d["alive"]
 		u.hp = int(d["hp"])
 		u.max_hp = int(d["max_hp"])
 		u.radius = float(d["radius"])
 		var is_mine: bool = u.team == my_team
 		alive_n[0 if is_mine else 1] += 1 if u.alive else 0
-		u.node.position = Vector3(d["x"], 0, d["z"])
 		var facing := Vector3(d["fx"], 0, d["fz"])
+		u.target_pos = Vector3(d["x"], 0, d["z"])
 		if online and i == possessed:
-			u.node.position += predicted_offset
+			u.target_pos += predicted_offset
 			if last_steer.length() > 0.01:
 				facing = Vector3(last_steer.x, 0, last_steer.y)
-		if u.simple:
-			var mm: MultiMesh = multimeshes[u.team].multimesh
-			var sc := maxf(u.radius, 0.3) * 2.0
-			if u.alive:
-				var basis := Basis.looking_at(facing, Vector3.UP, true) if facing.length() > 0.01 else Basis()
-				mm.set_instance_transform(u.mm_index, Transform3D(basis.scaled(Vector3.ONE * sc), u.node.position + Vector3(0, 0.9 * sc, 0)))
-			else:
-				mm.set_instance_transform(u.mm_index, Transform3D(Basis().scaled(Vector3.ZERO), u.node.position))
-			mm.set_instance_color(u.mm_index, u.color)
-			continue
-		u.node.visible = u.alive
 		if facing.length() > 0.01:
-			u.node.look_at(u.node.position + facing, Vector3.UP, true)
-		u.label.text = "%s\n%d/%d%s" % [u.name, max(u.hp, 0), u.max_hp, "  ◆" if i == possessed else ""]
+			u.target_yaw = atan2(facing.x, facing.z)
+		var has_breath: bool = d.get("has_breath", false)
+		var breath_ready: bool = d.get("breath_ready", false)
+		if not u.seen:
+			# First look: place the unit without animating.
+			u.seen = true
+			u.vis_pos = u.target_pos
+			u.yaw = u.target_yaw
+			u.shown_frac = float(u.hp) / maxf(u.max_hp, 1.0)
+			u.node.position = u.vis_pos
+			if not u.alive:
+				u.death_t = DEATH_TIME
+		elif was_alive:
+			if u.hp != prev_hp:
+				deltas[i] = u.hp - prev_hp
+			if not u.alive:
+				died.append(i)
+			if u.has_breath and u.breath_ready and not breath_ready:
+				breathers.append(i)
+		u.has_breath = has_breath
+		u.breath_ready = breath_ready
+		u.dirty = true
+		if online and i == possessed:
+			u.vis_pos = u.target_pos
+		if not u.simple:
+			u.label.visible = u.alive and (units.size() <= LABELS_BELOW or i == possessed)
+			u.label.text = "%s\n%d/%d%s" % [u.name, max(u.hp, 0), u.max_hp, "  ◆" if i == possessed else ""]
 	if possessed >= 0 and not units[possessed].alive:
 		possessed = -1
 	_update_possess_marker()
-	for line in JSON.parse_string(arena_sim.events_json()):
+	if not deltas.is_empty() or not breathers.is_empty():
+		_hit_effects(deltas, breathers)
+	if not died.is_empty():
+		_death_effects(died, _falls(events))
+	for line in events:
 		_log(line)
 	var other := 1 - my_team
 	var hold: Array = state.get("hold", [0.0, 0.0])
 	var hold_time := float(state.get("hold_time", 60.0))
 	var cost: Array = state.get("surviving_cost", [0, 0])
+	if start_units[0] + start_units[1] == 0:
+		start_units = [maxi(alive_n[0], 1), maxi(alive_n[1], 1)]
+		start_cost = [maxi(int(cost[my_team]), 1), maxi(int(cost[other]), 1)]
+	_update_header(alive_n, [int(cost[my_team]), int(cost[other])])
 	_tint_shrine(my_team if float(hold[my_team]) > 0.0 else (other if float(hold[other]) > 0.0 else -1))
 	if status_label:
 		var shrine := "Shrine: unheld"
@@ -947,8 +1225,7 @@ func _sync() -> void:
 			shrine = "Shrine: You %d/%d s" % [int(hold[my_team]), int(hold_time)]
 		elif float(hold[other]) > 0.0:
 			shrine = "Shrine: Rival %d/%d s" % [int(hold[other]), int(hold_time)]
-		status_label.text = "Your team: %d standing (cost %d)   ·   Rival: %d standing (cost %d)\nTime left %s   ·   %s" % [
-			alive_n[0], int(cost[my_team]), alive_n[1], int(cost[other]),
+		status_label.text = "Time left %s   ·   %s" % [
 			_mmss(float(state.get("time_limit", 600.0)) - float(state["time"])), shrine]
 	var result = state["result"]
 	if result != null and not finished:
@@ -965,6 +1242,389 @@ func _sync() -> void:
 			_log("%s %d of your champions fell. (Online, in ranked matches, they would be lost forever.)" % [text, fallen])
 		if status_label:
 			status_label.text = ("Victory!" if won else ("Draw." if result == "draw" else "Defeat.")) + ("\nDecided %s." % why if why != "" else "")
+
+
+## Updates the header's text and bars (units standing, surviving cost).
+func _update_header(alive_n: Array, cost: Array) -> void:
+	if header_labels.size() < 2 or not is_instance_valid(header_labels[0]):
+		return
+	for side in 2:
+		header_labels[side].text = "%s   %d / %d standing · cost %d" % [
+			"You" if side == 0 else "Rival", alive_n[side], start_units[side], cost[side]]
+		header_bars[side][0].value = float(alive_n[side]) / start_units[side]
+		header_bars[side][1].value = float(cost[side]) / start_cost[side]
+
+
+# --- Battle effects ---------------------------------------------------------
+
+func _fx_root() -> Node3D:
+	if fx_root == null:
+		fx_root = Node3D.new()
+		world.add_child(fx_root)
+	return fx_root
+
+
+## Where a unit's head is, for numbers and tracers.
+func _head(u: Unit) -> Vector3:
+	var h := maxf(u.radius, 0.3) * 3.6 if u.simple else u.bar.position.y
+	return u.vis_pos + Vector3(0, h, 0)
+
+
+func _chest(u: Unit) -> Vector3:
+	var h := maxf(u.radius, 0.3) * 1.8 if u.simple else maxf(u.bar.position.y * 0.5, 0.5)
+	return u.vis_pos + Vector3(0, h, 0)
+
+
+## The nearest enemy facing `victim`, preferring attackers not yet used this
+## sync (each unit strikes once a round, so hits spread over attackers).
+func _find_attacker(victim: Unit, used: Dictionary) -> int:
+	var best := -1
+	var best_score := 1e9
+	for j in units.size():
+		var a: Unit = units[j]
+		if a.team == victim.team or not a.alive:
+			continue
+		var to := victim.target_pos - a.target_pos
+		var dist := to.length() - a.radius - victim.radius
+		if dist > 30.0:
+			continue
+		var facing := Vector3(sin(a.target_yaw), 0, cos(a.target_yaw))
+		var score := dist - 1.5 * facing.dot(to.normalized() if to.length() > 0.001 else Vector3.ZERO)
+		if used.has(j):
+			score += 4.0
+		if score < best_score:
+			best_score = score
+			best = j
+	return best
+
+
+## Lunge, flash, number and tracer for this sync's hit point changes.
+func _hit_effects(deltas: Dictionary, breathers: Array) -> void:
+	var victims: Array = deltas.keys()
+	if victims.size() > MAX_HITS_PER_SYNC:
+		# Big battle: show a rotating sample of the hits.
+		hits_flip += 1
+		var start := hits_flip * 7 % victims.size()
+		victims = victims.slice(start, start + MAX_HITS_PER_SYNC) + victims.slice(0, maxi(start + MAX_HITS_PER_SYNC - victims.size(), 0))
+	var used := {}
+	for b in breathers:
+		var bu: Unit = units[b]
+		used[b] = true
+		_start_lunge(bu, Vector3(sin(bu.target_yaw), 0, cos(bu.target_yaw)))
+	for v in victims:
+		var vu: Unit = units[v]
+		var delta: int = deltas[v]
+		if delta > 0:
+			_flash(vu, Color(0.4, 1.0, 0.5))
+			_number(vu, "+%d" % delta, Color(0.45, 1.0, 0.5), 0.0)
+			continue
+		# A killing blow shows only the hit points that were left.
+		var dmg := -delta + mini(vu.hp, 0)
+		var att := -1
+		var breath := false
+		for b in breathers:
+			var bu: Unit = units[b]
+			var to := vu.target_pos - bu.target_pos
+			if bu.team != vu.team and to.length() < 20.0 and to.normalized().dot(Vector3(sin(bu.target_yaw), 0, cos(bu.target_yaw))) > 0.4:
+				att = b
+				breath = true
+				break
+		if att < 0:
+			att = _find_attacker(vu, used)
+		_flash(vu, Color(1, 1, 1))
+		_number(vu, "-%d" % dmg, Color(1.0, 0.3, 0.25), float(dmg) / maxf(vu.max_hp, 1.0))
+		if att < 0:
+			continue
+		var au: Unit = units[att]
+		used[att] = true
+		var edge := au.target_pos.distance_to(vu.target_pos) - au.radius - vu.radius
+		if breath:
+			_tracer(au, vu, Color(1.0, 0.6, 0.15), 0.16)
+		else:
+			_start_lunge(au, vu.target_pos - au.target_pos)
+			if edge > 3.0:
+				_tracer(au, vu, Color(1.0, 0.95, 0.6), 0.06)
+
+
+func _start_lunge(u: Unit, dir: Vector3) -> void:
+	dir.y = 0.0
+	if dir.length() < 0.001:
+		return
+	u.lunge_t = 0.0
+	u.lunge_dir = dir.normalized() * minf(0.45 + u.radius * 0.5, 1.2)
+
+
+func _flash(u: Unit, color: Color) -> void:
+	u.flash_t = 0.0
+	u.flash_color = color
+	if not u.simple:
+		u.flash_mat.albedo_color = Color(color, 0.0)
+		for m in u.meshes:
+			m.material_overlay = u.flash_mat
+
+
+## A floating number that rises and fades; `scale_by` (damage / max hp)
+## makes big hits bigger.
+func _number(u: Unit, text: String, color: Color, scale_by: float) -> void:
+	if active_numbers.size() >= MAX_NUMBERS:
+		return
+	var l: Label3D
+	if number_pool.is_empty():
+		l = Label3D.new()
+		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		l.no_depth_test = true
+		l.font_size = 48
+		l.outline_size = 12
+		l.pixel_size = 0.007
+		l.render_priority = 10
+		l.outline_render_priority = 9
+		_fx_root().add_child(l)
+	else:
+		l = number_pool.pop_back()
+	l.text = text
+	l.modulate = color
+	l.outline_modulate = Color(0.1, 0.0, 0.0, 0.9)
+	l.visible = true
+	var s := 0.8 + minf(scale_by * 3.0, 1.2)
+	l.scale = Vector3.ONE * s
+	l.position = _head(u) + Vector3(rng.randf_range(-0.4, 0.4), 0.3, rng.randf_range(-0.2, 0.2))
+	active_numbers.append({"node": l, "t": 0.0})
+
+
+func _tracer(a: Unit, v: Unit, color: Color, width: float) -> void:
+	if active_tracers.size() >= MAX_TRACERS:
+		return
+	var from := _chest(a)
+	var to := _chest(v)
+	if from.distance_to(to) < 0.1:
+		return
+	var n: MeshInstance3D
+	if tracer_pool.is_empty():
+		if tracer_mesh == null:
+			tracer_mesh = BoxMesh.new()
+		n = MeshInstance3D.new()
+		n.mesh = tracer_mesh
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		n.material_override = m
+		n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_fx_root().add_child(n)
+	else:
+		n = tracer_pool.pop_back()
+	n.visible = true
+	n.material_override.albedo_color = color
+	n.look_at_from_position((from + to) * 0.5, to, Vector3.UP)
+	n.scale = Vector3(width, width, from.distance_to(to))
+	active_tracers.append({"node": n, "t": 0.0, "color": color})
+
+
+func _puff(pos: Vector3, size: float) -> void:
+	if active_puffs.size() >= MAX_PUFFS:
+		return
+	var n: MeshInstance3D
+	if puff_pool.is_empty():
+		if puff_mesh == null:
+			puff_mesh = SphereMesh.new()
+			puff_mesh.radius = 0.5
+			puff_mesh.height = 1.0
+			puff_mesh.radial_segments = 12
+			puff_mesh.rings = 6
+		n = MeshInstance3D.new()
+		n.mesh = puff_mesh
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		n.material_override = m
+		n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_fx_root().add_child(n)
+	else:
+		n = puff_pool.pop_back()
+	n.visible = true
+	n.position = pos
+	n.scale = Vector3.ONE * size * 0.5
+	active_puffs.append({"node": n, "t": 0.0, "size": size})
+
+
+## "Victim falls to Killer." lines of the event log, as [victim, killer].
+func _falls(events: Array) -> Array:
+	var out := []
+	var sep := " [color=#cc6666]falls[/color] to "
+	for line in events:
+		var k := str(line).find(sep)
+		if k >= 0:
+			out.append([str(line).substr(0, k), str(line).substr(k + sep.length()).trim_suffix(".")])
+	return out
+
+
+## Starts the death animation, a puff and a kill-feed line for each fallen
+## unit (feed lines only for the last few of a mass death).
+func _death_effects(died: Array, falls: Array) -> void:
+	for n in died.size():
+		var u: Unit = units[died[n]]
+		u.death_t = 0.0
+		u.lunge_t = -1.0
+		if n < MAX_PUFFS:
+			_puff(u.vis_pos + Vector3(0, 0.3 + u.radius * 0.4, 0), 0.6 + u.radius * 1.2)
+		if n < died.size() - KILL_FEED_LINES:
+			continue
+		var killer := ""
+		var killer_team := 1 - u.team
+		for f in falls:
+			if f[0] == u.name:
+				killer = f[1]
+				falls.erase(f)
+				break
+		var line := ""
+		if killer != "":
+			line = "[color=#%s]%s[/color] slew [color=#%s]%s[/color]" % [
+				_team_color(killer_team).lightened(0.2).to_html(false), killer,
+				_team_color(u.team).lightened(0.2).to_html(false), u.name]
+		else:
+			line = "[color=#%s]%s[/color] fell" % [_team_color(u.team).lightened(0.2).to_html(false), u.name]
+		kill_feed.append({"text": line, "age": 0.0})
+	while kill_feed.size() > KILL_FEED_LINES:
+		kill_feed.pop_front()
+	_refresh_kill_feed()
+
+
+func _refresh_kill_feed() -> void:
+	if kill_label == null or not is_instance_valid(kill_label):
+		return
+	var lines := []
+	for k in kill_feed:
+		lines.append(k["text"])
+	kill_label.text = "[right]%s[/right]" % "\n".join(lines)
+
+
+## Per-frame presentation: smooths positions, plays lunges, flashes, deaths,
+## health bars and the floating effects, in real time (so slow playback
+## stays smooth).
+func _animate(delta: float) -> void:
+	var follow := 1.0 - exp(-delta * (30.0 if online else 14.0))
+	for i in units.size():
+		var u: Unit = units[i]
+		if not u.seen:
+			continue
+		var active := u.dirty or u.lunge_t >= 0.0 or u.flash_t >= 0.0 or (u.death_t >= 0.0 and u.death_t < DEATH_TIME)
+		if u.vis_pos.distance_squared_to(u.target_pos) > 0.000001:
+			u.vis_pos = u.vis_pos.lerp(u.target_pos, follow)
+			active = true
+		if absf(angle_difference(u.yaw, u.target_yaw)) > 0.001:
+			u.yaw = lerp_angle(u.yaw, u.target_yaw, follow)
+			active = true
+		if u.lunge_t >= 0.0:
+			u.lunge_t += delta
+			if u.lunge_t >= LUNGE_TIME:
+				u.lunge_t = -1.0
+		if u.flash_t >= 0.0:
+			u.flash_t += delta
+			if u.flash_t >= FLASH_TIME:
+				u.flash_t = -1.0
+		var dying := u.death_t >= 0.0 and u.death_t < DEATH_TIME
+		if dying:
+			u.death_t += delta
+		if not active:
+			continue
+		u.dirty = false
+		var lunge := Vector3.ZERO
+		if u.lunge_t >= 0.0:
+			lunge = u.lunge_dir * sin(PI * u.lunge_t / LUNGE_TIME)
+		# Death: topple over the first third, then sink and shrink away.
+		var roll := 0.0
+		var shrink := 1.0
+		if u.death_t >= 0.0:
+			var t := clampf(u.death_t / DEATH_TIME, 0.0, 1.0)
+			roll = PI * 0.5 * smoothstep(0.0, 0.35, t)
+			shrink = 1.0 - smoothstep(0.45, 1.0, t)
+		var flash := 0.0 if u.flash_t < 0.0 else 1.0 - u.flash_t / FLASH_TIME
+		if u.simple:
+			_draw_simple(u, lunge, roll, shrink, flash)
+			continue
+		u.node.position = u.vis_pos
+		u.node.rotation = Vector3(0, u.yaw, 0)
+		u.node.visible = shrink > 0.001
+		u.body.position = Basis(Vector3.UP, -u.yaw) * lunge
+		u.body.basis = Basis(Vector3(0, 0, 1), roll).scaled(Vector3.ONE * maxf(shrink, 0.001))
+		u.ring_mat.albedo_color.a = shrink
+		u.disc_mat.albedo_color.a = 0.2 * shrink
+		var alive_vis := u.death_t < 0.0
+		u.bar.visible = alive_vis
+		if alive_vis:
+			var want := clampf(float(u.hp) / maxf(u.max_hp, 1.0), 0.0, 1.0)
+			u.shown_frac = move_toward(u.shown_frac, want, delta * 1.2)
+			u.bar.set_instance_shader_parameter("frac", u.shown_frac)
+		if flash > 0.0:
+			u.flash_mat.albedo_color.a = 0.75 * flash
+		elif not u.meshes.is_empty() and u.meshes[0].material_overlay != null:
+			for m in u.meshes:
+				m.material_overlay = null
+	_animate_effects(delta)
+
+
+## Draws one simple-shape unit (and its ground ring) into the side's MultiMeshes.
+func _draw_simple(u: Unit, lunge: Vector3, roll: float, shrink: float, flash: float) -> void:
+	var mm: MultiMesh = multimeshes[u.team].multimesh
+	var rmm: MultiMesh = ring_mms[u.team].multimesh
+	u.node.position = u.vis_pos
+	var sc := maxf(u.radius, 0.3) * 2.0
+	if shrink <= 0.001:
+		mm.set_instance_transform(u.mm_index, Transform3D(Basis().scaled(Vector3.ZERO), u.vis_pos))
+		rmm.set_instance_transform(u.mm_index, Transform3D(Basis().scaled(Vector3.ZERO), u.vis_pos))
+		return
+	var rot := Basis(Vector3.UP, u.yaw) * Basis(Vector3(0, 0, 1), roll)
+	var pos := u.vis_pos + lunge
+	mm.set_instance_transform(u.mm_index, Transform3D(rot.scaled(Vector3.ONE * sc * shrink), pos + rot * Vector3(0, 0.9 * sc * shrink, 0)))
+	var col := u.color
+	if flash > 0.0:
+		col = col.lerp(u.flash_color, flash * 0.85)
+	mm.set_instance_color(u.mm_index, col)
+	rmm.set_instance_transform(u.mm_index, Transform3D(Basis().scaled(Vector3.ONE * sc * shrink), u.vis_pos + Vector3(0, 0.05, 0)))
+	rmm.set_instance_color(u.mm_index, _team_color(u.team))
+
+
+## Advances the floating numbers, tracers and puffs and recycles finished ones.
+func _animate_effects(delta: float) -> void:
+	for e in active_numbers:
+		e["t"] += delta
+		var n: Label3D = e["node"]
+		var t: float = e["t"] / 1.1
+		n.position.y += delta * (1.4 - t)
+		n.modulate.a = 1.0 - smoothstep(0.55, 1.0, t)
+		n.outline_modulate.a = n.modulate.a * 0.9
+		if t >= 1.0:
+			n.visible = false
+			number_pool.append(n)
+	active_numbers = active_numbers.filter(func(e): return e["t"] < 1.1)
+	for e in active_tracers:
+		e["t"] += delta
+		var n: MeshInstance3D = e["node"]
+		var t: float = e["t"] / 0.28
+		n.material_override.albedo_color = Color(e["color"], 0.9 * (1.0 - t))
+		if t >= 1.0:
+			n.visible = false
+			tracer_pool.append(n)
+	active_tracers = active_tracers.filter(func(e): return e["t"] < 0.28)
+	for e in active_puffs:
+		e["t"] += delta
+		var n: MeshInstance3D = e["node"]
+		var t: float = e["t"] / 0.6
+		n.scale = Vector3.ONE * e["size"] * lerpf(0.5, 1.5, t)
+		n.material_override.albedo_color = Color(0.85, 0.8, 0.7, 0.4 * (1.0 - t))
+		if t >= 1.0:
+			n.visible = false
+			puff_pool.append(n)
+	active_puffs = active_puffs.filter(func(e): return e["t"] < 0.6)
+	if not kill_feed.is_empty():
+		kill_feed_timer += delta
+		if kill_feed_timer > 0.5:
+			for k in kill_feed:
+				k["age"] += kill_feed_timer
+			kill_feed_timer = 0.0
+			var before := kill_feed.size()
+			kill_feed = kill_feed.filter(func(k): return k["age"] < KILL_FEED_SECONDS)
+			if kill_feed.size() != before:
+				_refresh_kill_feed()
 
 
 ## Simple-shape units have no label or model, so the possessed one gets a ring.
