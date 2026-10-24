@@ -19,9 +19,11 @@ uniform float sea_level = -100.0;
 uniform float snow_height = 1000.0;
 uniform float ember_glow = 0.0;
 uniform sampler2D detail : repeat_enable, filter_linear_mipmap;
-/// Trodden ground around a settlement, covering [-extent, extent] on x and z.
-uniform sampler2D trodden : filter_linear;
-uniform float extent = 110.0;
+/// Trodden ground around a settlement: a square of half-width
+/// `trodden_half` centred on `trodden_origin` (black, no paths, if unset).
+uniform sampler2D trodden : hint_default_black, filter_linear, repeat_disable;
+uniform vec2 trodden_origin = vec2(0.0);
+uniform float trodden_half = 1.0;
 
 varying vec3 wpos;
 varying vec3 wnorm;
@@ -48,8 +50,9 @@ void fragment() {
 	float cliff = smoothstep(0.30, 0.48, slope + (n2 - 0.5) * 0.18);
 	col = mix(col, rock * (0.75 + 0.5 * n3 * n2 + 0.2 * n1), cliff);
 
-	vec2 tuv = wpos.xz / (2.0 * extent) + 0.5;
-	float path = texture(trodden, tuv).r * (0.75 + 0.5 * n3);
+	vec2 tuv = (wpos.xz - trodden_origin) / (2.0 * trodden_half) + 0.5;
+	float inside = step(0.0, tuv.x) * step(tuv.x, 1.0) * step(0.0, tuv.y) * step(tuv.y, 1.0);
+	float path = texture(trodden, tuv).r * (0.75 + 0.5 * n3) * inside;
 	col = mix(col, path_color * (0.85 + 0.3 * n2), clamp(path, 0.0, 1.0));
 
 	float frost = smoothstep(snow_height - 1.5, snow_height + 1.5, wpos.y + (n2 - 0.5) * 5.0) * (1.0 - smoothstep(0.5, 0.75, slope));
