@@ -137,24 +137,35 @@ fn rgb(c: [u8; 3]) -> [f64; 3] {
 }
 
 impl World {
-    /// Per-region territory: (civ colour, city lights) for settled regions.
+    /// Per-region territory: (colour of the people with most folk there,
+    /// city lights from everyone living there) for settled regions.
     fn territory(&self) -> Vec<Option<([f64; 3], f64)>> {
-        let mut out = vec![None; REGION_COUNT];
+        let mut lights = vec![0.0; REGION_COUNT];
+        let mut owner: Vec<Option<([f64; 3], f64)>> = vec![None; REGION_COUNT];
         for c in self.living_civs() {
             let era = self.era(c);
             let era_light = [0.08, 0.2, 0.35, 0.5, 0.7, 1.0][era.min(5)];
-            // Lights by everyone living in the region, brighter at the capital.
             let mut pops = vec![0.0; REGION_COUNT];
             for s in &c.settlements {
                 pops[s.region] += s.population.to_f64();
             }
             for (k, s) in c.settlements.iter().enumerate() {
-                let pop = (pops[s.region] / 20.0).min(1.0);
-                let capital = if k == 0 || c.settlements.first().is_some_and(|f| f.region == s.region) { 1.3 } else { 1.0 };
-                out[s.region] = Some((rgb(c.color), (pop * era_light * capital).min(1.0)));
+                if pops[s.region] <= 0.0 {
+                    continue;
+                }
+                let capital = if k == 0 { 1.3 } else { 1.0 };
+                lights[s.region] += (pops[s.region] / 20.0).min(1.0) * era_light * capital;
+                if owner[s.region].is_none_or(|(_, p)| pops[s.region] > p) {
+                    owner[s.region] = Some((rgb(c.color), pops[s.region]));
+                }
+                pops[s.region] = 0.0;
             }
         }
-        out
+        owner
+            .into_iter()
+            .zip(lights)
+            .map(|(o, l)| o.map(|(col, _)| (col, l.min(1.0))))
+            .collect()
     }
 
     fn globe_cells(&self) -> Vec<Cell> {

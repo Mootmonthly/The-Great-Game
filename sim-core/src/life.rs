@@ -603,7 +603,7 @@ impl World {
             // Radioactive deposits irradiate the life around them.
             let radiation_harm = (radiation_harm + self.radioactivity(i) * Fx::ratio(3, 100)).min(Fx::HALF);
             // A civilization's people are stronger where it has settled.
-            let home = settled.get(i).copied().flatten();
+            let home: &[(u32, Fx)] = settled.get(i).map_or(&[], |v| v.as_slice());
             // Beings from beyond follow their own rules (`entity_dynamics`).
             let (entities, pops): (Vec<Population>, Vec<Population>) = self.regions[i]
                 .populations
@@ -651,10 +651,8 @@ impl World {
                     } else {
                         Fx::ONE
                     };
-                    if let Some((species, bonus)) = home {
-                        if species == s.id {
-                            magic = magic * bonus;
-                        }
+                    if let Some((_, bonus)) = home.iter().find(|(species, _)| *species == s.id) {
+                        magic = magic * *bonus;
                     }
                     // Animals (nervous systems) barely live on light, heat or
                     // chemistry directly: they eat. Fronds keep a little.
