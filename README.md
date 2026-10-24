@@ -33,7 +33,7 @@ A 2D prototype of the world simulation. Seed a planet with substances, tune its 
 
 Ready-built Windows versions are on the [Releases page](https://github.com/Mootmonthly/The-Great-Game/releases). Download `TheGreatGame-windows-x64.zip`, unzip it anywhere, and run `TheGreatGame.exe`. Nothing else needs installing. The build is not code-signed, so if Windows SmartScreen warns about an unknown publisher, choose **More info**, then **Run anyway**.
 
-A release is built and published automatically when a version tag (`v0.1.0`, `v0.2.0`, …) is pushed (`.github/workflows/release.yml`).
+A release is built and published automatically when a version tag (`v0.1.0`, `v0.2.0`, …) is pushed, or when the Release workflow is run by hand from the Actions tab with a tag name (`.github/workflows/release.yml`).
 
 ### Run the world viewer from source (Windows)
 
